@@ -134,6 +134,7 @@ enum EditorEvent: Equatable {
     case statisticsChanged(wordCount: Int, characterCount: Int)
     case contentHeightChanged(CGFloat)
     case blockSelectionChanged(Int)
+    case requestCalloutIconPicker(blockID: String, icon: String)
     case selectedBlocksForSubpage(title: String, canonicalJSON: String)
     case requestHaptic(style: String)
     case unknown(String)
@@ -170,6 +171,11 @@ enum EditorEvent: Equatable {
         case "blockSelectionChanged":
             let count = envelope.payload.objectValue?["count"]?.numberIntValue ?? 0
             self = .blockSelectionChanged(count)
+
+        case "requestCalloutIconPicker":
+            let blockID = envelope.payload.objectValue?["blockId"]?.stringValue ?? ""
+            let icon = envelope.payload.objectValue?["icon"]?.stringValue ?? "sparkle"
+            self = .requestCalloutIconPicker(blockID: blockID, icon: icon)
 
         case "selectedBlocksForSubpage":
             let title = envelope.payload.objectValue?["title"]?.stringValue ?? "New Sub Page"
@@ -305,14 +311,58 @@ enum EditorCommand {
         EditorBridgeEnvelope(type: "insertPageBreak")
     }
 
-    static func insertCallout(icon: String, text: String) -> EditorBridgeEnvelope {
+    static func insertCallout(icon: String, text: String, color: String = "#ffffff") -> EditorBridgeEnvelope {
         EditorBridgeEnvelope(
             type: "insertCallout",
             payload: .object([
                 "icon": .string(icon),
-                "text": .string(text)
+                "text": .string(text),
+                "color": .string(color)
             ])
         )
+    }
+
+    static func setSelectedBlockType(_ blockType: String, level: Int? = nil, color: String? = nil) -> EditorBridgeEnvelope {
+        var payload: [String: JSONValue] = [
+            "blockType": .string(blockType)
+        ]
+
+        if let level {
+            payload["level"] = .number(Double(level))
+        }
+
+        if let color {
+            payload["color"] = .string(color)
+        }
+
+        return EditorBridgeEnvelope(type: "setSelectedBlockType", payload: .object(payload))
+    }
+
+    static func indentSelectedBlocks() -> EditorBridgeEnvelope {
+        EditorBridgeEnvelope(type: "indentSelectedBlocks")
+    }
+
+    static func outdentSelectedBlocks() -> EditorBridgeEnvelope {
+        EditorBridgeEnvelope(type: "outdentSelectedBlocks")
+    }
+
+    static func setSelectedCalloutColor(_ color: String) -> EditorBridgeEnvelope {
+        EditorBridgeEnvelope(
+            type: "setSelectedCalloutColor",
+            payload: .object(["color": .string(color)])
+        )
+    }
+
+    static func updateCalloutIcon(blockID: String?, icon: String) -> EditorBridgeEnvelope {
+        var payload: [String: JSONValue] = [
+            "icon": .string(icon)
+        ]
+
+        if let blockID {
+            payload["blockId"] = .string(blockID)
+        }
+
+        return EditorBridgeEnvelope(type: "updateCalloutIcon", payload: .object(payload))
     }
 
     static func deleteSelectedBlocks() -> EditorBridgeEnvelope {

@@ -39,9 +39,23 @@ final class EditorSession: ObservableObject {
         }
 
         self.webView = webView
+        isReady = false
+        loadedDocumentID = nil
+        renderedDocumentID = nil
         if let pendingDocument {
             load(documentID: pendingDocument.id, canonicalJSON: pendingDocument.json, force: true)
         }
+    }
+
+    func detach(webView: WKWebView) {
+        guard self.webView === webView else {
+            return
+        }
+
+        self.webView = nil
+        isReady = false
+        loadedDocumentID = nil
+        awaitingRenderedDocumentID = nil
     }
 
     func markNavigationStarted() {
@@ -113,8 +127,28 @@ final class EditorSession: ObservableObject {
         send(EditorCommand.insertPageBreak())
     }
 
-    func insertCallout(icon: String, text: String) {
-        send(EditorCommand.insertCallout(icon: icon, text: text))
+    func insertCallout(icon: String, text: String, color: String = "#ffffff") {
+        send(EditorCommand.insertCallout(icon: icon, text: text, color: color))
+    }
+
+    func setSelectedBlockType(_ blockType: String, level: Int? = nil, color: String? = nil) {
+        send(EditorCommand.setSelectedBlockType(blockType, level: level, color: color))
+    }
+
+    func indentSelectedBlocks() {
+        send(EditorCommand.indentSelectedBlocks())
+    }
+
+    func outdentSelectedBlocks() {
+        send(EditorCommand.outdentSelectedBlocks())
+    }
+
+    func setSelectedCalloutColor(_ color: String) {
+        send(EditorCommand.setSelectedCalloutColor(color))
+    }
+
+    func updateCalloutIcon(blockID: String?, icon: String) {
+        send(EditorCommand.updateCalloutIcon(blockID: blockID, icon: icon))
     }
 
     func deleteSelectedBlocks() {
@@ -173,6 +207,11 @@ final class EditorSession: ObservableObject {
 
             let data = try JSONSerialization.data(withJSONObject: body)
             let envelope = try JSONDecoder().decode(EditorBridgeEnvelope.self, from: data)
+            if envelope.type == "diag" {
+                let message = envelope.payload.objectValue?["message"]?.stringValue ?? ""
+                logger.info("VELLIX-DIAG \(message, privacy: .public)")
+                return
+            }
             let event = try EditorEvent(envelope: envelope)
             handle(event)
         } catch {
@@ -186,11 +225,14 @@ final class EditorSession: ObservableObject {
         case .editorReady(let blockCount):
             logger.info("Editor ready with \(blockCount) blocks")
             isReady = true
-            setRenderedDocumentID(nil)
             selectedBlockCount = 0
             isEditing = false
             if let pendingDocument {
                 load(documentID: pendingDocument.id, canonicalJSON: pendingDocument.json, force: true)
+            } else if let loadedDocumentID {
+                setRenderedDocumentID(loadedDocumentID)
+            } else {
+                setRenderedDocumentID(nil)
             }
             if let pendingAppearance {
                 setAppearance(pendingAppearance)
@@ -220,6 +262,9 @@ final class EditorSession: ObservableObject {
             onEvent?(event)
 
         case .blockSelectionChanged(let count):
+            guard selectedBlockCount != count else {
+                return
+            }
             selectedBlockCount = count
             send(EditorCommand.setEditable(count == 0))
             if count > 0 {
@@ -234,7 +279,7 @@ final class EditorSession: ObservableObject {
         case .requestHaptic(let style):
             triggerHaptic(style: style)
 
-        case .statisticsChanged, .selectedBlocksForSubpage, .unknown:
+        case .statisticsChanged, .requestCalloutIconPicker, .selectedBlocksForSubpage, .unknown:
             onEvent?(event)
         }
     }
@@ -308,12 +353,14 @@ final class EditorCoordinatorModel: ObservableObject {
     @Published var children: [DocumentRecord] = []
     @Published var snapshots: [DocumentSnapshotRecord] = []
     @Published private(set) var instantPreviewBlocks: [InstantPreviewBlock] = []
+    @Published var calloutIconRequest: CalloutIconRequest?
     @Published var errorMessage: String?
 
     private var pendingSaveTask: Task<Void, Never>?
     private var pendingDocumentID: String?
     private var latestJSON: String?
     private var lastAutomaticSnapshotRevision = 0
+    private var saveSequence = 0
 
     init(
         documentRepository: DocumentRepository,
@@ -449,7 +496,7 @@ final class EditorCoordinatorModel: ObservableObject {
         guard let id = pendingDocumentID, let json = latestJSON else {
             return
         }
-        saveNow(documentID: id, canonicalJSON: json)
+        persistEditorJSON(documentID: id, canonicalJSON: json)
         pendingDocumentID = nil
     }
 
@@ -461,6 +508,8 @@ final class EditorCoordinatorModel: ObservableObject {
             scheduleSave(json, immediate: true)
         case .editorError(let message):
             errorMessage = message
+        case .requestCalloutIconPicker(let blockID, let icon):
+            calloutIconRequest = CalloutIconRequest(blockID: blockID, icon: icon)
         case .selectedBlocksForSubpage(let title, let json):
             createChildFromSelectedBlocks(title: title, canonicalJSON: json)
         default:
@@ -520,26 +569,66 @@ final class EditorCoordinatorModel: ObservableObject {
         guard let id = pendingDocumentID, let json = latestJSON else {
             return
         }
-        saveNow(documentID: id, canonicalJSON: json)
+        persistEditorJSON(documentID: id, canonicalJSON: json)
         pendingDocumentID = nil
     }
 
-    private func saveNow(documentID: String, canonicalJSON: String) {
+    private func persistEditorJSON(documentID: String, canonicalJSON: String) {
+        saveSequence += 1
+        let sequence = saveSequence
+        let documentRepository = documentRepository
+        let snapshotRepository = snapshotRepository
+        let snapshotBaseRevision = lastAutomaticSnapshotRevision
+
         session.saveState = .saving
-        do {
-            let updated = try documentRepository.saveEditorJSON(
-                id: documentID,
-                canonicalJSON: canonicalJSON
-            )
-            document = updated
-            instantPreviewBlocks = BlockNoteContentAnalyzer.instantPreviewBlocks(from: canonicalJSON)
-            session.saveState = .saved(Date())
-            if updated.revision - lastAutomaticSnapshotRevision >= 8 {
-                _ = try snapshotRepository.create(document: updated, reason: .automatic)
-                lastAutomaticSnapshotRevision = updated.revision
+
+        Task { [weak self] in
+            let result: Result<EditorSaveResult, Error>
+            do {
+                let updated = try documentRepository.saveEditorJSON(
+                    id: documentID,
+                    canonicalJSON: canonicalJSON
+                )
+                var snapshotRevision: Int?
+                if updated.revision - snapshotBaseRevision >= 8 {
+                    _ = try snapshotRepository.create(document: updated, reason: .automatic)
+                    snapshotRevision = updated.revision
+                }
+
+                result = .success(
+                    EditorSaveResult(
+                        documentID: updated.id,
+                        savedAt: updated.updatedAt,
+                        snapshotRevision: snapshotRevision
+                    )
+                )
+            } catch {
+                result = .failure(error)
             }
-            refreshRelated()
-        } catch {
+
+            self?.finishEditorSave(result, sequence: sequence)
+        }
+    }
+
+    private func finishEditorSave(
+        _ result: Result<EditorSaveResult, Error>,
+        sequence: Int
+    ) {
+        guard sequence == saveSequence else {
+            return
+        }
+
+        switch result {
+        case .success(let saveResult):
+            guard document?.id == saveResult.documentID else {
+                return
+            }
+            if let snapshotRevision = saveResult.snapshotRevision {
+                lastAutomaticSnapshotRevision = snapshotRevision
+            }
+            session.saveState = .saved(saveResult.savedAt)
+
+        case .failure(let error):
             session.saveState = .failed(error.localizedDescription)
             errorMessage = error.localizedDescription
         }
@@ -557,4 +646,16 @@ final class EditorCoordinatorModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
     }
+}
+
+struct CalloutIconRequest: Identifiable, Equatable {
+    let id = UUID()
+    var blockID: String
+    var icon: String
+}
+
+private struct EditorSaveResult: Sendable {
+    var documentID: String
+    var savedAt: Date
+    var snapshotRevision: Int?
 }

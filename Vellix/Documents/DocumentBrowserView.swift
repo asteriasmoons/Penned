@@ -192,7 +192,7 @@ struct DocumentCard: View {
             Spacer(minLength: 0)
 
             HStack(spacing: 8) {
-                Text(document.updatedAt, style: .relative)
+                Text(updatedText)
                 if document.wordCount > 0 {
                     Circle()
                         .fill(Color.secondary.opacity(0.28))
@@ -227,6 +227,10 @@ struct DocumentCard: View {
 
     private var preview: String {
         document.previewText == "No content yet" ? "Blank page" : document.previewText
+    }
+
+    private var updatedText: String {
+        document.updatedAt.formatted(date: .abbreviated, time: .shortened)
     }
 
     private var locationText: String {

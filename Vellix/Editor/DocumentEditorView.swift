@@ -25,8 +25,10 @@ struct DocumentEditorView: View {
     @State private var coverPickerItem: PhotosPickerItem?
     @State private var editorBackgroundPickerItem: PhotosPickerItem?
     @State private var innerBackgroundPickerItem: PhotosPickerItem?
-    @State private var calloutText = "Callout"
-    @State private var calloutIcon = "sparkles"
+    @State private var calloutText = ""
+    @State private var calloutIcon = "sparkle"
+    @State private var calloutIconTargetBlockID: String?
+    @State private var selectedCalloutColor = Color.white
     @State private var editorContentHeight: CGFloat = 320
     @State private var selectedBlockCount = 0
     @State private var isEditingDocument = false
@@ -105,6 +107,12 @@ struct DocumentEditorView: View {
         .onReceive(model.session.$isEditing) { isEditing in
             isEditingDocument = isEditing
         }
+        .onReceive(model.$calloutIconRequest) { request in
+            guard let request else { return }
+            calloutIconTargetBlockID = request.blockID
+            calloutIcon = request.icon
+            showCalloutIconPicker = true
+        }
         .onDisappear {
             model.flushPendingSave()
             environment.refresh()
@@ -131,10 +139,22 @@ struct DocumentEditorView: View {
         .sheet(isPresented: $showCalloutIconPicker) {
             VellixIconLibraryPicker(title: "Callout Icon") { icon in
                 calloutIcon = icon.name
-                model.session.insertCallout(icon: icon.name, text: calloutText.trimmedNonEmpty ?? "Callout")
+                if let calloutIconTargetBlockID {
+                    model.session.updateCalloutIcon(blockID: calloutIconTargetBlockID, icon: icon.name)
+                } else {
+                    model.session.insertCallout(
+                        icon: icon.name,
+                        text: calloutText.trimmedNonEmpty ?? "",
+                        color: selectedCalloutColor.vellixHexString(fallback: "#ffffff")
+                    )
+                }
+                calloutIconTargetBlockID = nil
                 showCalloutIconPicker = false
             }
             .presentationDetents([.medium, .large])
+            .onDisappear {
+                calloutIconTargetBlockID = nil
+            }
         }
         .sheet(isPresented: $showSnapshots) {
             SnapshotHistoryView(model: model)
@@ -173,8 +193,8 @@ struct DocumentEditorView: View {
         return GeometryReader { proxy in
             let isCompact = proxy.size.width < 620
             let horizontalPadding: CGFloat = appearance.themeID == nil
-                ? (isCompact ? 24 : 30)
-                : (isCompact ? 12 : 30)
+                ? (isCompact ? 16 : 30)
+                : (isCompact ? 8 : 30)
             let topPadding: CGFloat = appearance.themeID == nil
                 ? (isCompact ? 146 : 150)
                 : (isCompact ? 112 : 150)
@@ -236,6 +256,31 @@ struct DocumentEditorView: View {
                     SelectedBlockStylePanel(
                         panel: selectedStylePanel,
                         isCompact: isCompact,
+                        calloutColor: Binding(
+                            get: { selectedCalloutColor },
+                            set: { newColor in
+                                selectedCalloutColor = newColor
+                                model.session.setSelectedCalloutColor(
+                                    newColor.vellixHexString(fallback: "#ffffff")
+                                )
+                            }
+                        ),
+                        headingAction: { model.session.setSelectedBlockType("heading", level: 3) },
+                        bodyAction: { model.session.setSelectedBlockType("paragraph") },
+                        pageAction: { model.groupSelectedBlocksIntoChildPage() },
+                        checklistAction: { model.session.setSelectedBlockType("checkListItem") },
+                        toggleAction: { model.session.setSelectedBlockType("toggleListItem") },
+                        bulletsAction: { model.session.setSelectedBlockType("bulletListItem") },
+                        numbersAction: { model.session.setSelectedBlockType("numberedListItem") },
+                        outdentAction: { model.session.outdentSelectedBlocks() },
+                        indentAction: { model.session.indentSelectedBlocks() },
+                        quoteAction: { model.session.setSelectedBlockType("quote") },
+                        calloutAction: {
+                            model.session.setSelectedBlockType(
+                                "callout",
+                                color: selectedCalloutColor.vellixHexString(fallback: "#ffffff")
+                            )
+                        },
                         showPagePanel: { self.selectedStylePanel = .page },
                         showFormattingPanel: { self.selectedStylePanel = .formatting },
                         showHeadingPanel: { self.selectedStylePanel = .heading },
@@ -356,6 +401,7 @@ struct DocumentEditorView: View {
         let height = max(editorContentHeight, minimumHeight)
         let showInstantPreview = !model.instantPreviewBlocks.isEmpty
             && model.session.renderedDocumentID != document.id
+            && (model.session.isLoadingDocument || !model.session.isReady)
 
         return ZStack(alignment: .topLeading) {
             BlockNoteWebView(
@@ -541,6 +587,17 @@ private struct InstantDocumentPreviewView: View {
                     .font(.system(size: isCompact ? 16 : 18, weight: .semibold, design: appearance.fontStyle.design))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+        case .callout:
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: isCompact ? 15 : 17, weight: .semibold))
+                Text(block.text)
+                    .font(.system(size: isCompact ? 16 : 18, weight: .semibold, design: appearance.fontStyle.design))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         case .divider:
             Rectangle()
                 .fill(Color(vellixHex: appearance.textColorHex).opacity(0.18))
@@ -746,6 +803,18 @@ private struct SelectedToolbarItem: View {
 private struct SelectedBlockStylePanel: View {
     var panel: SelectionStylePanel
     var isCompact: Bool
+    @Binding var calloutColor: Color
+    var headingAction: () -> Void
+    var bodyAction: () -> Void
+    var pageAction: () -> Void
+    var checklistAction: () -> Void
+    var toggleAction: () -> Void
+    var bulletsAction: () -> Void
+    var numbersAction: () -> Void
+    var outdentAction: () -> Void
+    var indentAction: () -> Void
+    var quoteAction: () -> Void
+    var calloutAction: () -> Void
     var showPagePanel: () -> Void
     var showFormattingPanel: () -> Void
     var showHeadingPanel: () -> Void
@@ -788,32 +857,29 @@ private struct SelectedBlockStylePanel: View {
     private var pagePanel: some View {
         VStack(spacing: isCompact ? 14 : 18) {
             HStack(spacing: 0) {
-                panelTab("Heading", selected: false, action: showHeadingPanel)
+                panelTab("Heading", selected: false, action: headingAction)
                 divider()
-                panelTab("Body", selected: false, action: showFormattingPanel)
+                panelTab("Body", selected: false, action: bodyAction)
                 divider()
-                panelTab("Page", selected: true, icon: "doc.text", action: showPagePanel)
+                panelTab("Page", selected: true, icon: "doc.text", action: pageAction)
                 panelTab("More...", selected: false, action: showHeadingPanel)
             }
 
             HStack(spacing: isCompact ? 8 : 12) {
-                styleSquare("checkmark.square")
-                styleSquare("play.fill")
-                styleSquare("list.bullet")
-                styleSquare("list.number")
-                styleSquare("decrease.indent", disabled: true)
-                styleSquare("increase.indent")
+                styleSquare("checkmark.square", action: checklistAction)
+                styleSquare("chevright", assetImage: true, action: toggleAction)
+                styleSquare("list.bullet", action: bulletsAction)
+                styleSquare("list.number", action: numbersAction)
+                styleSquare("decrease.indent", action: outdentAction)
+                styleSquare("increase.indent", action: indentAction)
             }
 
             HStack(spacing: isCompact ? 10 : 14) {
-                styleWide("Focus", systemImage: "vertical.align.center")
-                styleWide("Block", systemImage: nil, selected: false)
-                colorChip
-                Button(action: showFormattingPanel) {
-                    styleSquare("ellipsis", selected: true)
-                }
-                .buttonStyle(.plain)
-                .frame(width: isCompact ? 58 : 70)
+                styleWide("Quote", systemImage: "quote.opening", action: quoteAction)
+                styleWide("Callout", systemImage: "sparkles", selected: false, action: calloutAction)
+                calloutColorPicker
+                styleSquare("ellipsis", selected: true, action: showFormattingPanel)
+                    .frame(width: isCompact ? 58 : 70)
             }
         }
     }
@@ -868,14 +934,17 @@ private struct SelectedBlockStylePanel: View {
         }
     }
 
-    private var colorChip: some View {
-        ZStack {
-            Circle()
-                .stroke(AngularGradient(colors: [.cyan, .blue, .purple, .pink, .orange, .green, .cyan], center: .center), lineWidth: 5)
-            Circle().fill(Color.white.opacity(0.92))
+    private var calloutColorPicker: some View {
+        ColorPicker(selection: $calloutColor, supportsOpacity: false) {
+            HStack(spacing: 7) {
+                Image(systemName: "paintpalette.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                Text("Color")
+                    .font(.system(size: isCompact ? 15 : 17, weight: .semibold))
+            }
+            .foregroundStyle(.white.opacity(0.88))
         }
-        .frame(width: 38, height: 38)
-        .frame(width: isCompact ? 62 : 72, height: 56)
+        .frame(width: isCompact ? 112 : 128, height: 56)
     }
 
     private func advancePanel() {
@@ -923,10 +992,15 @@ private struct SelectedBlockStylePanel: View {
             .frame(width: 1, height: 34)
     }
 
-    private func styleSquare(_ systemImage: String, selected: Bool = false, disabled: Bool = false) -> some View {
-        Image(systemName: systemImage)
-            .font(.system(size: 23, weight: .medium))
-            .foregroundStyle(disabled ? .white.opacity(0.24) : .white.opacity(0.88))
+    private func styleSquare(
+        _ imageName: String,
+        assetImage: Bool = false,
+        selected: Bool = false,
+        disabled: Bool = false,
+        action: @escaping () -> Void = {}
+    ) -> some View {
+        Button(action: action) {
+            styleSquareIcon(imageName, assetImage: assetImage, disabled: disabled)
             .frame(maxWidth: .infinity)
             .frame(height: isCompact ? 54 : 62)
             .background(Color.white.opacity(selected ? 0.07 : 0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -936,21 +1010,48 @@ private struct SelectedBlockStylePanel: View {
                         .stroke(Color(red: 0.18, green: 0.78, blue: 1.0), lineWidth: 1.5)
                 }
             }
+        }
+        .buttonStyle(.plain)
     }
 
-    private func styleWide(_ title: String, systemImage: String?, selected: Bool = false, disabled: Bool = false) -> some View {
-        HStack(spacing: 6) {
-            if let systemImage {
-                Image(systemName: systemImage)
-                    .font(.system(size: 20, weight: .medium))
-            }
-            Text(title)
-                .font(.system(size: isCompact ? 17 : 20, weight: .semibold, design: .rounded))
+    @ViewBuilder
+    private func styleSquareIcon(_ imageName: String, assetImage: Bool, disabled: Bool) -> some View {
+        if assetImage {
+            Image(imageName)
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 23, height: 23)
+                .foregroundStyle(disabled ? .white.opacity(0.24) : .white.opacity(0.88))
+        } else {
+            Image(systemName: imageName)
+                .font(.system(size: 23, weight: .medium))
+                .foregroundStyle(disabled ? .white.opacity(0.24) : .white.opacity(0.88))
         }
-        .foregroundStyle(disabled ? .white.opacity(0.28) : .white.opacity(0.86))
-        .frame(maxWidth: .infinity)
-        .frame(height: isCompact ? 56 : 64)
-        .background(Color.white.opacity(selected ? 0.09 : 0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func styleWide(
+        _ title: String,
+        systemImage: String?,
+        selected: Bool = false,
+        disabled: Bool = false,
+        action: @escaping () -> Void = {}
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 20, weight: .medium))
+                }
+                Text(title)
+                    .font(.system(size: isCompact ? 17 : 20, weight: .semibold, design: .rounded))
+            }
+            .foregroundStyle(disabled ? .white.opacity(0.28) : .white.opacity(0.86))
+            .frame(maxWidth: .infinity)
+            .frame(height: isCompact ? 56 : 64)
+            .background(Color.white.opacity(selected ? 0.09 : 0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     private func fontTile(_ sample: String, title: String, selected: Bool = false) -> some View {
@@ -1308,9 +1409,11 @@ private struct VellixIconLibraryPicker: View {
                         } label: {
                             VStack(spacing: 8) {
                                 Image(icon.name)
+                                    .renderingMode(.template)
                                     .resizable()
                                     .scaledToFit()
                                     .frame(width: 34, height: 34)
+                                    .foregroundStyle(.white)
                                 Text(icon.name)
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)

@@ -24,6 +24,7 @@ struct InstantPreviewBlock: Identifiable, Equatable {
         case numbered
         case checklist
         case quote
+        case callout
         case divider
         case pageBreak
     }
@@ -168,21 +169,91 @@ enum BlockNoteContentAnalyzer {
     }
 
     private static func normalizeDocumentObject(_ object: Any) -> [String: Any] {
+        let rawBlocks: [Any]
+
         if let dictionary = object as? [String: Any] {
             if let blocks = dictionary["blocks"] as? [Any] {
-                return ["blocks": blocks]
+                rawBlocks = blocks
+                return ["blocks": normalizeBlocks(rawBlocks)]
             }
 
             if dictionary["type"] != nil {
-                return ["blocks": [dictionary]]
+                rawBlocks = [dictionary]
+                return ["blocks": normalizeBlocks(rawBlocks)]
             }
         }
 
         if let blocks = object as? [Any] {
-            return ["blocks": blocks]
+            rawBlocks = blocks
+            return ["blocks": normalizeBlocks(rawBlocks)]
         }
 
         return ["blocks": []]
+    }
+
+    private static func normalizeBlocks(_ blocks: [Any]) -> [[String: Any]] {
+        blocks.map { block in
+            normalizeBlock(block)
+        }
+    }
+
+    private static func normalizeBlock(_ block: Any) -> [String: Any] {
+        guard var dictionary = block as? [String: Any] else {
+            return [
+                "id": UUID().uuidString,
+                "type": "paragraph",
+                "props": [:],
+                "content": [],
+                "children": []
+            ]
+        }
+
+        let type = dictionary["type"] as? String ?? "paragraph"
+        var props = dictionary["props"] as? [String: Any] ?? [:]
+        let children = normalizeBlocks(dictionary["children"] as? [Any] ?? [])
+
+        dictionary["type"] = type
+        dictionary["props"] = props
+        dictionary["children"] = children
+
+        if type == "callout" {
+            props["icon"] = (props["icon"] as? String)?.trimmedNonEmpty ?? "sparkle"
+            props["color"] = (props["color"] as? String)?.trimmedNonEmpty ?? "#ffffff"
+            dictionary["props"] = props
+            dictionary["content"] = normalizeInlineContent(dictionary["content"])
+        }
+
+        return dictionary
+    }
+
+    private static func normalizeInlineContent(_ content: Any?) -> [[String: Any]] {
+        if let text = content as? String {
+            guard !text.isEmpty else {
+                return []
+            }
+            return [[
+                "type": "text",
+                "text": text,
+                "styles": [:]
+            ]]
+        }
+
+        guard let items = content as? [Any] else {
+            return []
+        }
+
+        return items.compactMap { item in
+            guard var dictionary = item as? [String: Any] else {
+                return nil
+            }
+
+            if dictionary["type"] as? String == "text" {
+                dictionary["text"] = dictionary["text"] as? String ?? ""
+                dictionary["styles"] = dictionary["styles"] as? [String: Any] ?? [:]
+            }
+
+            return dictionary
+        }
     }
 
     private static func canonicalJSONString(from object: Any) throws -> String {
@@ -318,6 +389,14 @@ enum BlockNoteContentAnalyzer {
             return InstantPreviewBlock(
                 id: dictionary["id"] as? String ?? "quote-\(fallbackIndex)",
                 kind: .quote,
+                text: text,
+                level: 1,
+                checked: false
+            )
+        case "callout":
+            return InstantPreviewBlock(
+                id: dictionary["id"] as? String ?? "callout-\(fallbackIndex)",
+                kind: .callout,
                 text: text,
                 level: 1,
                 checked: false

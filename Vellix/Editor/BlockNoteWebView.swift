@@ -8,6 +8,12 @@ import WebKit
 import UniformTypeIdentifiers
 import os
 
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
 struct BlockNoteWebView {
     @ObservedObject var session: EditorSession
     var documentID: String?
@@ -43,7 +49,7 @@ extension BlockNoteWebView: UIViewRepresentable {
         _ webView: WKWebView,
         context: Context
     ) {
-        scheduleSessionLoad(webView)
+        scheduleSessionLoad(webView, coordinator: context.coordinator)
     }
 
     static func dismantleUIView(
@@ -73,7 +79,7 @@ extension BlockNoteWebView: NSViewRepresentable {
         _ webView: WKWebView,
         context: Context
     ) {
-        scheduleSessionLoad(webView)
+        scheduleSessionLoad(webView, coordinator: context.coordinator)
     }
 
     static func dismantleNSView(
@@ -87,13 +93,20 @@ extension BlockNoteWebView: NSViewRepresentable {
 #endif
 
 private extension BlockNoteWebView {
-    func scheduleSessionLoad(_ webView: WKWebView) {
+    func scheduleSessionLoad(_ webView: WKWebView, coordinator: Coordinator) {
         let session = session
         let documentID = documentID
         let canonicalJSON = canonicalJSON
 
-        Task { @MainActor in
+        Task { @MainActor [weak webView, weak coordinator] in
             await Task.yield()
+            guard
+                let webView,
+                let coordinator,
+                coordinator.isActive
+            else {
+                return
+            }
             session.attach(webView: webView)
             if let documentID {
                 session.load(
@@ -205,6 +218,7 @@ final class Coordinator:
     let session: EditorSession
     var schemeHandler:
         VellixEditorSchemeHandler?
+    private(set) var isActive = true
     private let logger = Logger(subsystem: "im.lystaria.Vellix", category: "BlockNoteWebView")
 
     init(session: EditorSession) {
@@ -256,6 +270,8 @@ final class Coordinator:
     func cleanUp(
         _ webView: WKWebView
     ) {
+        isActive = false
+        session.detach(webView: webView)
         webView.configuration
             .userContentController
             .removeScriptMessageHandler(
@@ -330,6 +346,15 @@ final class VellixEditorSchemeHandler:
                     "The requested editor path was invalid."
             )
 
+            return
+        }
+
+        if relativePath.hasPrefix("asset-icons/") {
+            serveAssetIcon(
+                path: relativePath,
+                requestURL: requestURL,
+                task: urlSchemeTask
+            )
             return
         }
 
@@ -417,6 +442,71 @@ final class VellixEditorSchemeHandler:
         }
 
         return decodedPath
+    }
+
+    private func serveAssetIcon(
+        path: String,
+        requestURL: URL,
+        task: WKURLSchemeTask
+    ) {
+        let fileName = URL(fileURLWithPath: path)
+            .deletingPathExtension()
+            .lastPathComponent
+
+        guard
+            !fileName.isEmpty,
+            !fileName.contains("/")
+        else {
+            fail(
+                task: task,
+                message: "The requested asset icon path was invalid."
+            )
+            return
+        }
+
+        let data = pngDataForAssetIcon(named: fileName)
+            ?? pngDataForAssetIcon(named: "sparkle")
+            ?? transparentPNGData()
+
+        let response = URLResponse(
+            url: requestURL,
+            mimeType: "image/png",
+            expectedContentLength: data.count,
+            textEncodingName: nil
+        )
+
+        task.didReceive(response)
+        task.didReceive(data)
+        task.didFinish()
+    }
+
+    private func pngDataForAssetIcon(
+        named name: String
+    ) -> Data? {
+        #if os(iOS)
+        return UIImage(named: name)?.pngData()
+        #elseif os(macOS)
+        guard
+            let image = NSImage(named: NSImage.Name(name)),
+            let tiffData = image.tiffRepresentation,
+            let bitmap = NSBitmapImageRep(data: tiffData)
+        else {
+            return nil
+        }
+
+        return bitmap.representation(
+            using: .png,
+            properties: [:]
+        )
+        #else
+        return nil
+        #endif
+    }
+
+    private func transparentPNGData() -> Data {
+        Data(
+            base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        ) ?? Data()
     }
 
     private func mimeType(

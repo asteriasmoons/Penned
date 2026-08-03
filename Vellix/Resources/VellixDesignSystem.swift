@@ -69,6 +69,7 @@ struct IconTile: View {
                     .opacity(VellixAssetIconLibrary.names.contains(systemName ?? "") ? 0 : 1)
                 if let systemName, VellixAssetIconLibrary.names.contains(systemName) {
                     Image(systemName)
+                        .renderingMode(.template)
                         .resizable()
                         .scaledToFit()
                         .padding(size * 0.24)
