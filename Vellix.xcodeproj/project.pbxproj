@@ -8,6 +8,17 @@
 
 /* Begin PBXBuildFile section */
 		CFA16E13301AD193007825F0 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = CFA16E12301AD193007825F0 /* GRDB */; };
+		CFB7A20130D0A10000A17A01 /* Tasks/DocumentTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7A21130D0A10000A17A01 /* Tasks/DocumentTask.swift */; };
+		CFB7A20230D0A10000A17A01 /* Tasks/DocumentTaskRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7A21230D0A10000A17A01 /* Tasks/DocumentTaskRepository.swift */; };
+		CFB7A20330D0A10000A17A01 /* Tasks/TaskNotificationsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7A21330D0A10000A17A01 /* Tasks/TaskNotificationsManager.swift */; };
+		CFB7A20430D0A10000A17A01 /* Editor/TaskEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7A21430D0A10000A17A01 /* Editor/TaskEditorSheet.swift */; };
+		CFB7C20130D0A10000A17A01 /* Calendar/CalendarAgenda.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7C21130D0A10000A17A01 /* Calendar/CalendarAgenda.swift */; };
+		CFB7C20230D0A10000A17A01 /* Calendar/AppleCalendarService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7C21230D0A10000A17A01 /* Calendar/AppleCalendarService.swift */; };
+		CFB7C20330D0A10000A17A01 /* Calendar/CalendarEventNoteRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7C21330D0A10000A17A01 /* Calendar/CalendarEventNoteRepository.swift */; };
+		CFB7C20430D0A10000A17A01 /* Calendar/CalendarModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7C21430D0A10000A17A01 /* Calendar/CalendarModel.swift */; };
+		CFB7C20530D0A10000A17A01 /* Calendar/CalendarAgendaRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7C21530D0A10000A17A01 /* Calendar/CalendarAgendaRows.swift */; };
+		CFB7C20630D0A10000A17A01 /* Calendar/CalendarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7C21630D0A10000A17A01 /* Calendar/CalendarView.swift */; };
+		CFB7C20730D0A10000A17A01 /* Calendar/CalendarEventDetailSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7C21730D0A10000A17A01 /* Calendar/CalendarEventDetailSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -31,12 +42,42 @@
 		CFA16D67301AC182007825F0 /* Vellix.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Vellix.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CFA16D74301AC183007825F0 /* VellixTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VellixTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CFA16D7E301AC183007825F0 /* VellixUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VellixUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		CFB7A21130D0A10000A17A01 /* Tasks/DocumentTask.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tasks/DocumentTask.swift; sourceTree = "<group>"; };
+		CFB7A21230D0A10000A17A01 /* Tasks/DocumentTaskRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tasks/DocumentTaskRepository.swift; sourceTree = "<group>"; };
+		CFB7A21330D0A10000A17A01 /* Tasks/TaskNotificationsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tasks/TaskNotificationsManager.swift; sourceTree = "<group>"; };
+		CFB7A21430D0A10000A17A01 /* Editor/TaskEditorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Editor/TaskEditorSheet.swift; sourceTree = "<group>"; };
+		CFB7C21130D0A10000A17A01 /* Calendar/CalendarAgenda.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Calendar/CalendarAgenda.swift; sourceTree = "<group>"; };
+		CFB7C21230D0A10000A17A01 /* Calendar/AppleCalendarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Calendar/AppleCalendarService.swift; sourceTree = "<group>"; };
+		CFB7C21330D0A10000A17A01 /* Calendar/CalendarEventNoteRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Calendar/CalendarEventNoteRepository.swift; sourceTree = "<group>"; };
+		CFB7C21430D0A10000A17A01 /* Calendar/CalendarModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Calendar/CalendarModel.swift; sourceTree = "<group>"; };
+		CFB7C21530D0A10000A17A01 /* Calendar/CalendarAgendaRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Calendar/CalendarAgendaRows.swift; sourceTree = "<group>"; };
+		CFB7C21630D0A10000A17A01 /* Calendar/CalendarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Calendar/CalendarView.swift; sourceTree = "<group>"; };
+		CFB7C21730D0A10000A17A01 /* Calendar/CalendarEventDetailSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Calendar/CalendarEventDetailSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		CFA16DA5301AC3D4007825F0 /* Exceptions for "Vellix" folder in "Vellix" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Calendar/AppleCalendarService.swift,
+				Calendar/CalendarAgenda.swift,
+				Calendar/CalendarAgendaRows.swift,
+				Calendar/CalendarEventDetailSheet.swift,
+				Calendar/CalendarEventNoteRepository.swift,
+				Calendar/CalendarModel.swift,
+				Calendar/CalendarView.swift,
+				Editor/TaskEditorSheet.swift,
+				Resources/LaunchInfo.plist,
+				Tasks/DocumentTask.swift,
+				Tasks/DocumentTaskRepository.swift,
+				Tasks/TaskNotificationsManager.swift,
+				VellixTests/CalendarTests.swift,
+				VellixTests/CollectionTests.swift,
+				VellixTests/DocumentLaunchTests.swift,
+				VellixTests/DocumentPreviewTests.swift,
+				VellixTests/DocumentTaskTests.swift,
+				VellixTests/FolderLibraryTests.swift,
+				VellixTests/PageCardTests.swift,
 				VellixTests/VellixTests.swift,
 				VellixUITests/VellixUITests.swift,
 				VellixUITests/VellixUITestsLaunchTests.swift,
@@ -46,6 +87,13 @@
 		CFA16DA6301AC3D4007825F0 /* Exceptions for "Vellix" folder in "VellixTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				VellixTests/CalendarTests.swift,
+				VellixTests/CollectionTests.swift,
+				VellixTests/DocumentLaunchTests.swift,
+				VellixTests/DocumentPreviewTests.swift,
+				VellixTests/DocumentTaskTests.swift,
+				VellixTests/FolderLibraryTests.swift,
+				VellixTests/PageCardTests.swift,
 				VellixTests/VellixTests.swift,
 			);
 			target = CFA16D73301AC183007825F0 /* VellixTests */;
@@ -104,6 +152,8 @@
 			children = (
 				CFA16D68301AC182007825F0 /* Products */,
 				CFA16D69301AC182007825F0 /* Vellix */,
+				CFB7A22030D0A10000A17A01 /* Task Sources */,
+				CFB7C22030D0A10000A17A01 /* Calendar Sources */,
 			);
 			sourceTree = "<group>";
 		};
@@ -115,6 +165,33 @@
 				CFA16D7E301AC183007825F0 /* VellixUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		CFB7A22030D0A10000A17A01 /* Task Sources */ = {
+			isa = PBXGroup;
+			children = (
+				CFB7A21130D0A10000A17A01 /* Tasks/DocumentTask.swift */,
+				CFB7A21230D0A10000A17A01 /* Tasks/DocumentTaskRepository.swift */,
+				CFB7A21330D0A10000A17A01 /* Tasks/TaskNotificationsManager.swift */,
+				CFB7A21430D0A10000A17A01 /* Editor/TaskEditorSheet.swift */,
+			);
+			name = "Task Sources";
+			path = Vellix;
+			sourceTree = "<group>";
+		};
+		CFB7C22030D0A10000A17A01 /* Calendar Sources */ = {
+			isa = PBXGroup;
+			children = (
+				CFB7C21130D0A10000A17A01 /* Calendar/CalendarAgenda.swift */,
+				CFB7C21230D0A10000A17A01 /* Calendar/AppleCalendarService.swift */,
+				CFB7C21330D0A10000A17A01 /* Calendar/CalendarEventNoteRepository.swift */,
+				CFB7C21430D0A10000A17A01 /* Calendar/CalendarModel.swift */,
+				CFB7C21530D0A10000A17A01 /* Calendar/CalendarAgendaRows.swift */,
+				CFB7C21630D0A10000A17A01 /* Calendar/CalendarView.swift */,
+				CFB7C21730D0A10000A17A01 /* Calendar/CalendarEventDetailSheet.swift */,
+			);
+			name = "Calendar Sources";
+			path = Vellix;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -259,6 +336,17 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CFB7C20130D0A10000A17A01 /* Calendar/CalendarAgenda.swift in Sources */,
+				CFB7C20230D0A10000A17A01 /* Calendar/AppleCalendarService.swift in Sources */,
+				CFB7C20330D0A10000A17A01 /* Calendar/CalendarEventNoteRepository.swift in Sources */,
+				CFB7C20430D0A10000A17A01 /* Calendar/CalendarModel.swift in Sources */,
+				CFB7C20530D0A10000A17A01 /* Calendar/CalendarAgendaRows.swift in Sources */,
+				CFB7C20630D0A10000A17A01 /* Calendar/CalendarView.swift in Sources */,
+				CFB7C20730D0A10000A17A01 /* Calendar/CalendarEventDetailSheet.swift in Sources */,
+				CFB7A20130D0A10000A17A01 /* Tasks/DocumentTask.swift in Sources */,
+				CFB7A20230D0A10000A17A01 /* Tasks/DocumentTaskRepository.swift in Sources */,
+				CFB7A20330D0A10000A17A01 /* Tasks/TaskNotificationsManager.swift in Sources */,
+				CFB7A20430D0A10000A17A01 /* Editor/TaskEditorSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -423,7 +511,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
 				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
-				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
 				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
 				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
@@ -431,6 +519,10 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Vellix/Resources/LaunchInfo.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Penned;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Penned displays your Apple Calendar events alongside document tasks and links your event notes. Penned does not modify your Apple Calendar events.";
+				"INFOPLIST_KEY_NSCalendarsUsageDescription[sdk=macosx*]" = "Penned displays your calendar events and links event notes.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -478,7 +570,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
 				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
-				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
 				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
 				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
@@ -486,6 +578,10 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Vellix/Resources/LaunchInfo.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Penned;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Penned displays your Apple Calendar events alongside document tasks and links your event notes. Penned does not modify your Apple Calendar events.";
+				"INFOPLIST_KEY_NSCalendarsUsageDescription[sdk=macosx*]" = "Penned displays your calendar events and links event notes.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;

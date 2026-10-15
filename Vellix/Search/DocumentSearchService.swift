@@ -30,7 +30,8 @@ final class DocumentSearchService: @unchecked Sendable {
         }
 
         return try database.read { db in
-            try Row.fetchAll(
+            let hierarchy = FolderHierarchy(folders: try FolderRecord.fetchAll(db))
+            return try Row.fetchAll(
                 db,
                 sql: """
                     SELECT
@@ -40,14 +41,14 @@ final class DocumentSearchService: @unchecked Sendable {
                         d.icon AS icon,
                         d.updatedAt AS updatedAt,
                         d.isFavorite AS isFavorite,
+                        d.folderID AS folderID,
                         s.title AS spaceTitle,
-                        f.title AS folderTitle,
                         snippet(documentSearch, 3, '', '', '...', 14) AS excerpt
                     FROM documentSearch
                     JOIN documents d ON d.id = documentSearch.documentID
                     LEFT JOIN spaces s ON s.id = d.spaceID
-                    LEFT JOIN folders f ON f.id = d.folderID
                     WHERE documentSearch MATCH ?
+                      AND d.templateID IS NULL
                       AND (? OR d.isTrashed = 0)
                     ORDER BY rank
                     LIMIT 50
@@ -55,8 +56,9 @@ final class DocumentSearchService: @unchecked Sendable {
                 arguments: [searchQuery, includeTrash]
             )
             .map { row in
-                let location = [row["spaceTitle"] as String?, row["folderTitle"] as String?]
-                    .compactMap { $0 }
+                let folderID: String? = row["folderID"]
+                let folderPath = folderID.map { hierarchy.path(to: $0).map(\.title) } ?? []
+                let location = ([row["spaceTitle"] as String?].compactMap { $0 } + folderPath)
                     .filter { !$0.isEmpty }
                     .joined(separator: " / ")
 
@@ -89,7 +91,7 @@ final class DocumentSearchService: @unchecked Sendable {
                 sql: """
                     SELECT * FROM templates
                     WHERE lower(title) LIKE ? OR lower(templateDescription) LIKE ?
-                    ORDER BY isBuiltIn DESC, title ASC
+                    ORDER BY title ASC
                     """,
                 arguments: ["%\(normalized)%", "%\(normalized)%"]
             )

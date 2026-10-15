@@ -63,16 +63,16 @@ struct IconTile: View {
             .fill(tint.opacity(0.11))
             .frame(width: size, height: size)
             .overlay {
-                Image(systemName: systemName ?? "doc.text")
-                    .font(.system(size: size * 0.43, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .opacity(VellixAssetIconLibrary.names.contains(systemName ?? "") ? 0 : 1)
                 if let systemName, VellixAssetIconLibrary.names.contains(systemName) {
                     Image(systemName)
                         .renderingMode(.template)
                         .resizable()
                         .scaledToFit()
                         .padding(size * 0.24)
+                        .foregroundStyle(tint)
+                } else {
+                    Image(systemName: systemName.map { VellixAssetIcon(name: $0).systemName ?? $0 } ?? "doc.text")
+                        .font(.system(size: size * 0.43, weight: .semibold))
                         .foregroundStyle(tint)
                 }
             }
@@ -116,7 +116,7 @@ struct WorkspacePill: View {
 }
 
 struct SaveStatusIndicator: View {
-    var state: EditorSaveState
+    var state: TipTapSaveState
 
     var body: some View {
         HStack(spacing: 6) {
@@ -185,6 +185,7 @@ struct VellixEmptyState: View {
     var message: String
     var systemImage: String
     var actionTitle: String?
+    var actionIcon = "plainpencil"
     var action: (() -> Void)?
 
     var body: some View {
@@ -192,16 +193,27 @@ struct VellixEmptyState: View {
             IconTile(systemName: systemImage, size: 52, tint: VellixSurface.accent)
             Text(title)
                 .font(.system(.title3, design: .rounded).weight(.semibold))
-            Text(message)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 390)
+            if !message.isEmpty {
+                Text(message)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 390)
+            }
             if let actionTitle, let action {
                 Button(action: action) {
-                    Label(actionTitle, systemImage: "square.and.pencil")
+                    HStack(spacing: 8) {
+                        Image(actionIcon)
+                            .renderingMode(.template)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 18, height: 18)
+                        Text(actionTitle)
+                    }
+                    .foregroundStyle(.black)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.white)
                 .controlSize(.large)
             }
         }

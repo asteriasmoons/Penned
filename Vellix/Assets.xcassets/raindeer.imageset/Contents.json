@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "raindeer.pdf",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

@@ -43,7 +43,7 @@ struct VellixCommands: Commands {
             Divider()
 
             Button("Search") {
-                environment.selectedDestination = .search
+                environment.focusLibrarySearch()
             }
             .keyboardShortcut("f", modifiers: .command)
 

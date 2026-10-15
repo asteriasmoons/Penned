@@ -12,91 +12,242 @@ import UIKit
 import AppKit
 #endif
 
+private enum DocumentEditorCoordinateSpace {
+    static let workspace = "DocumentEditorWorkspace"
+}
+
+#if canImport(UIKit)
+/// Holds a weak reference to the document's backing UIScrollView so the editor can
+/// drive it programmatically (e.g. lifting a table above the editing sheet).
+final class DocumentScrollProxy {
+    weak var scrollView: UIScrollView?
+    var pendingCaretRevision: Int?
+    var caretRevealQueued = false
+    private var topBoundaryObservation: NSKeyValueObservation?
+
+    func attach(to scrollView: UIScrollView) {
+        guard self.scrollView !== scrollView else { return }
+        topBoundaryObservation?.invalidate()
+        self.scrollView = scrollView
+        topBoundaryObservation = scrollView.observe(\.contentOffset, options: [.initial, .new]) { scrollView, _ in
+            let top = -scrollView.adjustedContentInset.top
+            guard scrollView.contentOffset.y < top else { return }
+            // Clamp only the top edge; bottom overscroll remains native.
+            scrollView.contentOffset = CGPoint(x: scrollView.contentOffset.x, y: top)
+        }
+    }
+}
+
+/// Transparent probe placed inside the document ScrollView; it walks up to the
+/// enclosing UIScrollView and hands it to the proxy. Does not affect layout or hit-testing.
+private struct DocumentScrollViewFinder: UIViewRepresentable {
+    let proxy: DocumentScrollProxy
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        DispatchQueue.main.async { locate(from: view) }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        if proxy.scrollView == nil {
+            DispatchQueue.main.async { locate(from: uiView) }
+        }
+    }
+
+    private func locate(from view: UIView) {
+        var candidate: UIView? = view.superview
+        while let current = candidate {
+            if let scrollView = current as? UIScrollView {
+                proxy.attach(to: scrollView)
+                return
+            }
+            candidate = current.superview
+        }
+    }
+}
+#endif
+
+private struct EditorSurfaceFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
+private struct SavedDocumentBodyHeightPreference: PreferenceKey {
+    static var defaultValue: CGFloat { 0 }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+private struct PageSheetEditorBoundsPreferenceKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>?
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
 struct DocumentEditorView: View {
     @EnvironmentObject private var environment: AppEnvironment
-    @StateObject private var model: EditorCoordinatorModel
+    @Environment(\.openURL) private var openURL
+    @ObservedObject private var model: DocumentEditorModel
     @State private var titleText = ""
+    @FocusState private var isTitleFocused: Bool
     @State private var showSnapshots = false
     @State private var showAppearance = false
     @State private var showIconPicker = false
     @State private var showCalloutIconPicker = false
+    @State private var blockquoteColorRequest: BlockquoteColorRequest?
+    @State private var propertyEditorRequest: InlinePropertyEditorRequest?
+    @State private var collectionEditorRequest: CollectionEditorRequest?
+    @State private var collectionEntryIDs = Set<String>()
+    @State private var propertyEditorReturnTarget: (documentID: String, blockID: String)?
+    @State private var selectedBlockquoteColor = Color.white
     @State private var localAppearance = DocumentAppearance.plain
     @State private var localCover: String?
-    @State private var coverPickerItem: PhotosPickerItem?
-    @State private var editorBackgroundPickerItem: PhotosPickerItem?
-    @State private var innerBackgroundPickerItem: PhotosPickerItem?
     @State private var calloutText = ""
     @State private var calloutIcon = "sparkle"
     @State private var calloutIconTargetBlockID: String?
     @State private var selectedCalloutColor = Color.white
     @State private var editorContentHeight: CGFloat = 320
+    @State private var editorVisualContentBottom: CGFloat = 320
     @State private var selectedBlockCount = 0
     @State private var isEditingDocument = false
+    @State private var isKeyboardVisible = false
+    @State private var isEditorLocked = false
     @State private var showSelectedActions = false
+    @State private var selectionMode: EditorSelectionMode = .off
     @State private var selectedStylePanel: SelectionStylePanel?
+    @State private var editorSurfaceFrame: CGRect = .zero
+    #if canImport(UIKit)
+    @State private var documentScrollProxy = DocumentScrollProxy()
+    @State private var keyboardFrame = CGRect.null
+    #endif
+    @State private var slashMenuState: TipTapSlashMenuState?
+    @State private var pageBreakRegions: [TipTapPageBreakRegion] = []
+    @State private var collectionRegions: [TipTapCollectionRegion] = []
+    @State private var presentationReady = false
+    @State private var savedBodyHeight: CGFloat = 0
+    @State private var pageDeletionTarget: DocumentRecord?
+    @State private var placeholderMode = false
+    @State private var canUseTemplateControls = false
+    @State private var editorBanner: EditorStatusBanner?
 
-    init(environment: AppEnvironment) {
-        _model = StateObject(
-            wrappedValue: EditorCoordinatorModel(
-                documentRepository: environment.documents,
-                snapshotRepository: environment.snapshots
-            )
-        )
+    init(model: DocumentEditorModel) {
+        self.model = model
+        _editorContentHeight = State(initialValue: model.session.editorContentHeight)
+        _editorVisualContentBottom = State(initialValue: model.session.editorVisualContentBottom)
+        _pageBreakRegions = State(initialValue: model.session.pageBreakRegions)
+        _collectionRegions = State(initialValue: model.session.collectionRegions)
+        _presentationReady = State(initialValue: model.session.isPresentationReady)
+        _placeholderMode = State(initialValue: model.session.placeholderMode)
+        _canUseTemplateControls = State(initialValue: model.session.isReady && !model.session.isLoadingDocument)
     }
 
-    var body: some View {
+    private var editorContent: some View {
         ZStack {
             VellixSurface.appBackground.ignoresSafeArea()
 
             if let document = model.document {
                 documentWorkspace(document)
-            } else {
-                VellixEmptyState(
-                    title: "Choose a page",
-                    message: "Open a page from the library or create a new one. The editor will appear here immediately.",
-                    systemImage: "doc.text.magnifyingglass",
-                    actionTitle: "New Page"
-                ) {
-                    _ = environment.createDocument()
-                }
-                .frame(maxWidth: 520)
-                .vellixPaper()
-                .padding(VellixSpacing.xl)
             }
         }
         .onAppear {
-            loadSelectedDocument()
+            syncLocalState()
+            if environment.selectedDocumentID == model.documentID {
+                updateCollectionPresentation()
+            }
         }
-        .onChange(of: environment.selectedDocumentID) { _, _ in
-            loadSelectedDocument()
+        .onReceive(environment.collections.$revision) { _ in updateCollectionPresentation() }
+        .onChange(of: model.pageReferenceIDs) { _, _ in updateCollectionPresentation() }
+        .onReceive(model.$collectionEditorRequest) { request in
+            guard let request else { return }
+            model.collectionEditorRequest = nil
+            handleCollectionRequest(request)
+        }
+        .onReceive(model.session.$placeholderMode) { placeholderMode = $0 }
+        .onReceive(model.$taskFeedback) { message in
+            guard let message, environment.selectedDocumentID == model.documentID else { return }
+            showEditorBanner(message, icon: "clockfill")
+            model.taskFeedback = nil
+        }
+        .onChange(of: placeholderMode) { _, active in
+            guard model.document?.templateID != nil, environment.selectedDocumentID == model.documentID else { return }
+            showEditorBanner(active ? "Placeholder Mode On" : "Placeholder Mode Off", icon: "linedpages")
+        }
+        .onReceive(model.session.$isReady) { ready in
+            canUseTemplateControls = ready && !model.session.isLoadingDocument
+        }
+        .onReceive(model.session.$isLoadingDocument) { loading in
+            canUseTemplateControls = model.session.isReady && !loading
+        }
+        .task(id: editorBanner?.id) {
+            guard editorBanner != nil else { return }
+            do { try await Task.sleep(for: .seconds(3)) }
+            catch { return }
+            withAnimation(.easeOut(duration: 0.18)) { editorBanner = nil }
+        }
+        .onChange(of: environment.selectedDocumentID) { oldValue, newValue in
+            if newValue == model.documentID {
+                updateCollectionPresentation()
+            }
+            guard oldValue == model.documentID, newValue != model.documentID else {
+                return
+            }
+            deactivateEditor()
         }
         .onChange(of: model.document?.id) { _, _ in
+            editorBanner = nil
             syncLocalState()
         }
         .onChange(of: model.document?.title) { _, newValue in
-            titleText = newValue ?? ""
+            if !isTitleFocused { titleText = newValue ?? "" }
+        }
+        .onChange(of: isTitleFocused) { _, focused in
+            if !focused { persistTitle() }
         }
         .onChange(of: localAppearance) { _, newValue in
-            guard model.document != nil else { return }
+            guard model.document != nil, model.appearance != newValue else { return }
             model.updateAppearance(cover: localCover, appearance: newValue)
             environment.refresh()
         }
         .onChange(of: localCover) { _, newValue in
-            guard model.document != nil else { return }
+            guard let document = model.document, document.cover != newValue else { return }
             model.updateAppearance(cover: newValue, appearance: localAppearance)
             environment.refresh()
         }
-        .onChange(of: coverPickerItem) { _, newValue in
-            importPickedImage(newValue, target: .cover)
-        }
-        .onChange(of: editorBackgroundPickerItem) { _, newValue in
-            importPickedImage(newValue, target: .editorBackground)
-        }
-        .onChange(of: innerBackgroundPickerItem) { _, newValue in
-            importPickedImage(newValue, target: .innerBackground)
-        }
         .onReceive(model.session.$editorContentHeight) { newHeight in
-            editorContentHeight = max(60, min(newHeight, 12_000))
+            let clampedHeight = max(60, newHeight)
+            guard abs(editorContentHeight - clampedHeight) > 1 else { return }
+            editorContentHeight = clampedHeight
+        }
+        #if os(iOS)
+        .onReceive(model.session.caretUpdates) { update in
+            if update == nil { documentScrollProxy.pendingCaretRevision = nil }
+            else { queueCaretReveal() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { notification in
+            isKeyboardVisible = true
+            updateKeyboardFrame(notification)
+            model.session.requestCaretVisibility()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+            updateKeyboardFrame(notification)
+            queueCaretReveal()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            isKeyboardVisible = false
+            keyboardFrame = .null
+        }
+        #endif
+        .onReceive(model.session.$editorVisualContentBottom) { newBottom in
+            let clampedBottom = max(0, newBottom)
+            guard abs(editorVisualContentBottom - clampedBottom) > 1 else { return }
+            editorVisualContentBottom = clampedBottom
         }
         .onReceive(model.session.$selectedBlockCount) { newCount in
             selectedBlockCount = newCount
@@ -104,29 +255,107 @@ struct DocumentEditorView: View {
                 selectedStylePanel = nil
             }
         }
+        .onReceive(model.session.$selectionMode) { mode in
+            let nextMode = EditorSelectionMode(rawValue: mode) ?? .off
+            guard selectionMode != nextMode else { return }
+            selectionMode = nextMode
+            if nextMode == .off {
+                selectedBlockCount = 0
+                selectedStylePanel = nil
+            }
+        }
         .onReceive(model.session.$isEditing) { isEditing in
             isEditingDocument = isEditing
+            if !isEditing {
+                editorContentHeight = max(60, model.session.editorContentHeight)
+                editorVisualContentBottom = max(
+                    0,
+                    model.session.editorVisualContentBottom
+                )
+            }
+        }
+        .onReceive(model.session.$slashMenuState) { state in
+            slashMenuState = state
+        }
+        .onReceive(model.session.$pageBreakRegions) { regions in
+            pageBreakRegions = regions
+        }
+        .onReceive(model.session.$collectionRegions) { collectionRegions = $0 }
+        .onReceive(model.session.$isPresentationReady) { ready in
+            presentationReady = ready
+            if !ready { savedBodyHeight = 0 }
+        }
+        .onPreferenceChange(SavedDocumentBodyHeightPreference.self) { savedBodyHeight = $0 }
+        .onReceive(model.$nestedPageActionTarget) { page in
+            guard let page else { return }
+            model.nestedPageActionTarget = nil
+            guard !isEditorLocked, selectionMode == .off,
+                  environment.selectedDocumentID == model.documentID else { return }
+            dismissKeyboard()
+            pageDeletionTarget = page
         }
         .onReceive(model.$calloutIconRequest) { request in
             guard let request else { return }
             calloutIconTargetBlockID = request.blockID
             calloutIcon = request.icon
+            selectedCalloutColor = Color(vellixHex: request.color)
             showCalloutIconPicker = true
         }
-        .onDisappear {
-            model.flushPendingSave()
+        .onReceive(model.$blockquoteColorRequest) { request in
+            guard let request else { return }
+            selectedBlockquoteColor = Color(vellixHex: request.color)
+            blockquoteColorRequest = request
+        }
+        .onReceive(model.$propertyEditorRequest) { request in
+            guard let request else { return }
+            dismissKeyboard()
+            propertyEditorReturnTarget = (model.documentID, request.blockID)
+            propertyEditorRequest = request
+            model.propertyEditorRequest = nil
+        }
+        .onReceive(model.$propertyURLRequest) { request in
+            guard let request, let url = InlinePropertyDefinition.safeURL(request.url) else { return }
+            openURL(url)
+            model.propertyURLRequest = nil
+        }
+        .onReceive(model.$appearance) { appearance in
+            localAppearance = appearance
+        }
+        .onReceive(model.$nestedPageToOpen) { child in
+            guard let child, environment.selectedDocumentID == model.documentID else { return }
+            model.nestedPageToOpen = nil
             environment.refresh()
+            environment.select(child)
+        }
+        .onDisappear {
+            editorBanner = nil
+            persistTitle()
+            dismissKeyboard()
+            model.flushPendingSave()
+        }
+    }
+
+    var body: some View {
+        editorContent
+        .sheet(item: $collectionEditorRequest) { request in
+            collectionSheet(request)
+        }
+        .sheet(item: $model.taskEditorRequest) { request in
+            TaskEditorSheet(model: model, notifications: environment.taskNotifications, request: request)
+        }
+        .sheet(item: $model.tableEditorRequest, onDismiss: { model.session.tableAction("close") }) { request in
+            TableEditorSheet(model: model, request: request)
         }
         .sheet(isPresented: $showAppearance) {
-            EditorAppearanceSheet(
-                appearance: $localAppearance,
-                cover: $localCover,
-                coverPickerItem: $coverPickerItem,
-                editorBackgroundPickerItem: $editorBackgroundPickerItem,
-                innerBackgroundPickerItem: $innerBackgroundPickerItem
-            )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            DocumentStyleSheet(
+                documentID: model.documentID,
+                definition: DocumentStyleDefinition(appearance: localAppearance, cover: localCover)
+            ) { style in
+                model.updateAppearance(cover: style.cover, appearance: style.appearance)
+                localAppearance = style.appearance
+                localCover = style.cover
+                environment.refresh()
+            }
         }
         .sheet(isPresented: $showIconPicker) {
             VellixIconLibraryPicker(title: "Page Icon") { icon in
@@ -136,8 +365,52 @@ struct DocumentEditorView: View {
             }
             .presentationDetents([.medium, .large])
         }
+        .sheet(item: $blockquoteColorRequest) { request in
+            NavigationStack {
+                VellixBlockColorControls(
+                    title: "Blockquote Color",
+                    selection: $selectedBlockquoteColor,
+                    onColorChange: { color in
+                        model.session.updateBlockquoteColor(
+                            blockID: request.blockID,
+                            color: color.vellixHexString(fallback: "#ffffff")
+                        )
+                    }
+                )
+                .frame(maxHeight: .infinity, alignment: .top)
+                .background(VellixSurface.appBackground)
+                .navigationTitle("Blockquote Color")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") { blockquoteColorRequest = nil }
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $propertyEditorRequest, onDismiss: resumeEditingAfterProperty) { request in
+            InlinePropertyEditorSheet(property: request.property,
+                editingGuidance: model.document?.templateID != nil && placeholderMode, onSave: { property in
+                model.session.updateInlineProperty(blockID: request.blockID, property: property)
+            }, onDelete: {
+                model.session.deleteInlineProperty(blockID: request.blockID)
+            })
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
         .sheet(isPresented: $showCalloutIconPicker) {
-            VellixIconLibraryPicker(title: "Callout Icon") { icon in
+            VellixIconLibraryPicker(
+                title: "Callout Style",
+                colorSelection: $selectedCalloutColor,
+                onColorChange: { color in
+                    guard let calloutIconTargetBlockID else { return }
+                    model.session.updateCalloutColor(
+                        blockID: calloutIconTargetBlockID,
+                        color: color.vellixHexString(fallback: "#ffffff")
+                    )
+                }
+            ) { icon in
                 calloutIcon = icon.name
                 if let calloutIconTargetBlockID {
                     model.session.updateCalloutIcon(blockID: calloutIconTargetBlockID, icon: icon.name)
@@ -171,8 +444,52 @@ struct DocumentEditorView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
+        .sheet(item: $model.cardEditorRequest, onDismiss: { model.cancelCardInsertion() }) { request in
+            PageCardEditorSheet(request: request, store: environment.attachmentStore) { style, imageData in
+                try await model.savePageCard(request: request, style: style, imageData: imageData)
+                environment.refresh()
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .confirmationDialog("Page", isPresented: Binding(
+            get: { pageDeletionTarget != nil },
+            set: { if !$0 { pageDeletionTarget = nil } }
+        ), titleVisibility: .visible) {
+            if let page = pageDeletionTarget {
+                Button(page.cardStyle == nil ? "Show as Card" : "Card Style") {
+                    guard !isEditorLocked else { return }
+                    pageDeletionTarget = nil
+                    model.editPageCard(page)
+                }
+                Button("Delete Page", role: .destructive) {
+                    guard !isEditorLocked else { return }
+                    model.trashChildPage(id: page.id)
+                    pageDeletionTarget = nil
+                    environment.refresh()
+                }
+            }
+            Button("Cancel", role: .cancel) { pageDeletionTarget = nil }
+        } message: {
+            Text("This page and its nested pages will move to Trash. You can restore them later.")
+        }
+        .alert("Convert this text to placeholder guidance?", isPresented: Binding(
+            get: { model.placeholderConversionToken != nil },
+            set: { if !$0 { model.placeholderConversionToken = nil } }
+        )) {
+            if let token = model.placeholderConversionToken {
+                Button("Convert to Guidance") {
+                    model.session.placeholderAction("convert", token: token)
+                    model.placeholderConversionToken = nil
+                }
+            }
+            Button("Keep as Content", role: .cancel) {
+                model.session.cancelPlaceholderConversion()
+                model.placeholderConversionToken = nil
+            }
+        }
         .alert("Editor", isPresented: Binding(
-            get: { model.errorMessage != nil || model.session.bridgeErrorMessage != nil },
+            get: { model.tableEditorRequest == nil && model.taskEditorRequest == nil && (model.errorMessage != nil || model.session.bridgeErrorMessage != nil) },
             set: {
                 if !$0 {
                     model.errorMessage = nil
@@ -184,7 +501,7 @@ struct DocumentEditorView: View {
         } message: {
             Text(model.errorMessage ?? model.session.bridgeErrorMessage ?? "")
         }
-        .vellixHideEditorNavigationBar()
+        .vellixHideEditorNavigationBar(isActive: environment.selectedDocumentID != nil)
     }
 
     private func documentWorkspace(_ document: DocumentRecord) -> some View {
@@ -192,239 +509,768 @@ struct DocumentEditorView: View {
 
         return GeometryReader { proxy in
             let isCompact = proxy.size.width < 620
+            let editorBackground = appearance.themeID == nil
+                ? DocumentAppearance.plain.editorBackground
+                : appearance.editorBackground
             let horizontalPadding: CGFloat = appearance.themeID == nil
-                ? (isCompact ? 16 : 30)
+                ? (isCompact ? 10 : 30)
                 : (isCompact ? 8 : 30)
-            let topPadding: CGFloat = appearance.themeID == nil
-                ? (isCompact ? 146 : 150)
-                : (isCompact ? 112 : 150)
+            let topPadding: CGFloat = isCompact ? 74 : 150
             let bottomPadding: CGFloat = isCompact ? 118 : 140
 
-            ZStack {
-                DocumentBackgroundLayer(style: appearance.editorBackground, theme: appearance.themeID)
+            ZStack(alignment: .topLeading) {
+                DocumentBackgroundLayer(style: editorBackground, theme: appearance.themeID)
                     .ignoresSafeArea()
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: appearance.themeID == nil ? 0 : 30) {
                         if appearance.themeID == nil {
-                            plainDocument(document, appearance: appearance, isCompact: isCompact)
+                            plainDocument(
+                                document,
+                                appearance: appearance,
+                                isCompact: isCompact,
+                                minimumHeight: max(0, proxy.size.height - topPadding - bottomPadding)
+                            )
                         } else {
-                            themedDocument(document, appearance: appearance, isCompact: isCompact)
+                            themedDocument(
+                                document,
+                                appearance: appearance,
+                                isCompact: isCompact,
+                                bottomPadding: isCompact ? 4 : 8
+                            )
                         }
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, horizontalPadding)
                     .padding(.top, topPadding)
                     .padding(.bottom, bottomPadding)
+                    .background(documentScrollFinder())
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    #if os(iOS)
+                    if isEditingDocument && isKeyboardVisible && selectionMode == .off && !isEditorLocked {
+                        Color.clear
+                            .frame(height: EditorKeyboardFormattingToolbar.height + EditorKeyboardFormattingToolbar.bottomPadding + 8)
+                            .allowsHitTesting(false)
+                    }
+                    #endif
+                }
+                .onPreferenceChange(EditorSurfaceFramePreferenceKey.self) { frame in
+                    let resized = frame.size != editorSurfaceFrame.size
+                    editorSurfaceFrame = frame
+                    #if canImport(UIKit)
+                    if resized, documentScrollProxy.pendingCaretRevision != nil { queueCaretReveal() }
+                    #endif
+                }
+                .onChange(of: model.tableEditorRequest?.id) { _, _ in
+                    scrollTableIntoView(isCompact: isCompact)
                 }
 
                 EditorTopControls(
                     document: document,
                     isThemed: appearance.themeID != nil,
                     isCompact: isCompact,
-                    isSelectionMode: selectedBlockCount > 0
+                    isSelectionMode: selectionMode != .off && !isEditorLocked,
+                    isEditorLocked: isEditorLocked,
+                    placeholderMode: placeholderMode,
+                    canSaveTemplate: canUseTemplateControls && !model.isSavingTemplate
+                        && (model.templateNeedsSave || hasTitleChanges),
+                    isSavingTemplate: model.isSavingTemplate
                 ) {
-                    environment.selectedDocumentID = nil
+                    Task {
+                        do {
+                            try await model.captureAndSave()
+                            environment.returnFromDocument(model.document ?? document)
+                        } catch { model.errorMessage = error.localizedDescription }
+                    }
+                } lockAction: {
+                    toggleEditorLock()
                 } shareAction: {
                     model.session.requestSnapshot()
                 } moreAction: {
                     showSnapshots = true
                 } selectionDoneAction: {
-                    model.session.clearBlockSelection()
+                    setSelectionMode(.off)
+                } placeholderModeAction: {
+                    model.session.togglePlaceholderMode()
+                } placeholderAction: {
+                    model.session.placeholderAction($0)
+                } saveTemplateAction: {
+                    persistTitle()
+                    let documentID = model.documentID
+                    Task {
+                        do {
+                            guard try await model.saveTemplateEdits() else { return }
+                            environment.refresh()
+                            guard environment.selectedDocumentID == documentID else { return }
+                            showEditorBanner(model.templateNeedsSave ? "Template saved. New changes pending." : "Template Saved", icon: "checkwavy")
+                        } catch {
+                            model.errorMessage = error.localizedDescription
+                            if environment.selectedDocumentID == documentID {
+                                showEditorBanner("Template could not be saved", icon: "xmarkwavy")
+                            }
+                        }
+                    }
+                } saveAsTemplateAction: {
+                    Task {
+                        do { try await model.captureAndSave(); environment.saveAsTemplate(model.document ?? document) }
+                        catch { model.errorMessage = error.localizedDescription }
+                    }
                 }
                 .padding(.horizontal, isCompact ? 18 : 28)
-                .padding(.top, isCompact ? 10 : 56)
+                .padding(.top, isCompact ? 0 : 56)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
-                if selectedBlockCount > 0 && !isEditingDocument {
-                    SelectedBlocksToolbar(
-                        styleAction: { selectedStylePanel = .page },
-                        actionsAction: { showSelectedActions = true },
+                if let editorBanner {
+                    HStack(spacing: 10) {
+                        LibraryIcon(name: editorBanner.icon, size: 20)
+                        Text(editorBanner.message)
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .multilineTextAlignment(.center).lineLimit(2)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 18).padding(.vertical, 12)
+                    .background(.thinMaterial, in: Capsule())
+                    .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
+                    .frame(maxWidth: 440).padding(.horizontal, 18)
+                    .padding(.top, isCompact ? 58 : 134)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .allowsHitTesting(false).accessibilityElement(children: .combine)
+                    .transition(.opacity).zIndex(100)
+                }
+
+                if selectionMode != .off && !isEditorLocked {
+                    SelectionActionPill(
                         copyAction: { model.session.copySelectedBlocks() },
-                        cutAction: { model.session.cutSelectedBlocks() },
                         duplicateAction: { model.session.duplicateSelectedBlocks() },
-                        deleteAction: { model.session.deleteSelectedBlocks() },
                         groupAction: { model.groupSelectedBlocksIntoChildPage() },
+                        deleteAction: { model.session.deleteSelectedBlocks() },
                         isCompact: isCompact
                     )
-                    .padding(.horizontal, isCompact ? 30 : 34)
-                    .padding(.bottom, isCompact ? 14 : 24)
+                    .padding(.horizontal, isCompact ? 28 : 34)
+                    .padding(.bottom, isCompact ? 18 : 26)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 }
 
-                if let selectedStylePanel, selectedBlockCount > 0 && !isEditingDocument {
-                    SelectedBlockStylePanel(
-                        panel: selectedStylePanel,
-                        isCompact: isCompact,
-                        calloutColor: Binding(
-                            get: { selectedCalloutColor },
-                            set: { newColor in
-                                selectedCalloutColor = newColor
-                                model.session.setSelectedCalloutColor(
-                                    newColor.vellixHexString(fallback: "#ffffff")
-                                )
-                            }
-                        ),
-                        headingAction: { model.session.setSelectedBlockType("heading", level: 3) },
-                        bodyAction: { model.session.setSelectedBlockType("paragraph") },
-                        pageAction: { model.groupSelectedBlocksIntoChildPage() },
-                        checklistAction: { model.session.setSelectedBlockType("checkListItem") },
-                        toggleAction: { model.session.setSelectedBlockType("toggleListItem") },
-                        bulletsAction: { model.session.setSelectedBlockType("bulletListItem") },
-                        numbersAction: { model.session.setSelectedBlockType("numberedListItem") },
-                        outdentAction: { model.session.outdentSelectedBlocks() },
-                        indentAction: { model.session.indentSelectedBlocks() },
-                        quoteAction: { model.session.setSelectedBlockType("quote") },
-                        calloutAction: {
-                            model.session.setSelectedBlockType(
-                                "callout",
-                                color: selectedCalloutColor.vellixHexString(fallback: "#ffffff")
-                            )
-                        },
-                        showPagePanel: { self.selectedStylePanel = .page },
-                        showFormattingPanel: { self.selectedStylePanel = .formatting },
-                        showHeadingPanel: { self.selectedStylePanel = .heading },
-                        dismissAction: { self.selectedStylePanel = nil }
-                    )
-                        .padding(.horizontal, isCompact ? 26 : 34)
-                        .padding(.bottom, isCompact ? 12 : 24)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                }
-
-                if selectedBlockCount == 0 && !isEditingDocument {
+                if selectionMode == .off && selectedBlockCount == 0 && !isEditingDocument && !isEditorLocked {
                     EditorFloatingToolbar(
                         appearanceAction: { showAppearance = true },
-                        iconAction: { showIconPicker = true },
-                        focusAction: { model.session.focus() },
-                        insertDividerAction: { model.session.insertDivider($0) },
-                        pageBreakAction: { model.session.insertPageBreak() },
-                        calloutAction: { showCalloutIconPicker = true },
+                        selectionModeAction: { setSelectionMode($0) },
                         isCompact: isCompact
                     )
-                    .padding(.horizontal, isCompact ? 32 : 34)
-                    .padding(.bottom, isCompact ? 20 : 24)
+                    .padding(.horizontal, isCompact ? 26 : 34)
+                    .padding(.bottom, isCompact ? 0 : 24)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 }
+
+                #if os(iOS)
+                if isEditingDocument && isKeyboardVisible && selectionMode == .off && !isEditorLocked {
+                    EditorKeyboardFormattingToolbar(
+                        boldAction: { model.session.formatCurrentSelection(action: "bold") },
+                        italicAction: { model.session.formatCurrentSelection(action: "italic") },
+                        underlineAction: { model.session.formatCurrentSelection(action: "underline") },
+                        strikeAction: { model.session.formatCurrentSelection(action: "strike") },
+                        codeAction: { model.session.formatCurrentSelection(action: "code") },
+                        alignLeftAction: { model.session.formatCurrentSelection(action: "align", value: "left") },
+                        alignCenterAction: { model.session.formatCurrentSelection(action: "align", value: "center") },
+                        alignRightAction: { model.session.formatCurrentSelection(action: "align", value: "right") },
+                        outdentAction: { model.session.formatCurrentSelection(action: "outdent") },
+                        indentAction: { model.session.formatCurrentSelection(action: "indent") },
+                        checklistAction: { model.session.formatCurrentSelection(action: "checkList") },
+                        taskAction: model.taskContext == nil ? nil : { model.openTaskScheduling(); dismissKeyboard() },
+                        bulletListAction: { model.session.formatCurrentSelection(action: "bulletList") },
+                        numberListAction: { model.session.formatCurrentSelection(action: "numberList") },
+                        iconAction: { showIconPicker = true },
+                        insertBlockAction: { model.session.insertBlock($0) },
+                        insertDividerAction: { model.session.insertDivider($0) },
+                        pageBreakAction: { model.session.insertPageBreak() },
+                        calloutAction: { presentNewCalloutPicker() },
+                        dismissAction: { dismissKeyboard() }
+                    )
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, EditorKeyboardFormattingToolbar.bottomPadding)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .zIndex(90)
+                }
+                #endif
+
+                if let slashMenuState, !isEditorLocked {
+                    slashCommandOverlay(
+                        state: slashMenuState,
+                        proxy: proxy,
+                        isCompact: isCompact
+                    )
+                    .zIndex(80)
+                }
+            }
+            .coordinateSpace(name: DocumentEditorCoordinateSpace.workspace)
+            .onChange(of: proxy.size) { _, _ in
+                #if canImport(UIKit)
+                model.session.requestCaretVisibility()
+                #endif
             }
         }
     }
 
-    private func plainDocument(_ document: DocumentRecord, appearance: DocumentAppearance, isCompact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 26) {
-            TextField("Untitled", text: $titleText)
-                .font(.system(size: isCompact ? 34 : 42, weight: .bold, design: appearance.fontStyle.design))
-                .foregroundStyle(Color(vellixHex: appearance.textColorHex))
-                .textFieldStyle(.plain)
-                .onSubmit {
-                    model.rename(title: titleText)
-                    environment.refresh()
+    private func plainDocument(
+        _ document: DocumentRecord,
+        appearance: DocumentAppearance,
+        isCompact: Bool,
+        minimumHeight: CGFloat
+    ) -> some View {
+        let isPaged = !pageBreakRegions.isEmpty
+
+        return ZStack(alignment: .topLeading) {
+            VStack(alignment: .leading, spacing: isCompact ? 8 : 26) {
+                TextField("Untitled", text: $titleText, axis: .vertical)
+                    .focused($isTitleFocused)
+                    .font(.system(size: isCompact ? 22 : 30, weight: .black, design: appearance.fontStyle.design))
+                    .foregroundStyle(Color(vellixHex: appearance.textColorHex))
+                    .textFieldStyle(.plain)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .allowsHitTesting(!isEditorLocked)
+                    .onSubmit {
+                        model.rename(title: titleText)
+                        environment.refresh()
+                    }
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.07))
+                    .frame(height: 1)
+
+                collectionDocumentFields(appearance: appearance)
+
+                VStack(spacing: 0) {
+                    editorSurface(
+                        document: document,
+                        minimumHeight: isCompact ? 64 : 110
+                    )
+
+                    unplacedPages(appearance: appearance)
+                    if isPaged {
+                        editorEndFocusZone(height: isCompact ? 28 : 36)
+                    }
                 }
-
-            Rectangle()
-                .fill(Color.white.opacity(0.07))
-                .frame(height: 1)
-
-            editorSurface(
-                document: document,
+            }
+            .padding(.horizontal, isPaged ? (isCompact ? 22 : 28) : 0)
+            .padding(.top, isPaged ? (isCompact ? 16 : 28) : 0)
+        }
+        .frame(minHeight: minimumHeight, alignment: .topLeading)
+        .backgroundPreferenceValue(PageSheetEditorBoundsPreferenceKey.self) { editorBounds in
+            pageSheetBackgrounds(
                 appearance: appearance,
                 isCompact: isCompact,
-                minimumHeight: isCompact ? 64 : 110
+                editorBounds: editorBounds,
+                isVisible: isPaged
             )
         }
         .frame(maxWidth: 900, alignment: .leading)
     }
 
-    private func themedDocument(_ document: DocumentRecord, appearance: DocumentAppearance, isCompact: Bool) -> some View {
-        VStack(spacing: model.children.isEmpty ? 0 : 28) {
-            VStack(alignment: .leading, spacing: 32) {
-                coverView(document: document, appearance: appearance, isCompact: isCompact)
-
-                HStack(alignment: .center) {
-                    TextField("Untitled", text: $titleText)
-                        .font(.system(size: isCompact ? 28 : 42, weight: .bold, design: appearance.fontStyle.design))
-                        .foregroundStyle(Color(vellixHex: appearance.textColorHex))
-                        .textFieldStyle(.plain)
-                        .onSubmit {
-                            model.rename(title: titleText)
-                            environment.refresh()
-                        }
-
-                    Spacer()
-
-                    Button {
-                        showIconPicker = true
-                    } label: {
-                        IconTile(systemName: document.icon, size: isCompact ? 38 : 42, tint: Color(vellixHex: appearance.themeID?.accentHex ?? "#8FE9FF"))
+    private func themedDocument(
+        _ document: DocumentRecord,
+        appearance: DocumentAppearance,
+        isCompact: Bool,
+        bottomPadding: CGFloat
+    ) -> some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if appearance.displaysCover {
+                        coverView(document: document, appearance: appearance, isCompact: isCompact)
+                            .padding(.bottom, 28)
                     }
-                    .buttonStyle(.plain)
+
+                    HStack(alignment: .bottom) {
+                        TextField("Untitled", text: $titleText, axis: .vertical)
+                            .focused($isTitleFocused)
+                            .font(.system(size: isCompact ? 22 : 30, weight: .black, design: appearance.fontStyle.design))
+                            .foregroundStyle(Color(vellixHex: appearance.textColorHex))
+                            .textFieldStyle(.plain)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .allowsHitTesting(!isEditorLocked)
+                            .onSubmit {
+                                model.rename(title: titleText)
+                                environment.refresh()
+                            }
+
+                        Button {
+                            showIconPicker = true
+                        } label: {
+                            IconTile(systemName: document.icon, size: isCompact ? 38 : 42, tint: Color(vellixHex: appearance.themeID?.accentHex ?? "#8FE9FF"))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    VStack(spacing: 4) {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.08))
+                            .frame(height: 1)
+
+                        collectionDocumentFields(appearance: appearance)
+
+                        VStack(spacing: 0) {
+                            editorSurface(
+                                document: document,
+                                minimumHeight: isCompact ? 68 : 118
+                            )
+
+                            unplacedPages(appearance: appearance)
+                            editorEndFocusZone(height: isCompact ? 28 : 36)
+                        }
+                    }
                 }
-
-                Rectangle()
-                    .fill(Color.white.opacity(0.08))
-                    .frame(height: 1)
-
-                if !model.children.isEmpty {
-                    ThemedChildPages(children: model.children, appearance: appearance)
-                }
-
-                editorSurface(
-                    document: document,
+                .padding(.horizontal, isCompact ? 16 : 28)
+                .padding(.top, isCompact ? 16 : 28)
+            }
+            .padding(.bottom, bottomPadding)
+            .backgroundPreferenceValue(PageSheetEditorBoundsPreferenceKey.self) { editorBounds in
+                pageSheetBackgrounds(
                     appearance: appearance,
                     isCompact: isCompact,
-                    minimumHeight: isCompact ? 68 : 118
+                    editorBounds: editorBounds,
+                    isVisible: true
                 )
             }
-            .padding(.horizontal, isCompact ? 16 : 28)
-            .padding(.top, isCompact ? 16 : 28)
-            .padding(.bottom, isCompact ? 28 : 36)
-            .background(DocumentBackgroundLayer(style: appearance.innerPageBackground, theme: nil))
-            .clipShape(RoundedRectangle(cornerRadius: isCompact ? 22 : 30, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: isCompact ? 22 : 30, style: .continuous)
-                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(0.42), radius: 34, x: 0, y: 18)
 
-            if !model.children.isEmpty {
-                ThemedInnerPagePreview(appearance: appearance, children: model.children)
-            }
         }
         .frame(maxWidth: isCompact ? .infinity : 900)
     }
 
-    private func editorSurface(
-        document: DocumentRecord,
-        appearance: DocumentAppearance,
-        isCompact: Bool,
-        minimumHeight: CGFloat
-    ) -> some View {
-        let height = max(editorContentHeight, minimumHeight)
-        let showInstantPreview = !model.instantPreviewBlocks.isEmpty
-            && model.session.renderedDocumentID != document.id
-            && (model.session.isLoadingDocument || !model.session.isReady)
-
-        return ZStack(alignment: .topLeading) {
-            BlockNoteWebView(
-                session: model.session,
-                documentID: document.id,
-                canonicalJSON: document.blockNoteJSON
-            )
-            .opacity(showInstantPreview ? 0.01 : 1)
-
-            if showInstantPreview {
-                InstantDocumentPreviewView(
-                    blocks: model.instantPreviewBlocks,
-                    appearance: appearance,
-                    isCompact: isCompact
-                )
-                .transaction { transaction in
-                    transaction.animation = nil
+    @ViewBuilder
+    private func unplacedPages(appearance: DocumentAppearance) -> some View {
+        // Older snapshots and grouped pages may not yet contain a reference block.
+        let unplaced = model.children.filter { !model.pageReferenceIDs.contains($0.id) && !collectionEntryIDs.contains($0.id) }
+        if !unplaced.isEmpty {
+            VStack(spacing: 0) {
+                ForEach(unplaced) { child in
+                    Group {
+                        if let style = child.cardStyle {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Button {
+                                    dismissKeyboard()
+                                    environment.select(child)
+                                } label: {
+                                    PageCardView(document: child, style: style,
+                                        photo: CardImageLoader.image(path: style.imagePath, store: environment.attachmentStore), fillsDocumentWidth: true,
+                                        attachmentStore: environment.attachmentStore)
+                                        .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 7)
+                                }.buttonStyle(.plain)
+                                if style.backdrop == .photo, let photo = style.remotePhoto { CardPhotoCredit(photo: photo) }
+                            }
+                        } else {
+                            NestedPageRow(document: child, appearance: appearance) {
+                                dismissKeyboard()
+                                environment.select(child)
+                            }
+                        }
+                    }
+                    .contextMenu {
+                        Button(child.cardStyle == nil ? "Show as Card" : "Card Style") {
+                            guard !isEditorLocked else { return }
+                            model.editPageCard(child)
+                        }
+                        DocumentContextMenu(document: child, trashAction: {
+                            guard !isEditorLocked else { return }
+                            pageDeletionTarget = child
+                        })
+                    }
                 }
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
             }
         }
-        .frame(height: height, alignment: .topLeading)
+    }
+
+    private var hasUnplacedPages: Bool {
+        model.children.contains { !model.pageReferenceIDs.contains($0.id) && !collectionEntryIDs.contains($0.id) }
+    }
+
+    @ViewBuilder
+    private func collectionDocumentFields(appearance: DocumentAppearance) -> some View {
+        if environment.collections.entryContext(model.documentID) != nil {
+            CollectionDocumentFields(store: environment.collections, documentID: model.documentID, appearance: appearance,
+                onBeginEditing: { dismissKeyboard() })
+            .allowsHitTesting(!isEditorLocked && selectionMode == .off)
+        }
+    }
+
+    private func updateCollectionPresentation() {
+        guard environment.selectedDocumentID == model.documentID else { return }
+        let store = environment.collections
+        collectionEntryIDs = store.embeddedEntryIDs(model.documentID)
+        model.session.setCollections(store.payloads(for: model.documentID))
+        if let error = store.errorMessage { model.errorMessage = error }
+    }
+
+    private func handleCollectionRequest(_ request: CollectionEditorRequest) {
+        guard environment.selectedDocumentID == model.documentID, !isEditorLocked, selectionMode == .off else { return }
+        dismissKeyboard()
+        if request.action == "create" { collectionEditorRequest = request; return }
+        do {
+            guard try environment.collections.repository.collectionIDs(forDocument: model.documentID).contains(request.collectionID) else {
+                throw VellixError.impossibleMove("This collection does not belong to this page.")
+            }
+            let snapshot = try environment.collections.load(request.collectionID)
+            switch request.action {
+            case "openCollection": collectionEditorRequest = CollectionEditorRequest(action: "configure", blockID: request.blockID, collectionID: request.collectionID)
+            case "openEntry":
+                guard snapshot.entries.contains(where: { $0.id == request.documentID }) else { return }
+                openCollectionPage(request.documentID)
+            default: collectionEditorRequest = request
+            }
+        } catch { model.errorMessage = error.localizedDescription }
+    }
+
+    private func openCollectionPage(_ id: String) {
+        guard id != model.documentID else { return }
+        let ownerID = model.documentID
+        Task { @MainActor in
+            do {
+                try await model.captureAndSave()
+                guard environment.selectedDocumentID == ownerID else { return }
+                let document = try environment.documents.requireDocument(id: id)
+                guard !document.isTrashed else { throw VellixError.impossibleMove("Restore this page from Trash before opening it.") }
+                environment.editorCache.prepare(document).refreshLibraryContext()
+                environment.select(document)
+            } catch { model.errorMessage = error.localizedDescription }
+        }
+    }
+
+    @ViewBuilder
+    private func collectionSheet(_ request: CollectionEditorRequest) -> some View {
+        let store = environment.collections
+        if request.action == "create" {
+            CollectionCreateSheet(model: model, blockID: request.blockID)
+        } else if let snapshot = store.snapshots[request.collectionID] {
+            switch request.action {
+            case "field":
+                CollectionFieldEditorSheet(store: store, field: snapshot.field(request.fieldID)
+                    ?? CollectionField(collectionID: snapshot.record.id, name: "", kind: .text))
+            case "value":
+                if let field = snapshot.field(request.fieldID), let entry = snapshot.entries.first(where: { $0.id == request.documentID }) {
+                    CollectionValueSheet(store: store, collectionID: snapshot.record.id, documentID: entry.id,
+                        field: field, value: entry.values[field.id] ?? CollectionValue())
+                }
+            case "addEntry":
+                CollectionAddEntrySheet(store: store, collectionID: snapshot.record.id, onOpen: openCollectionPage)
+            case "entry":
+                if let entry = snapshot.entries.first(where: { $0.id == request.documentID }) {
+                    CollectionEntryActionsSheet(store: store, collectionID: snapshot.record.id, entry: entry, onOpen: openCollectionPage)
+                }
+            default:
+                CollectionManagementSheet(store: store, snapshot: snapshot, closesOnSelection: request.action == "menu")
+            }
+        }
+    }
+
+    private func pageSheetBackgrounds(
+        appearance: DocumentAppearance,
+        isCompact: Bool,
+        editorBounds: Anchor<CGRect>?,
+        isVisible: Bool,
+        minimumHeight: CGFloat = 0
+    ) -> some View {
+        GeometryReader { proxy in
+            if isVisible {
+                let cornerRadius: CGFloat = isCompact ? 22 : 30
+                let editorFrame = editorBounds.map { proxy[$0] } ?? .zero
+                let segments = pageSheetSegments(
+                    totalHeight: proxy.size.height,
+                    editorFrame: editorFrame,
+                    visualContentBottom: editorVisualContentBottom,
+                    minimumHeight: minimumHeight
+                )
+                ZStack(alignment: .topLeading) {
+                    ForEach(segments) { segment in
+                        pageSheetBackground(appearance: appearance)
+                            .frame(width: proxy.size.width, height: segment.height)
+                            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                            }
+                            .shadow(color: .black.opacity(0.42), radius: 34, x: 0, y: 18)
+                            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                            .onTapGesture { model.session.focusDocumentEnd() }
+                            .offset(y: segment.y)
+                    }
+                }
+            } else {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.session.focusDocumentEnd() }
+            }
+        }
+        .allowsHitTesting(!isEditorLocked && selectionMode == .off)
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func pageSheetBackground(appearance: DocumentAppearance) -> some View {
+        if appearance.themeID == nil {
+            ZStack {
+                DocumentBackgroundLayer(style: DocumentAppearance.plain.editorBackground, theme: nil)
+                Color.black.opacity(0.30)
+            }
+        } else {
+            DocumentBackgroundLayer(style: appearance.innerPageBackground, theme: nil)
+        }
+    }
+
+    private func pageSheetSegments(
+        totalHeight: CGFloat,
+        editorFrame: CGRect,
+        visualContentBottom: CGFloat,
+        minimumHeight: CGFloat
+    ) -> [DocumentPageSheetSegment] {
+        let fallback = [DocumentPageSheetSegment(index: 0, y: 0, height: totalHeight)]
+        guard totalHeight > 0, editorFrame.height > 0 else {
+            return fallback
+        }
+
+        let editorBottomInset = max(0, totalHeight - editorFrame.maxY)
+        let measuredVisualBottom = visualContentBottom > 0
+            ? min(visualContentBottom, editorFrame.height)
+            : editorFrame.height
+        let finalBottom = min(
+            totalHeight,
+            max(minimumHeight, editorFrame.minY + measuredVisualBottom + editorBottomInset)
+        )
+        let measuredFallback = [
+            DocumentPageSheetSegment(index: 0, y: 0, height: finalBottom)
+        ]
+
+        let breaks = pageBreakRegions
+            .filter { $0.height > 0 && $0.y >= 0 }
+            .sorted { $0.y < $1.y }
+        guard !breaks.isEmpty else {
+            return measuredFallback
+        }
+
+        let editorTop = editorFrame.minY
+        var startY: CGFloat = 0
+        var segments: [DocumentPageSheetSegment] = []
+
+        for pageBreak in breaks {
+            let endY = min(totalHeight, editorTop + pageBreak.y)
+            if endY > startY {
+                segments.append(
+                    DocumentPageSheetSegment(
+                        index: segments.count,
+                        y: startY,
+                        height: endY - startY
+                    )
+                )
+            }
+            startY = min(totalHeight, editorTop + pageBreak.y + pageBreak.height)
+        }
+
+        if finalBottom > startY {
+            segments.append(
+                DocumentPageSheetSegment(
+                    index: segments.count,
+                    y: startY,
+                    height: finalBottom - startY
+                )
+            )
+        }
+
+        return segments.isEmpty ? measuredFallback : segments
+    }
+
+    @ViewBuilder
+    private func documentScrollFinder() -> some View {
+        #if canImport(UIKit)
+        DocumentScrollViewFinder(proxy: documentScrollProxy)
+        #else
+        Color.clear
+        #endif
+    }
+
+    private func scrollTableIntoView(isCompact: Bool) {
+        #if canImport(UIKit)
+        guard let request = model.tableEditorRequest, case .edit = request.mode,
+              let surfaceTop = model.tableContext?.surfaceTop else { return }
+        // The web content is a fixed-height, non-scrolling WKWebView, so the table's DOM
+        // offset maps 1:1 onto the editor surface. Lift the table to just under the top
+        // controls so it stays visible above the editing sheet.
+        let targetViewportY: CGFloat = isCompact ? 96 : 150
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            guard let scrollView = documentScrollProxy.scrollView else { return }
+            let tableViewportY = editorSurfaceFrame.minY + CGFloat(surfaceTop)
+            let delta = tableViewportY - targetViewportY
+            guard abs(delta) > 1 else { return }
+            let maxOffset = max(0, scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom)
+            let target = min(max(0, scrollView.contentOffset.y + delta), maxOffset)
+            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: target), animated: true)
+        }
+        #endif
+    }
+
+    #if canImport(UIKit)
+    private func updateKeyboardFrame(_ notification: Notification) {
+        if let value = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue {
+            keyboardFrame = value.cgRectValue
+        }
+    }
+
+    private func queueCaretReveal() {
+        guard let update = model.session.caretUpdate, model.session.isEditing,
+              !isEditorLocked, selectionMode == .off,
+              environment.selectedDocumentID == model.documentID else { documentScrollProxy.pendingCaretRevision = nil; return }
+        documentScrollProxy.pendingCaretRevision = update.revision
+        guard !documentScrollProxy.caretRevealQueued else { return }
+        documentScrollProxy.caretRevealQueued = true
+        DispatchQueue.main.async {
+            documentScrollProxy.caretRevealQueued = false
+            revealCaretIfNeeded()
+        }
+    }
+
+    private func revealCaretIfNeeded() {
+        guard let update = model.session.caretUpdate, documentScrollProxy.pendingCaretRevision == update.revision,
+              model.session.isEditing, !model.session.isLoadingDocument, !isEditorLocked, selectionMode == .off,
+              model.session.renderedDocumentID == model.documentID,
+              environment.selectedDocumentID == model.documentID,
+              let scrollView = documentScrollProxy.scrollView, let window = scrollView.window,
+              model.webViewStore.webView.isDescendant(of: scrollView) else { return }
+        guard !scrollView.isTracking, !scrollView.isDragging, !scrollView.isDecelerating else {
+            documentScrollProxy.pendingCaretRevision = nil
+            return
+        }
+        scrollView.superview?.layoutIfNeeded()
+        let webView = model.webViewStore.webView
+        let caret = webView.convert(update.rect, to: window)
+        let visible = scrollView.convert(scrollView.bounds, to: window)
+        let insets = scrollView.adjustedContentInset
+        let top = visible.minY + max(insets.top, visible.width < 620 ? 74 : 150) + 8
+        var bottom = visible.maxY - insets.bottom - 18
+        if isKeyboardVisible, !keyboardFrame.isNull {
+            let keyboard = window.convert(keyboardFrame, from: nil)
+            let toolbar = EditorKeyboardFormattingToolbar.height + EditorKeyboardFormattingToolbar.bottomPadding + 8
+            bottom = min(bottom, keyboard.minY - toolbar - 18)
+        }
+        let viewport = CGRect(x: visible.minX, y: top, width: visible.width, height: max(0, bottom - top))
+        let minimum = -insets.top
+        let maximum = max(minimum, scrollView.contentSize.height - scrollView.bounds.height + insets.bottom)
+        guard let target = TipTapCaretVisibility.targetOffset(caret: caret, viewport: viewport,
+            current: scrollView.contentOffset.y, minimum: minimum, maximum: maximum) else {
+            documentScrollProxy.pendingCaretRevision = nil
+            return
+        }
+        if abs(target - scrollView.contentOffset.y) > 1 {
+            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: target), animated: false)
+            let movedCaret = webView.convert(update.rect, to: window)
+            if TipTapCaretVisibility.targetOffset(caret: movedCaret, viewport: viewport,
+                current: target, minimum: minimum, maximum: maximum) == nil { documentScrollProxy.pendingCaretRevision = nil }
+        }
+    }
+    #endif
+
+    private func editorSurface(
+        document: DocumentRecord,
+        minimumHeight: CGFloat
+    ) -> some View {
+        // Reserve empty-space editing room after fallback page rows, not between content and those rows.
+        let liveHeight = hasUnplacedPages ? editorVisualContentBottom : max(editorContentHeight, minimumHeight)
+        let contentHeight = presentationReady ? liveHeight : max(liveHeight, savedBodyHeight)
+
+        return ZStack(alignment: .topLeading) {
+            TipTapWebView(
+                session: model.session,
+                store: model.webViewStore,
+                documentID: document.id,
+                canonicalJSON: document.tipTapJSON
+            )
+            .allowsHitTesting(!isEditorLocked && presentationReady)
+            .accessibilityLabel(isEditorLocked ? "Locked editor" : "Editor")
+            .frame(height: contentHeight, alignment: .topLeading)
+            .overlay(alignment: .topLeading) {
+                ZStack(alignment: .topLeading) {
+                    ForEach(collectionRegions) { region in
+                        if let snapshot = environment.collections.snapshots[region.collectionID]
+                            ?? environment.documentPreviews.content(for: document).collections.first(where: { $0.record.id == region.collectionID }),
+                           snapshot.activeView?.kind == .kanban {
+                            CollectionKanbanView(store: environment.collections, collectionID: region.collectionID,
+                                blockID: region.id, editable: !isEditorLocked && selectionMode == .off,
+                                appearance: localAppearance,
+                                savedSnapshot: snapshot,
+                                onRequest: handleCollectionRequest,
+                                onHeightChange: { height in
+                                    guard let viewID = snapshot.activeView?.id else { return }
+                                    model.session.nativeCollectionDidLayout(blockID: region.id, viewID: viewID, height: height,
+                                        needsResize: abs(region.rect.height - height) > 1)
+                                })
+                                .frame(width: region.rect.width, height: region.rect.height)
+                                .offset(x: region.rect.minX, y: region.rect.minY)
+                                .allowsHitTesting(presentationReady && selectionMode == .off && environment.selectedDocumentID == model.documentID)
+                                .id(region.id + (snapshot.activeView?.id ?? ""))
+                        }
+                    }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .opacity(presentationReady ? 1 : 0)
+            .accessibilityHidden(!presentationReady)
+            if !presentationReady {
+                ImmediateDocumentBodyPreview(document: document)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background {
+                        GeometryReader { proxy in Color.clear.preference(key: SavedDocumentBodyHeightPreference.self, value: proxy.size.height) }
+                    }
+            }
+        }
+        .frame(height: contentHeight, alignment: .topLeading)
+        .anchorPreference(
+            key: PageSheetEditorBoundsPreferenceKey.self,
+            value: .bounds
+        ) { $0 }
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(
+                        key: EditorSurfaceFramePreferenceKey.self,
+                        value: proxy.frame(in: .named(DocumentEditorCoordinateSpace.workspace))
+                    )
+            }
+        }
+    }
+
+    private func editorEndFocusZone(height: CGFloat) -> some View {
+        Color.clear
+            .frame(height: height)
+            .contentShape(Rectangle())
+            .allowsHitTesting(!isEditorLocked && selectionMode == .off)
+            .onTapGesture {
+                model.session.focusDocumentEnd()
+            }
+    }
+
+    private func slashCommandOverlay(
+        state: TipTapSlashMenuState,
+        proxy: GeometryProxy,
+        isCompact: Bool
+    ) -> some View {
+        let menuWidth = min(state.width, proxy.size.width - 28)
+        let x = min(
+            proxy.size.width - menuWidth - 14,
+            max(14, editorSurfaceFrame.minX + state.anchorX)
+        )
+        let y = max(10, editorSurfaceFrame.minY + state.anchorY)
+
+        return TipTapSlashCommandMenu(
+            state: state,
+            isCompact: isCompact,
+            chooseAction: { key in
+                model.session.chooseSlashMenuItem(key)
+            }
+        )
+        .frame(width: menuWidth, alignment: .topLeading)
+        .offset(x: x, y: y)
     }
 
     private func coverView(document: DocumentRecord, appearance: DocumentAppearance, isCompact: Bool) -> some View {
@@ -432,7 +1278,7 @@ struct DocumentEditorView: View {
             if let localCover {
                 StoredAttachmentImage(relativePath: localCover, contentMode: .fill)
             } else {
-                ThemeCoverArt(theme: appearance.themeID ?? .lunarClouds)
+                ThemeCoverArt(theme: appearance.resolvedCoverTheme)
             }
         }
         .frame(maxWidth: .infinity)
@@ -444,14 +1290,98 @@ struct DocumentEditorView: View {
         }
     }
 
-    private func loadSelectedDocument() {
-        model.load(documentID: environment.selectedDocumentID)
-        editorContentHeight = 320
+    private func setSelectionMode(_ mode: EditorSelectionMode) {
+        selectionMode = mode
+        selectedStylePanel = nil
+        if mode == .off {
+            selectedBlockCount = 0
+            model.session.clearBlockSelection()
+        } else {
+            model.session.setSelectionMode(mode.rawValue)
+        }
+    }
+
+    private func deactivateEditor() {
+        persistTitle()
+        dismissKeyboard()
+        editorContentHeight = max(60, model.session.editorContentHeight)
+        editorVisualContentBottom = max(
+            0,
+            model.session.editorVisualContentBottom
+        )
         selectedBlockCount = 0
         isEditingDocument = false
+        isEditorLocked = false
+        showSelectedActions = false
+        selectionMode = .off
+        selectedStylePanel = nil
+        slashMenuState = nil
+        model.session.clearBlockSelection()
+        model.session.setEditable(true)
+        model.flushPendingSave()
+        environment.refresh()
+    }
+
+    private func toggleEditorLock() {
+        let nextValue = !isEditorLocked
+        isEditorLocked = nextValue
         showSelectedActions = false
         selectedStylePanel = nil
-        syncLocalState()
+        selectedBlockCount = 0
+        selectionMode = .off
+        if nextValue {
+            dismissKeyboard()
+        }
+        model.session.clearBlockSelection()
+        model.session.setEditable(!nextValue)
+    }
+
+    private func dismissKeyboard() {
+        #if os(iOS)
+        isKeyboardVisible = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        #elseif os(macOS)
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        #endif
+    }
+
+    private func resumeEditingAfterProperty() {
+        let target = propertyEditorReturnTarget
+        propertyEditorReturnTarget = nil
+        guard let target, target.documentID == model.documentID, !isEditorLocked, selectionMode == .off,
+              environment.selectedDocumentID == model.documentID,
+              model.session.renderedDocumentID == model.documentID else { return }
+        model.session.focusAfterInlineProperty(blockID: target.blockID)
+    }
+
+    private func presentNewCalloutPicker() {
+        calloutIconTargetBlockID = nil
+        calloutIcon = "sparkle"
+        selectedCalloutColor = .white
+        showCalloutIconPicker = true
+    }
+
+    private func persistTitle() {
+        guard let document = model.document else { return }
+        let savedTitle = titleText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = savedTitle.isEmpty ? "Untitled" : savedTitle
+        guard normalized != document.title else { return }
+        model.rename(title: titleText)
+    }
+
+    private var hasTitleChanges: Bool {
+        guard let document = model.document else { return false }
+        let title = titleText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (title.isEmpty ? "Untitled" : title) != document.title
+    }
+
+    private func showEditorBanner(_ message: String, icon: String) {
+        withAnimation(.easeOut(duration: 0.18)) {
+            editorBanner = EditorStatusBanner(message: message, icon: icon)
+        }
+        #if canImport(UIKit)
+        UIAccessibility.post(notification: .announcement, argument: message)
+        #endif
     }
 
     private func syncLocalState() {
@@ -463,65 +1393,10 @@ struct DocumentEditorView: View {
         }
 
         titleText = document.title
-        localAppearance = document.appearance
+        localAppearance = model.appearance
         localCover = document.cover
     }
 
-    private func importPickedImage(_ item: PhotosPickerItem?, target: PickedImageTarget) {
-        guard let item, let document = model.document else {
-            return
-        }
-
-        Task {
-            do {
-                guard let data = try await item.loadTransferable(type: Data.self) else {
-                    return
-                }
-
-                let record = try environment.attachments.importData(
-                    data,
-                    originalFileName: "\(target.filePrefix)-\(UUID().uuidString).jpg",
-                    mimeType: "image/jpeg",
-                    documentID: document.id
-                )
-
-                await MainActor.run {
-                    switch target {
-                    case .cover:
-                        localCover = record.relativePath
-                        coverPickerItem = nil
-                    case .editorBackground:
-                        localAppearance.editorBackground = .image(path: record.relativePath)
-                        editorBackgroundPickerItem = nil
-                    case .innerBackground:
-                        localAppearance.innerPageBackground = .image(path: record.relativePath)
-                        innerBackgroundPickerItem = nil
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    model.errorMessage = error.localizedDescription
-                }
-            }
-        }
-    }
-}
-
-private enum PickedImageTarget {
-    case cover
-    case editorBackground
-    case innerBackground
-
-    var filePrefix: String {
-        switch self {
-        case .cover:
-            return "cover"
-        case .editorBackground:
-            return "editor-background"
-        case .innerBackground:
-            return "inner-background"
-        }
-    }
 }
 
 private enum SelectionStylePanel {
@@ -530,111 +1405,36 @@ private enum SelectionStylePanel {
     case heading
 }
 
-private struct InstantDocumentPreviewView: View {
-    var blocks: [InstantPreviewBlock]
-    var appearance: DocumentAppearance
-    var isCompact: Bool
+private enum EditorSelectionMode: String {
+    case off
+    case single
+    case multi
+}
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: isCompact ? 8 : 10) {
-            ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
-                previewRow(block, index: index)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .foregroundStyle(Color(vellixHex: appearance.textColorHex))
-        .font(.system(size: isCompact ? 16 : 18, weight: .regular, design: appearance.fontStyle.design))
-        .lineSpacing(isCompact ? 3 : 4)
-    }
+private struct DocumentPageSheetSegment: Identifiable {
+    var index: Int
+    var y: CGFloat
+    var height: CGFloat
 
-    @ViewBuilder
-    private func previewRow(_ block: InstantPreviewBlock, index: Int) -> some View {
-        switch block.kind {
-        case .heading:
-            Text(block.text)
-                .font(.system(size: headingSize(for: block.level), weight: .bold, design: appearance.fontStyle.design))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, index == 0 ? 0 : 8)
-        case .bullet:
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("•")
-                    .frame(width: 18, alignment: .center)
-                Text(block.text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        case .numbered:
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("\(index + 1).")
-                    .frame(width: 24, alignment: .trailing)
-                Text(block.text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        case .checklist:
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Image(systemName: block.checked ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: isCompact ? 15 : 17, weight: .semibold))
-                    .foregroundStyle(Color(vellixHex: appearance.textColorHex).opacity(block.checked ? 0.9 : 0.42))
-                Text(block.text)
-                    .strikethrough(block.checked)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        case .quote:
-            HStack(alignment: .top, spacing: 12) {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color(vellixHex: appearance.textColorHex).opacity(0.36))
-                    .frame(width: 3)
-                Text(block.text)
-                    .font(.system(size: isCompact ? 16 : 18, weight: .semibold, design: appearance.fontStyle.design))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        case .callout:
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: isCompact ? 15 : 17, weight: .semibold))
-                Text(block.text)
-                    .font(.system(size: isCompact ? 16 : 18, weight: .semibold, design: appearance.fontStyle.design))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        case .divider:
-            Rectangle()
-                .fill(Color(vellixHex: appearance.textColorHex).opacity(0.18))
-                .frame(height: 1)
-                .padding(.vertical, 8)
-        case .pageBreak:
-            Capsule()
-                .stroke(Color(vellixHex: appearance.textColorHex).opacity(0.18), lineWidth: 1)
-                .frame(height: 20)
-                .padding(.vertical, 6)
-        case .paragraph:
-            Text(block.text)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func headingSize(for level: Int) -> CGFloat {
-        switch level {
-        case 1:
-            return isCompact ? 26 : 34
-        case 2:
-            return isCompact ? 22 : 28
-        default:
-            return isCompact ? 19 : 22
-        }
-    }
+    var id: Int { index }
 }
 
 private extension View {
     @ViewBuilder
-    func vellixHideEditorNavigationBar() -> some View {
+    func vellixHideEditorNavigationBar(isActive: Bool) -> some View {
         #if os(iOS)
-        self.toolbar(.hidden, for: .navigationBar)
+        if isActive { self.toolbar(.hidden, for: .navigationBar) }
+        else { self }
         #else
         self
         #endif
     }
+}
+
+private struct EditorStatusBanner: Identifiable {
+    let id = UUID()
+    let message: String
+    let icon: String
 }
 
 private struct EditorTopControls: View {
@@ -642,19 +1442,26 @@ private struct EditorTopControls: View {
     var isThemed: Bool
     var isCompact: Bool
     var isSelectionMode: Bool
+    var isEditorLocked: Bool
+    var placeholderMode: Bool
+    var canSaveTemplate: Bool
+    var isSavingTemplate: Bool
     var backAction: () -> Void
+    var lockAction: () -> Void
     var shareAction: () -> Void
     var moreAction: () -> Void
     var selectionDoneAction: () -> Void
+    var placeholderModeAction: () -> Void
+    var placeholderAction: (String) -> Void
+    var saveTemplateAction: () -> Void
+    var saveAsTemplateAction: () -> Void
 
     var body: some View {
         let controlSize: CGFloat = isCompact ? 46 : 68
-        let iconSize: CGFloat = isCompact ? 20 : 28
 
         HStack {
             Button(action: backAction) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: iconSize, weight: .semibold))
+                editorAssetIcon("backwavy", padding: isCompact ? 12 : 18)
                     .frame(width: controlSize, height: controlSize)
                     .background(.thinMaterial, in: Circle())
                     .overlay {
@@ -663,9 +1470,10 @@ private struct EditorTopControls: View {
             }
             .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 4) {
+            if isThemed && !isCompact {
+              VStack(alignment: .leading, spacing: 4) {
                 Text(document.title)
-                    .font(.system(size: isCompact ? 16 : 22, weight: .bold, design: .rounded))
+                    .font(.system(size: isCompact ? 16 : 22, weight: .black, design: document.appearance.fontStyle.design))
                     .foregroundStyle(.white.opacity(0.82))
                     .lineLimit(1)
                 Text("Library")
@@ -674,14 +1482,15 @@ private struct EditorTopControls: View {
                     .lineLimit(1)
             }
             .padding(.leading, isCompact ? 8 : 18)
-            .opacity(isThemed && !isCompact ? 0.72 : 0)
+              .opacity(0.72)
+            }
 
             Spacer()
 
+            if isSelectionMode { templateControls }
             if isSelectionMode {
                 Button(action: selectionDoneAction) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: isCompact ? 22 : 30, weight: .semibold))
+                    editorAssetIcon("checkwavy", padding: isCompact ? 11 : 17)
                         .foregroundStyle(Color(red: 0.78, green: 0.97, blue: 1.0))
                         .frame(width: controlSize, height: controlSize)
                         .background(Color(red: 0.0, green: 0.58, blue: 1.0), in: Circle())
@@ -692,14 +1501,24 @@ private struct EditorTopControls: View {
                 .buttonStyle(.plain)
             } else {
                 HStack(spacing: isCompact ? 12 : 18) {
+                    templateControls
+                    Button(action: lockAction) {
+                        editorAssetIcon(isEditorLocked ? "eyeslash" : "eye", padding: isCompact ? 2 : 4)
+                    }
+                    .accessibilityLabel(isEditorLocked ? "Unlock editor" : "Lock editor")
+
                     Button(action: shareAction) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: isCompact ? 19 : 25, weight: .medium))
+                        editorAssetIcon("sendbutton", padding: isCompact ? 2 : 4)
                     }
-                    Button(action: moreAction) {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.system(size: isCompact ? 19 : 25, weight: .medium))
+                    Menu {
+                        Button("Version History", action: moreAction)
+                        if document.templateID == nil {
+                            Button("Save as Template", action: saveAsTemplateAction)
+                        }
+                    } label: {
+                        editorAssetIcon("dotswavy", padding: isCompact ? 2 : 4)
                     }
+                    .menuStyle(.borderlessButton)
                 }
                 .foregroundStyle(.white)
                 .frame(height: controlSize)
@@ -711,6 +1530,150 @@ private struct EditorTopControls: View {
             }
         }
         .foregroundStyle(.white)
+    }
+
+    @ViewBuilder private var templateControls: some View {
+        if document.templateID != nil {
+            Button(action: placeholderModeAction) {
+                editorAssetIcon("linedpages", padding: isCompact ? 2 : 4)
+                    .foregroundStyle(placeholderMode ? Color.white : Color.gray)
+            }
+            .disabled(isEditorLocked)
+            .accessibilityLabel("Placeholder Mode")
+            .accessibilityValue(placeholderMode ? "On" : "Off")
+            .help("Placeholder Mode")
+            .contextMenu {
+                Button("Convert Text to Guidance") { placeholderAction("convert") }
+                Button("Convert Guidance to Content") { placeholderAction("ordinary") }
+                Button("Clear Guidance") { placeholderAction("clear") }
+            }
+            Button(action: saveTemplateAction) {
+                editorAssetIcon("checkwavy", padding: isCompact ? 2 : 4)
+                    .foregroundStyle(canSaveTemplate ? Color.white : Color.gray)
+            }
+            .disabled(!canSaveTemplate)
+            .accessibilityValue(isSavingTemplate ? "Saving" : canSaveTemplate ? "Unsaved changes" : "Saved")
+            .accessibilityLabel("Save Template").help("Save Template")
+        }
+    }
+
+    private func editorAssetIcon(_ name: String, padding: CGFloat) -> some View {
+        Image(name)
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .frame(width: isCompact ? 22 : 28, height: isCompact ? 22 : 28)
+            .padding(padding)
+    }
+}
+
+private struct TipTapSlashCommandMenu: View {
+    var state: TipTapSlashMenuState
+    var isCompact: Bool
+    var chooseAction: (String) -> Void
+
+    private var visibleRowCount: Int {
+        min(max(state.items.count, 1), 5)
+    }
+
+    private var menuMaxHeight: CGFloat {
+        14 + CGFloat(visibleRowCount) * 62
+    }
+
+    var body: some View {
+        ScrollView(showsIndicators: state.items.count > visibleRowCount) {
+            LazyVStack(spacing: 0) {
+                ForEach(Array(state.items.enumerated()), id: \.element.id) { index, item in
+                    Button {
+                        chooseAction(item.key)
+                    } label: {
+                        HStack(spacing: 11) {
+                            Image(item.icon)
+                                .renderingMode(.template)
+                                .resizable()
+                                .scaledToFit()
+                                .foregroundStyle(.white)
+                                .padding(7)
+                                .frame(width: 34, height: 34)
+                                .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.title)
+                                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+
+                                Text(item.detail)
+                                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.55))
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(
+                            Color.white.opacity(index == state.selectedIndex ? 0.12 : 0),
+                            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(7)
+        }
+        .frame(maxHeight: menuMaxHeight)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(Color(red: 0.118, green: 0.118, blue: 0.118).opacity(0.96), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.white.opacity(0.14), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.44), radius: 24, x: 0, y: 12)
+    }
+}
+
+private struct SelectionActionPill: View {
+    var copyAction: () -> Void
+    var duplicateAction: () -> Void
+    var groupAction: () -> Void
+    var deleteAction: () -> Void
+    var isCompact: Bool
+
+    var body: some View {
+        HStack(spacing: isCompact ? 6 : 8) {
+            pillButton("Copy", assetName: "copy", action: copyAction)
+            pillButton("Duplicate", assetName: "threeboxes", action: duplicateAction)
+            pillButton("Group", assetName: "groupfill", action: groupAction)
+            pillButton("Delete", assetName: "trash", tint: Color(red: 1.0, green: 0.55, blue: 0.62), action: deleteAction)
+        }
+        .padding(.horizontal, isCompact ? 10 : 12)
+        .padding(.vertical, isCompact ? 8 : 10)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay { Capsule().stroke(Color.white.opacity(0.16), lineWidth: 1) }
+        .shadow(color: .black.opacity(0.42), radius: 26, x: 0, y: 12)
+    }
+
+    private func pillButton(
+        _ title: String,
+        assetName: String,
+        tint: Color = .white,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(assetName)
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .padding(isCompact ? 7 : 9)
+                .foregroundStyle(tint)
+                .frame(width: isCompact ? 42 : 50, height: isCompact ? 36 : 42)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
     }
 }
 
@@ -727,21 +1690,21 @@ private struct SelectedBlocksToolbar: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: isCompact ? 2 : 4) {
-                SelectedToolbarItem(title: "Style", systemImage: nil, textIcon: "Aa", tint: Color(red: 0.94, green: 0.67, blue: 1.0), action: styleAction, isCompact: isCompact)
-                SelectedToolbarItem(title: "Group", systemImage: "wand.and.stars", textIcon: nil, tint: Color(red: 0.25, green: 0.98, blue: 0.78), action: groupAction, isCompact: isCompact)
-                SelectedToolbarItem(title: "Actions", systemImage: "square.and.arrow.up", textIcon: nil, tint: .white.opacity(0.92), action: actionsAction, isCompact: isCompact)
-                SelectedToolbarItem(title: "React", systemImage: "face.smiling", textIcon: nil, tint: Color(red: 0.95, green: 0.68, blue: 0.50), action: {}, isCompact: isCompact)
-                SelectedToolbarItem(title: "Comment", systemImage: "bubble", textIcon: nil, tint: Color(red: 0.98, green: 0.95, blue: 0.54), action: {}, isCompact: isCompact)
-                SelectedToolbarItem(title: "Assistant", systemImage: "circle.hexagongrid", textIcon: nil, tint: Color(red: 1.0, green: 0.42, blue: 0.86), action: {}, isCompact: isCompact)
-                SelectedToolbarItem(title: "Writing To...", systemImage: "atom", textIcon: nil, tint: Color(red: 0.94, green: 0.72, blue: 1.0), action: {}, isCompact: isCompact)
-                SelectedToolbarItem(title: "Edit", systemImage: "character.cursor.ibeam", textIcon: nil, tint: Color(red: 0.76, green: 0.86, blue: 1.0), action: {}, isCompact: isCompact)
-                SelectedToolbarItem(title: "Copy", systemImage: "doc.on.doc", textIcon: nil, tint: .white.opacity(0.88), action: copyAction, isCompact: isCompact)
-                SelectedToolbarItem(title: "Cut", systemImage: "scissors", textIcon: nil, tint: .white.opacity(0.88), action: cutAction, isCompact: isCompact)
-                SelectedToolbarItem(title: "Duplicate", systemImage: "rectangle.on.rectangle", textIcon: nil, tint: .white.opacity(0.88), action: duplicateAction, isCompact: isCompact)
-                SelectedToolbarItem(title: "Share", systemImage: "square.and.arrow.up", textIcon: nil, tint: .white.opacity(0.88), action: actionsAction, isCompact: isCompact)
-                SelectedToolbarItem(title: "Move", systemImage: "arrowshape.turn.up.right", textIcon: nil, tint: .white.opacity(0.78), action: {}, isCompact: isCompact)
-                SelectedToolbarItem(title: "More", systemImage: "ellipsis.circle", textIcon: nil, tint: .white.opacity(0.78), action: actionsAction, isCompact: isCompact)
-                SelectedToolbarItem(title: "Delete", systemImage: "trash", textIcon: nil, tint: Color(red: 1.0, green: 0.55, blue: 0.62), action: deleteAction, isCompact: isCompact, isDestructive: true)
+                SelectedToolbarItem(title: "Style", assetName: nil, textIcon: "Aa", tint: Color(red: 0.94, green: 0.67, blue: 1.0), action: styleAction, isCompact: isCompact)
+                SelectedToolbarItem(title: "Group", assetName: "groupfill", textIcon: nil, tint: Color(red: 0.25, green: 0.98, blue: 0.78), action: groupAction, isCompact: isCompact)
+                SelectedToolbarItem(title: "Actions", assetName: "sendbutton", textIcon: nil, tint: .white.opacity(0.92), action: actionsAction, isCompact: isCompact)
+                SelectedToolbarItem(title: "React", assetName: "xsmile", textIcon: nil, tint: Color(red: 0.95, green: 0.68, blue: 0.50), action: {}, isCompact: isCompact)
+                SelectedToolbarItem(title: "Comment", assetName: "lovechatbubbles", textIcon: nil, tint: Color(red: 0.98, green: 0.95, blue: 0.54), action: {}, isCompact: isCompact)
+                SelectedToolbarItem(title: "Assistant", assetName: "sparklesstarflag", textIcon: nil, tint: Color(red: 1.0, green: 0.42, blue: 0.86), action: {}, isCompact: isCompact)
+                SelectedToolbarItem(title: "Writing To...", assetName: "linespencil", textIcon: nil, tint: Color(red: 0.94, green: 0.72, blue: 1.0), action: {}, isCompact: isCompact)
+                SelectedToolbarItem(title: "Edit", assetName: "plainpencil", textIcon: nil, tint: Color(red: 0.76, green: 0.86, blue: 1.0), action: {}, isCompact: isCompact)
+                SelectedToolbarItem(title: "Copy", assetName: "copy", textIcon: nil, tint: .white.opacity(0.88), action: copyAction, isCompact: isCompact)
+                SelectedToolbarItem(title: "Cut", assetName: "prohibitedwavy", textIcon: nil, tint: .white.opacity(0.88), action: cutAction, isCompact: isCompact)
+                SelectedToolbarItem(title: "Duplicate", assetName: "threeboxes", textIcon: nil, tint: .white.opacity(0.88), action: duplicateAction, isCompact: isCompact)
+                SelectedToolbarItem(title: "Share", assetName: "sendbutton", textIcon: nil, tint: .white.opacity(0.88), action: actionsAction, isCompact: isCompact)
+                SelectedToolbarItem(title: "Move", assetName: "rightwavy", textIcon: nil, tint: .white.opacity(0.78), action: {}, isCompact: isCompact)
+                SelectedToolbarItem(title: "More", assetName: "dotswavy", textIcon: nil, tint: .white.opacity(0.78), action: actionsAction, isCompact: isCompact)
+                SelectedToolbarItem(title: "Delete", assetName: "trash", textIcon: nil, tint: Color(red: 1.0, green: 0.55, blue: 0.62), action: deleteAction, isCompact: isCompact, isDestructive: true)
             }
             .buttonStyle(.plain)
             .padding(.horizontal, isCompact ? 8 : 10)
@@ -760,7 +1723,7 @@ private struct SelectedBlocksToolbar: View {
 
 private struct SelectedToolbarItem: View {
     var title: String
-    var systemImage: String?
+    var assetName: String?
     var textIcon: String?
     var tint: Color
     var action: () -> Void
@@ -773,9 +1736,12 @@ private struct SelectedToolbarItem: View {
                 if let textIcon {
                     Text(textIcon)
                         .font(.system(size: 26, weight: .bold, design: .rounded))
-                } else if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 24, weight: .semibold))
+                } else if let assetName {
+                    Image(assetName)
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: isCompact ? 24 : 28, height: isCompact ? 24 : 28)
                 }
 
                 Text(title)
@@ -861,24 +1827,24 @@ private struct SelectedBlockStylePanel: View {
                 divider()
                 panelTab("Body", selected: false, action: bodyAction)
                 divider()
-                panelTab("Page", selected: true, icon: "doc.text", action: pageAction)
+                panelTab("Page", selected: true, assetName: "linedpages", action: pageAction)
                 panelTab("More...", selected: false, action: showHeadingPanel)
             }
 
             HStack(spacing: isCompact ? 8 : 12) {
-                styleSquare("checkmark.square", action: checklistAction)
-                styleSquare("chevright", assetImage: true, action: toggleAction)
-                styleSquare("list.bullet", action: bulletsAction)
-                styleSquare("list.number", action: numbersAction)
-                styleSquare("decrease.indent", action: outdentAction)
-                styleSquare("increase.indent", action: indentAction)
+                styleSquare("checklist", action: checklistAction)
+                styleSquare("chevright", action: toggleAction)
+                styleSquare("bulletlist", action: bulletsAction)
+                styleSquare("numberlist", action: numbersAction)
+                styleSquare("chevleft", action: outdentAction)
+                styleSquare("chevright", action: indentAction)
             }
 
             HStack(spacing: isCompact ? 10 : 14) {
-                styleWide("Quote", systemImage: "quote.opening", action: quoteAction)
-                styleWide("Callout", systemImage: "sparkles", selected: false, action: calloutAction)
+                styleWide("Quote", assetName: "quote", action: quoteAction)
+                styleWide("Callout", assetName: "sparkle", selected: false, action: calloutAction)
                 calloutColorPicker
-                styleSquare("ellipsis", selected: true, action: showFormattingPanel)
+                styleSquare("dotswavy", selected: true, action: showFormattingPanel)
                     .frame(width: isCompact ? 58 : 70)
             }
         }
@@ -887,14 +1853,14 @@ private struct SelectedBlockStylePanel: View {
     private var formattingPanel: some View {
         VStack(spacing: isCompact ? 14 : 18) {
             HStack(spacing: isCompact ? 8 : 12) {
-                styleSquare("bold", selected: true)
-                styleSquare("italic")
+                styleSquare("boldtext", selected: true)
+                styleSquare("italics")
+                styleSquare("underline")
                 styleSquare("strikethrough")
-                styleSquare("chevron.left.forwardslash.chevron.right")
-                styleSquare("text.alignleft")
-                styleSquare("text.aligncenter")
-                styleSquare("text.alignright")
-                styleSquare("text.justify")
+                styleSquare("codewindow")
+                styleSquare("leftalign")
+                styleSquare("centeralign")
+                styleSquare("rightalign")
             }
 
             HStack(spacing: isCompact ? 8 : 10) {
@@ -905,8 +1871,8 @@ private struct SelectedBlockStylePanel: View {
             }
 
             HStack(spacing: isCompact ? 10 : 12) {
-                styleWide("Copy Format", systemImage: "doc.on.doc")
-                styleWide("Paste Format", systemImage: "doc.on.clipboard", disabled: true)
+                styleWide("Copy Format", assetName: "copy")
+                styleWide("Paste Format", assetName: "linedpages", disabled: true)
             }
         }
     }
@@ -927,8 +1893,8 @@ private struct SelectedBlockStylePanel: View {
                 .frame(height: 1)
 
             HStack(spacing: isCompact ? 12 : 16) {
-                headingMode("Page", systemImage: "doc.text", selected: true)
-                headingMode("Card", systemImage: "rectangle.stack")
+                headingMode("Page", assetName: "linedpages", selected: true)
+                headingMode("Card", assetName: "threeboxes")
                 Spacer(minLength: 0)
             }
         }
@@ -937,8 +1903,11 @@ private struct SelectedBlockStylePanel: View {
     private var calloutColorPicker: some View {
         ColorPicker(selection: $calloutColor, supportsOpacity: false) {
             HStack(spacing: 7) {
-                Image(systemName: "paintpalette.fill")
-                    .font(.system(size: 18, weight: .semibold))
+                Image("paintbrush")
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 18, height: 18)
                 Text("Color")
                     .font(.system(size: isCompact ? 15 : 17, weight: .semibold))
             }
@@ -958,11 +1927,15 @@ private struct SelectedBlockStylePanel: View {
         }
     }
 
-    private func panelTab(_ title: String, selected: Bool, icon: String? = nil, action: @escaping () -> Void) -> some View {
+    private func panelTab(_ title: String, selected: Bool, assetName: String? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 7) {
-                if let icon {
-                    Image(systemName: icon)
+                if let assetName {
+                    Image(assetName)
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: isCompact ? 18 : 22, height: isCompact ? 18 : 22)
                 }
                 Text(title)
                     .lineLimit(1)
@@ -994,13 +1967,12 @@ private struct SelectedBlockStylePanel: View {
 
     private func styleSquare(
         _ imageName: String,
-        assetImage: Bool = false,
         selected: Bool = false,
         disabled: Bool = false,
         action: @escaping () -> Void = {}
     ) -> some View {
         Button(action: action) {
-            styleSquareIcon(imageName, assetImage: assetImage, disabled: disabled)
+            styleSquareIcon(imageName, disabled: disabled)
             .frame(maxWidth: .infinity)
             .frame(height: isCompact ? 54 : 62)
             .background(Color.white.opacity(selected ? 0.07 : 0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -1015,33 +1987,30 @@ private struct SelectedBlockStylePanel: View {
     }
 
     @ViewBuilder
-    private func styleSquareIcon(_ imageName: String, assetImage: Bool, disabled: Bool) -> some View {
-        if assetImage {
-            Image(imageName)
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 23, height: 23)
-                .foregroundStyle(disabled ? .white.opacity(0.24) : .white.opacity(0.88))
-        } else {
-            Image(systemName: imageName)
-                .font(.system(size: 23, weight: .medium))
-                .foregroundStyle(disabled ? .white.opacity(0.24) : .white.opacity(0.88))
-        }
+    private func styleSquareIcon(_ imageName: String, disabled: Bool) -> some View {
+        Image(imageName)
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .frame(width: 23, height: 23)
+            .foregroundStyle(disabled ? .white.opacity(0.24) : .white.opacity(0.88))
     }
 
     private func styleWide(
         _ title: String,
-        systemImage: String?,
+        assetName: String?,
         selected: Bool = false,
         disabled: Bool = false,
         action: @escaping () -> Void = {}
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 20, weight: .medium))
+                if let assetName {
+                    Image(assetName)
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 20, height: 20)
                 }
                 Text(title)
                     .font(.system(size: isCompact ? 17 : 20, weight: .semibold, design: .rounded))
@@ -1057,7 +2026,7 @@ private struct SelectedBlockStylePanel: View {
     private func fontTile(_ sample: String, title: String, selected: Bool = false) -> some View {
         VStack(spacing: 5) {
             Text(sample)
-                .font(.system(size: isCompact ? 25 : 30, weight: .bold, design: title == "Mono" ? .monospaced : title == "Serif" ? .serif : title == "Round" ? .rounded : .default))
+                .font(.system(size: isCompact ? 25 : 30, weight: .bold, design: title == "Serif" ? .serif : title == "Mono" ? .monospaced : title == "Round" ? .rounded : .default))
             Text(title)
                 .font(.system(size: isCompact ? 11 : 13, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.45))
@@ -1076,10 +2045,13 @@ private struct SelectedBlockStylePanel: View {
             .frame(height: isCompact ? 50 : 60)
     }
 
-    private func headingMode(_ title: String, systemImage: String, selected: Bool = false) -> some View {
+    private func headingMode(_ title: String, assetName: String, selected: Bool = false) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: systemImage)
-                .font(.system(size: 23, weight: .medium))
+            Image(assetName)
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 23, height: 23)
             Text(title)
                 .font(.system(size: isCompact ? 19 : 23, weight: .semibold, design: .rounded))
         }
@@ -1117,18 +2089,18 @@ private struct SelectedBlockActionsSheet: View {
                     .frame(height: 1)
 
                 VStack(spacing: 0) {
-                    actionRow("Copy", systemImage: "doc.on.doc", action: copyAction)
-                    actionRow("Cut", systemImage: "scissors", action: cutAction)
-                    actionRow("Duplicate", systemImage: "rectangle.on.rectangle", action: duplicateAction)
-                    actionRow("Group into Sub Page", systemImage: "folder.badge.plus", action: groupAction)
+                    actionRow("Copy", assetName: "copy", action: copyAction)
+                    actionRow("Cut", assetName: "prohibitedwavy", action: cutAction)
+                    actionRow("Duplicate", assetName: "threeboxes", action: duplicateAction)
+                    actionRow("Group into Sub Page", assetName: "groupfill", action: groupAction)
                     sheetDivider()
-                    actionRow("Share & Export", systemImage: "square.and.arrow.up", showsChevron: true, action: copyAction)
+                    actionRow("Share & Export", assetName: "sendbutton", showsChevron: true, action: copyAction)
                     sheetDivider()
-                    actionRow("Move to Daily Note", systemImage: "calendar", showsChevron: true, action: {})
-                    actionRow("Move to...", systemImage: "arrowshape.turn.up.right.fill", showsChevron: true, action: {})
+                    actionRow("Move to Daily Note", assetName: "calheart", showsChevron: true, action: {})
+                    actionRow("Move to...", assetName: "rightwavy", showsChevron: true, action: {})
                     sheetDivider()
-                    actionRow("More", systemImage: "ellipsis.circle", showsChevron: true, action: {})
-                    actionRow("Delete", systemImage: "trash", destructive: true, action: deleteAction)
+                    actionRow("More", assetName: "dotswavy", showsChevron: true, action: {})
+                    actionRow("Delete", assetName: "trash", destructive: true, action: deleteAction)
                 }
             }
             .padding(.horizontal, 30)
@@ -1139,7 +2111,7 @@ private struct SelectedBlockActionsSheet: View {
 
     private func actionRow(
         _ title: String,
-        systemImage: String,
+        assetName: String,
         showsChevron: Bool = false,
         destructive: Bool = false,
         action: @escaping () -> Void
@@ -1149,15 +2121,20 @@ private struct SelectedBlockActionsSheet: View {
             dismiss()
         } label: {
             HStack(spacing: 18) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 21, weight: .medium))
+                Image(assetName)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
                     .frame(width: 34)
                 Text(title)
                     .font(.system(size: 25, weight: .regular, design: .rounded))
                 Spacer()
                 if showsChevron {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 18, weight: .semibold))
+                    Image("chevright")
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
                         .foregroundStyle(.white.opacity(0.55))
                 }
             }
@@ -1177,19 +2154,27 @@ private struct SelectedBlockActionsSheet: View {
 
 private struct EditorFloatingToolbar: View {
     var appearanceAction: () -> Void
-    var iconAction: () -> Void
-    var focusAction: () -> Void
-    var insertDividerAction: (VellixDividerStyle) -> Void
-    var pageBreakAction: () -> Void
-    var calloutAction: () -> Void
+    var selectionModeAction: (EditorSelectionMode) -> Void
     var isCompact: Bool
 
     var body: some View {
         HStack {
             HStack(spacing: isCompact ? 16 : 26) {
-                toolbarButton("arrow.uturn.backward.circle", action: focusAction)
-                toolbarButton("paintbrush", action: appearanceAction)
-                toolbarButton("pencil", action: focusAction)
+                assetToolbarButton("paintbrush", action: appearanceAction)
+                Menu {
+                    Button("Single Select") {
+                        selectionModeAction(.single)
+                    }
+                    Button("Multi Select") {
+                        selectionModeAction(.multi)
+                    }
+                    Button("Stop Selecting") {
+                        selectionModeAction(.off)
+                    }
+                } label: {
+                    assetToolbarImage("selectsparkle")
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, isCompact ? 18 : 30)
             .frame(height: isCompact ? 54 : 74)
@@ -1197,242 +2182,312 @@ private struct EditorFloatingToolbar: View {
             .overlay { Capsule().stroke(Color.white.opacity(0.13), lineWidth: 1) }
 
             Spacer()
-
-            HStack(spacing: isCompact ? 14 : 24) {
-                Button(action: appearanceAction) {
-                    ZStack {
-                        Circle()
-                            .fill(AngularGradient(colors: [.cyan, .blue, .purple, .pink, .orange, .cyan], center: .center))
-                        Circle()
-                            .fill(Color.black.opacity(0.72))
-                            .frame(width: isCompact ? 19 : 26, height: isCompact ? 19 : 26)
-                    }
-                    .frame(width: isCompact ? 32 : 42, height: isCompact ? 32 : 42)
-                }
-                .buttonStyle(.plain)
-
-                Menu {
-                    Button {
-                        calloutAction()
-                    } label: {
-                        Label("Callout", systemImage: "quote.bubble")
-                    }
-                    Button {
-                        pageBreakAction()
-                    } label: {
-                        Label("Page Break", systemImage: "rectangle.split.3x1")
-                    }
-                    Menu("Divider") {
-                        ForEach(VellixDividerStyle.allCases) { style in
-                            Button(style.title) {
-                                insertDividerAction(style)
-                            }
-                        }
-                    }
-                    Button {
-                        iconAction()
-                    } label: {
-                        Label("Page Icon", systemImage: "sparkles")
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: isCompact ? 21 : 28, weight: .bold))
-                        .foregroundStyle(.black)
-                        .frame(width: isCompact ? 38 : 50, height: isCompact ? 38 : 50)
-                        .background(.white, in: Circle())
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, isCompact ? 18 : 28)
-            .frame(height: isCompact ? 54 : 74)
-            .background(.thinMaterial, in: Capsule())
-            .overlay { Capsule().stroke(Color.white.opacity(0.13), lineWidth: 1) }
         }
         .shadow(color: .black.opacity(0.42), radius: 26, x: 0, y: 12)
     }
 
-    private func toolbarButton(_ systemImage: String, action: @escaping () -> Void) -> some View {
+    private func assetToolbarButton(_ assetName: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: isCompact ? 20 : 26, weight: .medium))
-                .foregroundStyle(.white)
-                .frame(width: isCompact ? 26 : 36, height: isCompact ? 38 : 44)
+            assetToolbarImage(assetName)
         }
         .buttonStyle(.plain)
     }
-}
 
-private struct EditorAppearanceSheet: View {
-    @Binding var appearance: DocumentAppearance
-    @Binding var cover: String?
-    @Binding var coverPickerItem: PhotosPickerItem?
-    @Binding var editorBackgroundPickerItem: PhotosPickerItem?
-    @Binding var innerBackgroundPickerItem: PhotosPickerItem?
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Theme") {
-                    Picker("Theme", selection: Binding<DocumentThemeID?>(
-                        get: { appearance.themeID },
-                        set: { newValue in
-                            if newValue == nil {
-                                cover = nil
-                                coverPickerItem = nil
-                                editorBackgroundPickerItem = nil
-                                innerBackgroundPickerItem = nil
-                            }
-                            appearance = DocumentAppearance.defaultForTheme(newValue)
-                        }
-                    )) {
-                        Text("None").tag(DocumentThemeID?.none)
-                        ForEach(DocumentThemeID.allCases) { theme in
-                            Text(theme.title).tag(Optional(theme))
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-
-                if appearance.themeID != nil {
-                    Section("Cover") {
-                        PhotosPicker(selection: $coverPickerItem, matching: .images) {
-                            Label(cover == nil ? "Choose Cover Photo" : "Replace Cover Photo", systemImage: "photo")
-                        }
-                        if cover != nil {
-                            Button("Remove Cover", role: .destructive) {
-                                cover = nil
-                            }
-                        }
-                    }
-
-                    Section("Theme Background") {
-                        BackgroundStyleEditor(
-                            style: $appearance.editorBackground,
-                            pickerItem: $editorBackgroundPickerItem
-                        )
-                    }
-
-                    Section("Inner Page") {
-                        BackgroundStyleEditor(
-                            style: $appearance.innerPageBackground,
-                            pickerItem: $innerBackgroundPickerItem
-                        )
-                    }
-                }
-
-                Section("Text") {
-                    ColorPicker("Text Color", selection: Binding(
-                        get: { Color(vellixHex: appearance.textColorHex) },
-                        set: { appearance.textColorHex = $0.vellixHexString(fallback: appearance.textColorHex) }
-                    ))
-
-                    Picker("Font", selection: $appearance.fontStyle) {
-                        ForEach(DocumentFontStyle.allCases) { style in
-                            Text(style.title).tag(style)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(VellixSurface.appBackground)
-            .navigationTitle("Page Style")
-        }
+    private func assetToolbarImage(_ name: String) -> some View {
+        Image(name)
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(.white)
+            .padding(isCompact ? 3 : 4)
+            .frame(width: isCompact ? 26 : 36, height: isCompact ? 38 : 44)
     }
 }
 
-private struct BackgroundStyleEditor: View {
-    @Binding var style: DocumentBackgroundStyle
-    @Binding var pickerItem: PhotosPickerItem?
+#if os(iOS)
+private struct EditorKeyboardFormattingToolbar: View {
+    static let height: CGFloat = 50
+    static let bottomPadding: CGFloat = 6
+
+    var boldAction: () -> Void
+    var italicAction: () -> Void
+    var underlineAction: () -> Void
+    var strikeAction: () -> Void
+    var codeAction: () -> Void
+    var alignLeftAction: () -> Void
+    var alignCenterAction: () -> Void
+    var alignRightAction: () -> Void
+    var outdentAction: () -> Void
+    var indentAction: () -> Void
+    var checklistAction: () -> Void
+    var taskAction: (() -> Void)?
+    var bulletListAction: () -> Void
+    var numberListAction: () -> Void
+    var iconAction: () -> Void
+    var insertBlockAction: (String) -> Void
+    var insertDividerAction: (VellixDividerStyle) -> Void
+    var pageBreakAction: () -> Void
+    var calloutAction: () -> Void
+    var dismissAction: () -> Void
 
     var body: some View {
-        Picker("Type", selection: Binding(
-            get: { style.kind },
-            set: { newKind in
-                switch newKind {
-                case .solid:
-                    style = .solid(style.colorHex)
-                case .gradient:
-                    style = .gradient(primary: style.colorHex, secondary: style.secondaryColorHex)
-                case .image:
-                    style.kind = .image
+        HStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 2) {
+                    toolbarButton("Bold", assetName: "boldtext", action: boldAction)
+                    toolbarButton("Italic", assetName: "italics", action: italicAction)
+                    toolbarButton("Underline", assetName: "underline", action: underlineAction)
+                    toolbarButton("Strikethrough", assetName: "strikethrough", action: strikeAction)
+                    toolbarButton("Inline Code", assetName: "codewindow", action: codeAction)
+                    divider
+                    toolbarButton("Align Left", assetName: "leftalign", action: alignLeftAction)
+                    toolbarButton("Align Center", assetName: "centeralign", action: alignCenterAction)
+                    toolbarButton("Align Right", assetName: "rightalign", action: alignRightAction)
+                    divider
+                    toolbarButton("Outdent", assetName: "chevleft", action: outdentAction)
+                    toolbarButton("Indent", assetName: "chevright", action: indentAction)
+                    divider
+                    toolbarButton("Checklist", assetName: "checklist", action: checklistAction)
+                    toolbarButton("Bullet List", assetName: "bulletlist", action: bulletListAction)
+                    toolbarButton("Numbered List", assetName: "numberlist", action: numberListAction)
                 }
+                .padding(.leading, 6)
+                .padding(.trailing, 2)
             }
-        )) {
-            ForEach(DocumentBackgroundKind.allCases) { kind in
-                Text(kind.title).tag(kind)
+
+            divider
+            if let taskAction {
+                toolbarButton("Checklist Task Scheduling", assetName: "clockfill", action: taskAction)
+                divider
             }
+            EditorInsertMenu(
+                iconAction: iconAction,
+                insertBlockAction: insertBlockAction,
+                insertDividerAction: insertDividerAction,
+                pageBreakAction: pageBreakAction,
+                calloutAction: calloutAction
+            )
+            divider
+            toolbarButton("Dismiss Keyboard", assetName: "chevdown", action: dismissAction)
+                .padding(.trailing, 4)
         }
-        .pickerStyle(.segmented)
-
-        ColorPicker("Color", selection: Binding(
-            get: { Color(vellixHex: style.colorHex) },
-            set: { style.colorHex = $0.vellixHexString(fallback: style.colorHex) }
-        ))
-
-        if style.kind == .gradient {
-            ColorPicker("Second Color", selection: Binding(
-                get: { Color(vellixHex: style.secondaryColorHex) },
-                set: { style.secondaryColorHex = $0.vellixHexString(fallback: style.secondaryColorHex) }
-            ))
+        .frame(height: Self.height)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.14), lineWidth: 1)
         }
+        .shadow(color: .black.opacity(0.28), radius: 12, x: 0, y: 5)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Text formatting")
+    }
 
-        if style.kind == .image {
-            PhotosPicker(selection: $pickerItem, matching: .images) {
-                Label(style.imagePath == nil ? "Choose Image" : "Replace Image", systemImage: "photo.on.rectangle")
-            }
+    private var divider: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.14))
+            .frame(width: 1, height: 24)
+            .padding(.horizontal, 4)
+    }
+
+    private func toolbarButton(
+        _ label: String,
+        assetName: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(assetName)
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(.white)
+                .frame(width: 20, height: 20)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 }
 
-private struct VellixIconLibraryPicker: View {
+private struct EditorInsertMenu: View {
+    var iconAction: () -> Void
+    var insertBlockAction: (String) -> Void
+    var insertDividerAction: (VellixDividerStyle) -> Void
+    var pageBreakAction: () -> Void
+    var calloutAction: () -> Void
+
+    var body: some View {
+        Menu {
+            Button("H1") { insertBlockAction("heading1") }
+            Button("H2") { insertBlockAction("heading2") }
+            Button("H3") { insertBlockAction("heading3") }
+            Button("H4") { insertBlockAction("heading4") }
+            Button("H5") { insertBlockAction("heading5") }
+            Button("Paragraph") { insertBlockAction("paragraph") }
+            Button("Page") { insertBlockAction("nestedPage") }
+            Button("Card") { insertBlockAction("pageCard") }
+            Button("Table") { insertBlockAction("table") }
+            Button { insertBlockAction("collection") } label: {
+                Label { Text("Collection") } icon: { LibraryIcon(name: "linedpages", size: 18) }
+            }
+            Menu("Toggle") {
+                Button("Body") { insertBlockAction("toggleListItem") }
+                Button("H1") { insertBlockAction("toggleHeading1") }
+                Button("H2") { insertBlockAction("toggleHeading2") }
+                Button("H3") { insertBlockAction("toggleHeading3") }
+                Button("H4") { insertBlockAction("toggleHeading4") }
+                Button("H5") { insertBlockAction("toggleHeading5") }
+            }
+            Button("Callout") { calloutAction() }
+            Button("Blockquote") { insertBlockAction("quote") }
+            Button("Checklist") { insertBlockAction("checkListItem") }
+            Button("Bullet List") { insertBlockAction("bulletListItem") }
+            Button("Numbered List") { insertBlockAction("numberedListItem") }
+            Menu("Properties") {
+                ForEach(InlinePropertyKind.allCases) { kind in
+                    Button(kind.title) { insertBlockAction("property:\(kind.rawValue)") }
+                }
+            }
+            Button("Page Break") { pageBreakAction() }
+            Menu("Divider") {
+                ForEach(VellixDividerStyle.allCases) { style in
+                    Button(style.title) {
+                        insertDividerAction(style)
+                    }
+                }
+            }
+            Button("Page Icon") { iconAction() }
+        } label: {
+            Image("addwavy")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(.white)
+                .frame(width: 22, height: 22)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add block")
+    }
+}
+#endif
+
+struct VellixIconLibraryPicker: View {
     @Environment(\.dismiss) private var dismiss
     var title: String
+    var colorSelection: Binding<Color>?
+    var onColorChange: ((Color) -> Void)?
     var onSelect: (VellixAssetIcon) -> Void
     @State private var query = ""
+    @State private var selectedCategoryID: String = VellixAssetIconLibrary.categories.first?.id ?? ""
+    @State private var isCategoryMenuOpen = false
+    @State private var isSystemLibrary = false
 
+    init(
+        title: String,
+        selectedIcon: String? = nil,
+        colorSelection: Binding<Color>? = nil,
+        onColorChange: ((Color) -> Void)? = nil,
+        onSelect: @escaping (VellixAssetIcon) -> Void
+    ) {
+        self.title = title
+        let usesSymbols = selectedIcon?.hasPrefix("sf:") == true
+        _isSystemLibrary = State(initialValue: usesSymbols)
+        _selectedCategoryID = State(initialValue: usesSymbols ? VellixSymbolCatalog.categories.first?.id ?? "" : VellixAssetIconLibrary.categories.first?.id ?? "")
+        self.colorSelection = colorSelection
+        self.onColorChange = onColorChange
+        self.onSelect = onSelect
+    }
+
+    // Show at most 4 category rows at once; the rest scroll inside the menu.
+    private let categoryRowHeight: CGFloat = 46
+    private let maxVisibleCategories = 4
+
+    private var categories: [VellixAssetIconCategory] { isSystemLibrary ? VellixSymbolCatalog.categories : VellixAssetIconLibrary.categories }
+
+    private var selectedCategory: VellixAssetIconCategory {
+        categories.first { $0.id == selectedCategoryID } ?? categories.first ?? VellixAssetIconCategory(name: "All", icons: [])
+    }
+
+    // Only the selected category is loaded into the grid at a time.
     private var icons: [VellixAssetIcon] {
-        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return VellixAssetIconLibrary.all
-        }
-
-        return VellixAssetIconLibrary.all.filter { $0.name.localizedCaseInsensitiveContains(query) }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return selectedCategory.icons }
+        if isSystemLibrary { return VellixSymbolCatalog.search(trimmed) }
+        return selectedCategory.icons.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
     }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 14)], spacing: 16) {
-                    ForEach(icons) { icon in
-                        Button {
-                            onSelect(icon)
-                        } label: {
-                            VStack(spacing: 8) {
-                                Image(icon.name)
-                                    .renderingMode(.template)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 34, height: 34)
-                                    .foregroundStyle(.white)
-                                Text(icon.name)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
+            VStack(spacing: 0) {
+                if let colorSelection {
+                    VellixBlockColorControls(
+                        title: "Callout Color",
+                        selection: colorSelection,
+                        onColorChange: onColorChange
+                    )
+                    Divider()
+                        .padding(.horizontal)
                 }
-                .padding()
+
+                HStack {
+                    Picker("Icon Library", selection: $isSystemLibrary) {
+                        Text("Penned Icons").tag(false)
+                        Text("SF Symbols").tag(true)
+                    }.pickerStyle(.menu).tint(VellixSurface.violet)
+                    Spacer()
+                    if isSystemLibrary { Text("\(VellixSymbolCatalog.symbols.count) symbols").font(.caption).foregroundStyle(.secondary) }
+                }.padding(.horizontal).padding(.top, 10)
+
+                categoryDropdown
+                    .padding(.horizontal)
+                    .padding(.top, 14)
+                    .padding(.bottom, 10)
+                    .zIndex(1)
+
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 14)], spacing: 16) {
+                        ForEach(icons) { icon in
+                            let symbol = icon.systemName.flatMap { VellixSymbolCatalog.byName[$0] }
+                            let available = symbol?.isAvailable ?? true
+                            Button {
+                                onSelect(icon)
+                            } label: {
+                                VStack(spacing: 8) {
+                                    LibraryIcon(name: available ? icon.name : "sf:questionmark.square.dashed", size: 34)
+                                        .foregroundStyle(.white)
+                                    Text(icon.displayName)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                    if let symbol, !available {
+                                        Text("OS \(symbol.requiredVersion)+").font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!available).opacity(available ? 1 : 0.45)
+                            .accessibilityLabel(icon.displayName)
+                            .accessibilityHint(available ? "Select icon" : "Requires OS \(symbol?.requiredVersion ?? "") or later")
+                            .help(icon.displayName)
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom)
+                }
             }
-            .searchable(text: $query)
+            .searchable(text: $query, prompt: isSystemLibrary ? "Search all SF Symbols" : "Search \(selectedCategory.name)")
+            .onChange(of: isSystemLibrary) { _, _ in
+                selectedCategoryID = categories.first?.id ?? ""; query = ""; isCategoryMenuOpen = false
+            }
             .background(VellixSurface.appBackground)
             .navigationTitle(title)
             .toolbar {
@@ -1444,45 +2499,208 @@ private struct VellixIconLibraryPicker: View {
             }
         }
     }
+
+    private var categoryDropdown: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isCategoryMenuOpen.toggle()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Text(selectedCategory.name)
+                        .font(.system(.headline, design: .rounded).weight(.semibold))
+                        .foregroundStyle(VellixSurface.ink)
+                    Spacer(minLength: 8)
+                    Text("\(selectedCategory.icons.count)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(VellixSurface.secondaryInk)
+                    Image(isCategoryMenuOpen ? "chevup" : "chevdown")
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 14, height: 14)
+                        .foregroundStyle(VellixSurface.secondaryInk)
+                }
+                .padding(.horizontal, 14)
+                .frame(minHeight: 48)
+                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: VellixRadius.md, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: VellixRadius.md, style: .continuous)
+                        .stroke(VellixSurface.hairline, lineWidth: 1)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if isCategoryMenuOpen {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(categories) { category in
+                            categoryRow(category)
+                            if category.id != categories.last?.id {
+                                Divider()
+                                    .overlay(VellixSurface.hairline)
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: categoryRowHeight * CGFloat(maxVisibleCategories))
+                .background(VellixSurface.paperLifted, in: RoundedRectangle(cornerRadius: VellixRadius.md, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: VellixRadius.md, style: .continuous)
+                        .stroke(VellixSurface.hairline, lineWidth: 1)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    private func categoryRow(_ category: VellixAssetIconCategory) -> some View {
+        let isSelected = category.id == selectedCategory.id
+        return Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                selectedCategoryID = category.id
+                isCategoryMenuOpen = false
+            }
+            query = ""
+        } label: {
+            HStack(spacing: 10) {
+                Text(category.name)
+                    .font(.system(.subheadline, design: .rounded).weight(isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? VellixSurface.accent : VellixSurface.ink)
+                Spacer(minLength: 8)
+                Text("\(category.icons.count)")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(VellixSurface.secondaryInk)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: categoryRowHeight)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(isSelected ? Color.white.opacity(0.06) : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct VellixBlockColorControls: View {
+    enum Layout {
+        case stacked, inline, optionEditor
+    }
+
+    var title: String
+    @Binding var selection: Color
+    var onColorChange: ((Color) -> Void)?
+    var layout: Layout = .stacked
+
+    private let palette = [
+        "#FFFFFF", "#2EC5F4", "#5B8CFF", "#A970FF",
+        "#FF5CAA", "#FF9F43", "#FFD84D", "#52D273"
+    ]
+
+    private var editableSelection: Binding<Color> {
+        Binding(
+            get: { selection },
+            set: { color in
+                selection = color
+                onColorChange?(color)
+            }
+        )
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if layout == .inline {
+            HStack(spacing: 8) {
+                swatches
+                    .frame(minWidth: 0, maxWidth: .infinity)
+                customPicker
+                    .labelsHidden()
+                    .frame(width: 44, height: 44)
+            }
+        } else if layout == .optionEditor {
+            VStack(spacing: 12) {
+                swatches
+                HStack {
+                    Text("Custom Color").font(.body.weight(.medium))
+                    Spacer()
+                    customPicker.labelsHidden().frame(width: 44, height: 44)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .background(VellixSurface.paperLifted, in: RoundedRectangle(cornerRadius: 16))
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title)
+                    .font(.headline)
+                swatches
+                customPicker
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+        }
+    }
+
+    private var swatches: some View {
+        let selectedHex = selection.vellixHexString(fallback: "#FFFFFF")
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: layout == .optionEditor ? 0 : 4) {
+                ForEach(palette, id: \.self) { hex in
+                    Button {
+                        editableSelection.wrappedValue = Color(vellixHex: hex)
+                    } label: {
+                        Circle()
+                            .fill(Color(vellixHex: hex))
+                            .frame(width: layout == .optionEditor ? 36 : 28, height: layout == .optionEditor ? 36 : 28)
+                            .overlay {
+                                Circle()
+                                    .stroke(
+                                        Color.white.opacity(selectedHex.caseInsensitiveCompare(hex) == .orderedSame ? 1 : 0.22),
+                                        lineWidth: selectedHex.caseInsensitiveCompare(hex) == .orderedSame ? 3 : 1
+                                    )
+                            }
+                            .overlay {
+                                if layout == .optionEditor, selectedHex.caseInsensitiveCompare(hex) == .orderedSame {
+                                    Image("checkwavy")
+                                        .renderingMode(.template)
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(width: 14, height: 14)
+                                        .foregroundStyle(hex == "#FFFFFF" ? Color.black : Color.white)
+                                }
+                            }
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(title) \(hex)")
+                }
+            }
+        }
+        .frame(height: 44)
+    }
+
+    private var customPicker: some View {
+        ColorPicker("Custom Color", selection: editableSelection, supportsOpacity: false)
+            .font(.body.weight(.medium))
+            .frame(minHeight: 44)
+            .accessibilityLabel("Custom \(title.lowercased())")
+    }
 }
 
 private struct DocumentBackgroundLayer: View {
+    @EnvironmentObject private var environment: AppEnvironment
     var style: DocumentBackgroundStyle
     var theme: DocumentThemeID?
 
     var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                switch style.kind {
-                case .solid:
-                    Color(vellixHex: style.colorHex)
-                case .gradient:
-                    LinearGradient(
-                        colors: [Color(vellixHex: style.colorHex), Color(vellixHex: style.secondaryColorHex)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                case .image:
-                    if let imagePath = style.imagePath {
-                        StoredAttachmentImage(relativePath: imagePath, contentMode: .fill)
-                            .frame(width: proxy.size.width, height: proxy.size.height)
-                            .clipped()
-                    } else {
-                        Color(vellixHex: style.colorHex)
-                    }
-                }
-
-                if let theme, theme != .custom {
-                    ThemePatternOverlay(theme: theme)
-                }
-            }
-            .frame(width: proxy.size.width, height: proxy.size.height)
-            .clipped()
-        }
+        DocumentStyleSurface(style: style, store: environment.attachmentStore, theme: theme)
     }
 }
 
-private struct ThemePatternOverlay: View {
+struct ThemePatternOverlay: View {
     var theme: DocumentThemeID
 
     var body: some View {
@@ -1512,7 +2730,7 @@ private struct ThemePatternOverlay: View {
     }
 }
 
-private struct ThemeCoverArt: View {
+struct ThemeCoverArt: View {
     var theme: DocumentThemeID
 
     var body: some View {
@@ -1563,75 +2781,6 @@ private struct ThemeCoverArt: View {
     }
 }
 
-private struct ThemedChildPages: View {
-    @EnvironmentObject private var environment: AppEnvironment
-    var children: [DocumentRecord]
-    var appearance: DocumentAppearance
-
-    var body: some View {
-        VStack(spacing: 14) {
-            ForEach(children.prefix(10)) { child in
-                Button {
-                    environment.select(child)
-                } label: {
-                    HStack(spacing: 14) {
-                        IconTile(systemName: child.icon, size: 52, tint: Color.white.opacity(0.45))
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(child.title)
-                                .font(.system(size: 24, weight: .bold, design: appearance.fontStyle.design))
-                                .foregroundStyle(.white)
-                                .lineLimit(1)
-                            Text(child.previewText)
-                                .font(.system(size: 19, weight: .medium, design: appearance.fontStyle.design))
-                                .foregroundStyle(.white.opacity(0.38))
-                                .lineLimit(1)
-                        }
-                        Spacer()
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-}
-
-private struct ThemedInnerPagePreview: View {
-    var appearance: DocumentAppearance
-    var children: [DocumentRecord]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 26) {
-            Text("Class Notes")
-                .font(.system(.title3, design: appearance.fontStyle.design).weight(.bold))
-                .foregroundStyle(Color(vellixHex: appearance.textColorHex))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(Color.white.opacity(0.18), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 18) {
-                ForEach(children.prefix(4)) { child in
-                    ZStack(alignment: .topLeading) {
-                        DocumentBackgroundLayer(style: appearance.editorBackground, theme: appearance.themeID)
-                        Text(child.title)
-                            .font(.system(size: 24, weight: .bold, design: appearance.fontStyle.design))
-                            .foregroundStyle(.white)
-                            .lineLimit(2)
-                            .padding(18)
-                    }
-                    .aspectRatio(1.05, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-            }
-        }
-        .padding(26)
-        .background(Color.black.opacity(0.92), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 1)
-        }
-    }
-}
-
 private struct StoredAttachmentImage: View {
     @EnvironmentObject private var environment: AppEnvironment
     var relativePath: String
@@ -1642,6 +2791,10 @@ private struct StoredAttachmentImage: View {
         Group {
             if let image {
                 platformImage(image)
+                    .resizable()
+                    .aspectRatio(contentMode: contentMode)
+            } else if let cached = CardImageLoader.image(path: relativePath, store: environment.attachmentStore) {
+                Image(decorative: cached, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
             } else {
@@ -1676,7 +2829,7 @@ private typealias PlatformImage = NSImage
 #endif
 
 private struct SnapshotHistoryView: View {
-    @ObservedObject var model: EditorCoordinatorModel
+    @ObservedObject var model: DocumentEditorModel
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -1753,7 +2906,7 @@ struct DocumentInspectorView: View {
     }
 }
 
-private extension Color {
+extension Color {
     func vellixHexString(fallback: String) -> String {
         #if canImport(UIKit)
         let color = UIColor(self)
@@ -1775,9 +2928,9 @@ private extension Color {
 
         return String(
             format: "#%02X%02X%02X",
-            Int(red * 255),
-            Int(green * 255),
-            Int(blue * 255)
+            Int((red * 255).rounded()),
+            Int((green * 255).rounded()),
+            Int((blue * 255).rounded())
         )
     }
 }

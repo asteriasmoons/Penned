@@ -40,9 +40,11 @@ enum VellixError: LocalizedError, Equatable {
 
 final class AppDatabase: @unchecked Sendable {
     private let writer: any DatabaseWriter
+    let isInMemory: Bool
 
-    init(_ writer: any DatabaseWriter) throws {
+    init(_ writer: any DatabaseWriter, isInMemory: Bool = false) throws {
         self.writer = writer
+        self.isInMemory = isInMemory
         try DatabaseMigrator.vellixMigrator.migrate(writer)
     }
 
@@ -71,7 +73,7 @@ final class AppDatabase: @unchecked Sendable {
         }
 
         let queue = try DatabaseQueue(configuration: configuration)
-        return try AppDatabase(queue)
+        return try AppDatabase(queue, isInMemory: true)
     }
 
     static func applicationSupportDirectory() throws -> URL {
@@ -93,7 +95,15 @@ final class AppDatabase: @unchecked Sendable {
     }
 
     func write<T>(_ updates: (Database) throws -> T) throws -> T {
-        try writer.write(updates)
+        var tasksChanged = false
+        let value = try writer.write { db in
+            let value = try updates(db)
+            tasksChanged = try DocumentTaskIndex.reconcile(in: db)
+            return value
+        }
+        if tasksChanged { NotificationCenter.default.post(name: .vellixTasksChanged, object: self) }
+        NotificationCenter.default.post(name: .pennedCollectionsChanged, object: self)
+        return value
     }
 }
 
@@ -129,7 +139,7 @@ extension DatabaseMigrator {
                 table.column("title", .text).notNull()
                 table.column("templateDescription", .text).notNull()
                 table.column("icon", .text)
-                table.column("blockNoteJSON", .text).notNull()
+                table.column("tipTapJSON", .text).notNull()
                 table.column("category", .text).notNull()
                 table.column("isBuiltIn", .boolean).notNull()
                 table.column("createdAt", .datetime).notNull()
@@ -143,7 +153,7 @@ extension DatabaseMigrator {
                 table.column("icon", .text)
                 table.column("cover", .text)
                 table.column("appearanceJSON", .text)
-                table.column("blockNoteJSON", .text).notNull()
+                table.column("tipTapJSON", .text).notNull()
                 table.column("plainText", .text).notNull().defaults(to: "")
                 table.column("previewText", .text).notNull().defaults(to: "")
                 table.column("spaceID", .text).references("spaces", onDelete: .setNull)
@@ -175,7 +185,7 @@ extension DatabaseMigrator {
             try db.create(table: "documentSnapshots") { table in
                 table.column("id", .text).primaryKey()
                 table.column("documentID", .text).notNull().references("documents", onDelete: .cascade)
-                table.column("blockNoteJSON", .text).notNull()
+                table.column("tipTapJSON", .text).notNull()
                 table.column("createdAt", .datetime).notNull()
                 table.column("revision", .integer).notNull()
                 table.column("reason", .text).notNull()
@@ -220,6 +230,114 @@ extension DatabaseMigrator {
             }
         }
 
+        migrator.registerMigration("v3_tiptap_editor_storage") { db in
+            try renameEditorColumnIfNeeded(in: db, table: "documents")
+            try renameEditorColumnIfNeeded(in: db, table: "documentSnapshots")
+            try renameEditorColumnIfNeeded(in: db, table: "templates")
+        }
+
+        migrator.registerMigration("v4_nested_page_trash_ownership") { db in
+            try db.alter(table: "documents") { table in
+                table.add(column: "trashBatchID", .text)
+            }
+        }
+
+        migrator.registerMigration("v5_inline_page_references") { db in
+            let parents = try DocumentRecord.fetchAll(db, sql: """
+                SELECT * FROM documents WHERE id IN (
+                    SELECT parentDocumentID FROM documents WHERE parentDocumentID IS NOT NULL
+                    AND isTrashed = 0 AND isArchived = 0
+                )
+                """)
+            for var parent in parents {
+                let children = try String.fetchAll(db, sql: """
+                    SELECT id FROM documents WHERE parentDocumentID = ? AND isTrashed = 0 AND isArchived = 0
+                    ORDER BY sortOrder ASC, createdAt ASC, id ASC
+                    """, arguments: [parent.id])
+                let placed = TipTapContentAnalyzer.pageReferenceIDs(in: parent.tipTapJSON)
+                guard children.contains(where: { !placed.contains($0) }) else { continue }
+                // The old header-only implementation did not save positions. Preserve those pages at the end.
+                parent.tipTapJSON = try TipTapContentAnalyzer.appendingPageReferences(to: parent.tipTapJSON, documentIDs: children)
+                parent.revision += 1
+                try db.execute(sql: "UPDATE documents SET tipTapJSON = ?, revision = ? WHERE id = ?",
+                               arguments: [parent.tipTapJSON, parent.revision, parent.id])
+            }
+        }
+
+        migrator.registerMigration("v6_page_card_style") { db in
+            try db.alter(table: "documents") { table in
+                table.add(column: "cardStyleJSON", .text)
+            }
+        }
+
+        migrator.registerMigration("v7_folder_icon_colors") { db in
+            try db.alter(table: "folders") { table in
+                table.add(column: "iconColorHex", .text)
+            }
+            try db.create(index: "folders_parent_index", on: "folders", columns: ["parentFolderID"])
+        }
+
+        migrator.registerMigration("v8_user_templates_only") { _ in
+            // Retain this identifier for existing installations, but never remove legacy templates.
+        }
+
+        migrator.registerMigration("v9_structured_templates") { db in
+            try db.alter(table: "documents") { table in
+                table.add(column: "templateID", .text).references("templates", onDelete: .setNull)
+            }
+            try db.alter(table: "templates") { table in
+                table.add(column: "rootDocumentID", .text).references("documents", onDelete: .setNull)
+            }
+            try db.create(index: "documents_template_index", on: "documents", columns: ["templateID"])
+        }
+
+        migrator.registerMigration("v10_document_styles") { db in
+            try db.create(table: "documentStyles") { table in
+                table.column("id", .text).primaryKey()
+                table.column("title", .text).notNull()
+                table.column("styleJSON", .text).notNull()
+                table.column("fingerprint", .text).notNull()
+                table.column("createdAt", .datetime).notNull()
+                table.column("updatedAt", .datetime).notNull()
+            }
+        }
+
+        migrator.registerMigration("v11_document_tasks") { db in
+            try DocumentTaskIndex.install(in: db)
+        }
+
+        migrator.registerMigration("v12_calendar_event_notes") { db in
+            try CalendarEventNoteRepository.install(in: db)
+        }
+
+        migrator.registerMigration("v13_document_collections") { db in
+            try CollectionRepository.install(in: db)
+        }
+
+        migrator.registerMigration("v14_embedded_collections") { db in
+            try CollectionMigration.embedInOwningDocuments(db)
+        }
+
+        let plainAppearanceJSON = DocumentAppearance.plain.encodedJSON()!
+        migrator.registerMigration("v15_independent_collection_entry_styles") { db in
+            try CollectionMigration.removeInheritedEntryStyles(db, defaultAppearanceJSON: plainAppearanceJSON)
+        }
+
         return migrator
+    }
+
+    private nonisolated static func renameEditorColumnIfNeeded(
+        in db: Database,
+        table: String
+    ) throws {
+        let columns = try db.columns(in: table)
+        let hasLegacyColumn = columns.contains { $0.name == "blockNoteJSON" }
+        let hasTipTapColumn = columns.contains { $0.name == "tipTapJSON" }
+
+        guard hasLegacyColumn, !hasTipTapColumn else {
+            return
+        }
+
+        try db.execute(sql: "ALTER TABLE \(table) RENAME COLUMN blockNoteJSON TO tipTapJSON")
     }
 }

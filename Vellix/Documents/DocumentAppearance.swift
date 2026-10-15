@@ -52,27 +52,34 @@ enum DocumentThemeID: String, Codable, CaseIterable, Identifiable {
 }
 
 enum DocumentFontStyle: String, Codable, CaseIterable, Identifiable {
-    case serif
-    case rounded
-    case mono
+    case system, serif, mono, rounded
 
     var id: String { rawValue }
 
+    var sample: String {
+        switch self {
+        case .system: return "Aa"
+        case .serif: return "Ss"
+        case .mono: return "00"
+        case .rounded: return "Rr"
+        }
+    }
+
     var title: String {
         switch self {
-        case .serif:
-            return "Serif"
+        case .system: return "System"
+        case .serif: return "Serif"
         case .rounded:
             return "Rounded"
         case .mono:
-            return "Mono"
+            return "Monospaced"
         }
     }
 
     var design: Font.Design {
         switch self {
-        case .serif:
-            return .serif
+        case .system: return .default
+        case .serif: return .serif
         case .rounded:
             return .rounded
         case .mono:
@@ -82,17 +89,18 @@ enum DocumentFontStyle: String, Codable, CaseIterable, Identifiable {
 
     var cssFamily: String {
         switch self {
-        case .serif:
-            return "Georgia, 'Times New Roman', serif"
+        case .system: return "system-ui, sans-serif"
+        case .serif: return "ui-serif, Georgia, serif"
         case .rounded:
-            return "'SF Pro Rounded', -apple-system, BlinkMacSystemFont, sans-serif"
+            return "ui-rounded, system-ui, sans-serif"
         case .mono:
-            return "'SF Mono', Menlo, Monaco, monospace"
+            return "ui-monospace, monospace"
         }
     }
 }
 
 enum DocumentBackgroundKind: String, Codable, CaseIterable, Identifiable {
+    case none
     case solid
     case gradient
     case image
@@ -101,6 +109,7 @@ enum DocumentBackgroundKind: String, Codable, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .none: return "None"
         case .solid:
             return "Solid"
         case .gradient:
@@ -111,9 +120,44 @@ enum DocumentBackgroundKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum DocumentGradientDirection: String, Codable, CaseIterable, Identifiable {
+    case topToBottom, leftToRight, diagonal, bottomToTop
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .topToBottom: return "Top to Bottom"
+        case .leftToRight: return "Left to Right"
+        case .diagonal: return "Diagonal"
+        case .bottomToTop: return "Bottom to Top"
+        }
+    }
+    var startPoint: UnitPoint {
+        switch self {
+        case .topToBottom: return .top
+        case .leftToRight: return .leading
+        case .diagonal: return .topLeading
+        case .bottomToTop: return .bottom
+        }
+    }
+    var endPoint: UnitPoint {
+        switch self {
+        case .topToBottom: return .bottom
+        case .leftToRight: return .trailing
+        case .diagonal: return .bottomTrailing
+        case .bottomToTop: return .top
+        }
+    }
+}
+
+enum DocumentBackdropEffect: String, Codable, CaseIterable, Identifiable {
+    case immersive, faded
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
 enum VellixDividerStyle: String, CaseIterable, Identifiable {
-    case fourDots
-    case tinyDots
+    case dottedCircles
+    case fourCircles
     case thinLine
     case thickLine
 
@@ -121,10 +165,10 @@ enum VellixDividerStyle: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .fourDots:
-            return "4 Dots"
-        case .tinyDots:
-            return "Tiny Dots"
+        case .dottedCircles:
+            return "Dotted Circles"
+        case .fourCircles:
+            return "Four Circles"
         case .thinLine:
             return "Thin Line"
         case .thickLine:
@@ -138,6 +182,13 @@ struct DocumentBackgroundStyle: Codable, Equatable, Hashable {
     var colorHex: String
     var secondaryColorHex: String
     var imagePath: String?
+    // Optional fields preserve the decoding and rendering of existing appearance JSON.
+    var gradientDirection: DocumentGradientDirection?
+    var blurImage: Bool?
+    var effect: DocumentBackdropEffect?
+    var remotePhoto: CardRemotePhoto?
+
+    static var none: Self { Self(kind: .none, colorHex: "#000000", secondaryColorHex: "#000000") }
 
     static func solid(_ hex: String) -> DocumentBackgroundStyle {
         DocumentBackgroundStyle(
@@ -165,6 +216,16 @@ struct DocumentBackgroundStyle: Codable, Equatable, Hashable {
             imagePath: path
         )
     }
+
+    func patternTheme(for theme: DocumentThemeID?) -> DocumentThemeID? {
+        guard let theme, theme != .custom else { return nil }
+        let original = theme.defaultEditorBackground
+        guard kind == original.kind,
+              colorHex.caseInsensitiveCompare(original.colorHex) == .orderedSame,
+              secondaryColorHex.caseInsensitiveCompare(original.secondaryColorHex) == .orderedSame,
+              (gradientDirection ?? .diagonal) == (original.gradientDirection ?? .diagonal) else { return nil }
+        return theme
+    }
 }
 
 struct DocumentAppearance: Codable, Equatable, Hashable {
@@ -173,11 +234,45 @@ struct DocumentAppearance: Codable, Equatable, Hashable {
     var innerPageBackground: DocumentBackgroundStyle
     var textColorHex: String
     var fontStyle: DocumentFontStyle
+    var showsCover: Bool?
+    var coverPhoto: CardRemotePhoto?
+    var coverThemeID: DocumentThemeID?
+
+    var displaysCover: Bool { showsCover ?? (themeID != nil) }
+    var resolvedCoverTheme: DocumentThemeID { coverThemeID ?? themeID ?? .custom }
+
+    mutating func enableCustomLayout() {
+        if themeID == nil {
+            themeID = .custom
+            showsCover = false
+        }
+    }
+
+    mutating func customizeBackdrop() {
+        if displaysCover && coverThemeID == nil { coverThemeID = resolvedCoverTheme }
+        enableCustomLayout()
+        themeID = .custom
+    }
+
+    var nestedPageTintHex: String {
+        func brightness(_ hex: String) -> Double {
+            let sanitized = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+            var value: UInt64 = 0
+            guard (sanitized.count == 6 || sanitized.count == 8), Scanner(string: sanitized).scanHexInt64(&value) else { return 0 }
+            if sanitized.count == 8 { value >>= 8 }
+            let red = Double((value >> 16) & 0xFF) / 255
+            let green = Double((value >> 8) & 0xFF) / 255
+            let blue = Double(value & 0xFF) / 255
+            return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+        }
+        let average = (brightness(innerPageBackground.colorHex) + brightness(innerPageBackground.secondaryColorHex)) / 2
+        return average < 0.5 ? "#FFFFFF" : "#000000"
+    }
 
     static let plain = DocumentAppearance(
         themeID: nil,
-        editorBackground: .solid("#202020"),
-        innerPageBackground: .solid("#000000"),
+        editorBackground: .solid("#343434"),
+        innerPageBackground: .solid("#242424"),
         textColorHex: "#F7F7F7",
         fontStyle: .rounded
     )
@@ -192,7 +287,7 @@ struct DocumentAppearance: Codable, Equatable, Hashable {
             editorBackground: theme.defaultEditorBackground,
             innerPageBackground: theme.defaultInnerPageBackground,
             textColorHex: theme == .lunarClouds ? "#8FE9FF" : "#FFFFFF",
-            fontStyle: theme == .custom ? .rounded : .serif
+            fontStyle: .rounded
         )
     }
 

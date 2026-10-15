@@ -1,0 +1,406 @@
+import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
+
+// Custom, Vellix-owned color picker styled to match the system "Select Color" sheet.
+// Used ONLY by the card / nested-page backdrop style (CardBackdropSheet).
+struct CardThreeModeColorPicker: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var selection: Color
+    var title: String
+
+    private enum Mode: CaseIterable { case grid, spectrum, sliders }
+
+    @State private var mode: Mode = .grid
+    @State private var hue: Double = 0
+    @State private var saturation: Double = 1
+    @State private var brightness: Double = 1
+    @State private var hexText: String = "FFFFFF"
+
+    private let swatchesTop = ["#3C0D0D", "#8E6FE0", "#17233F", "#E678D4", "#52C7F2", "#EC1C92", "#6A1FE0"]
+    private let swatchesBottom = ["#101012", "#F13BAE", "#2B2BB0", "#F4EFA0", "#54E6C0", "#7FB0F2", "#FFFFFF"]
+
+    private let sheetBackground = Color(red: 0.11, green: 0.11, blue: 0.12)
+    private let fieldBackground = Color(red: 0.08, green: 0.08, blue: 0.085)
+
+    private var current: Color { Color(hue: hue, saturation: saturation, brightness: brightness) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            header
+
+            modeSelector
+
+            switch mode {
+            case .grid: gridContent
+            case .spectrum: spectrumContent
+            case .sliders: slidersContent
+            }
+
+            valueRow
+            swatches
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 20)
+        .padding(.bottom, 16)
+        .frame(maxWidth: 550, maxHeight: .infinity, alignment: .topLeading)
+        .background(sheetBackground.ignoresSafeArea())
+        .onAppear {
+            let c = selection.vellixHSB()
+            hue = c.hue
+            saturation = c.saturation
+            brightness = c.brightness
+            hexText = String(selection.vellixHexString(fallback: "#FFFFFF").dropFirst())
+        }
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.white)
+            Spacer()
+            Button { dismiss() } label: {
+                ZStack {
+                    Circle().fill(Color.white.opacity(0.14)).frame(width: 30, height: 30)
+                    ZStack {
+                        Capsule().frame(width: 12, height: 2)
+                        Capsule().frame(width: 12, height: 2).rotationEffect(.degrees(90))
+                    }
+                    .rotationEffect(.degrees(45))
+                    .foregroundStyle(.white.opacity(0.85))
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close")
+        }
+    }
+
+    // MARK: Mode selector
+
+    private var modeSelector: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(Mode.allCases.enumerated()), id: \.offset) { _, m in
+                Button { mode = m } label: {
+                    modeIcon(m)
+                        .frame(maxWidth: .infinity).frame(height: 36)
+                        .background(m == mode ? Color.black : Color.clear, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(accessibilityName(m))
+            }
+        }
+        .padding(4)
+        .background(Color(white: 0.18), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+    }
+
+    private func accessibilityName(_ m: Mode) -> String {
+        switch m {
+        case .grid: return "Grid"
+        case .spectrum: return "Spectrum"
+        case .sliders: return "Sliders"
+        }
+    }
+
+    @ViewBuilder
+    private func modeIcon(_ m: Mode) -> some View {
+        switch m {
+        case .grid:
+            let palette: [[Color]] = [
+                [.red, .orange, .yellow, .green],
+                [.cyan, .blue, .purple, .pink],
+                [.mint, .teal, .indigo, .white]
+            ]
+            VStack(spacing: 1) {
+                ForEach(0..<3, id: \.self) { r in
+                    HStack(spacing: 1) {
+                        ForEach(0..<4, id: \.self) { c in
+                            Rectangle().fill(palette[r][c]).frame(width: 4, height: 4)
+                        }
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).stroke(.white.opacity(0.25), lineWidth: 0.5))
+        case .spectrum:
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(LinearGradient(colors: [.white, Color(hue: 0.09, saturation: 0.75, brightness: 0.95), .black],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: 20, height: 20)
+                .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(.white.opacity(0.4), lineWidth: 0.5))
+        case .sliders:
+            VStack(spacing: 4) {
+                sliderGlyph(color: .red, knobLeading: 0.3)
+                sliderGlyph(color: .green, knobLeading: 0.6)
+                sliderGlyph(color: .blue, knobLeading: 0.45)
+            }
+        }
+    }
+
+    private func sliderGlyph(color: Color, knobLeading: CGFloat) -> some View {
+        ZStack(alignment: .leading) {
+            Capsule().fill(color).frame(width: 20, height: 3)
+            Circle().fill(.white).frame(width: 6, height: 6)
+                .offset(x: knobLeading * (20 - 6))
+        }
+        .frame(width: 20, height: 6)
+    }
+
+    // MARK: Grid mode
+
+    private var gridContent: some View {
+        VStack(spacing: 0) {
+            gridRow(grayscaleRow)
+            ForEach(colorRows.indices, id: \.self) { r in
+                gridRow(colorRows[r])
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func gridRow(_ cells: [GridSwatch]) -> some View {
+        HStack(spacing: 0) {
+            ForEach(cells) { cell in
+                Rectangle()
+                    .fill(cell.color)
+                    .frame(height: 22)
+                    .frame(maxWidth: .infinity)
+                    .overlay {
+                        if isSelectedCell(cell) {
+                            Rectangle().stroke(Color.white, lineWidth: 2).padding(1)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { apply(h: cell.hue, s: cell.saturation, b: cell.brightness) }
+            }
+        }
+    }
+
+    private func isSelectedCell(_ cell: GridSwatch) -> Bool {
+        abs(cell.hue - hue) < 0.02 && abs(cell.saturation - saturation) < 0.03 && abs(cell.brightness - brightness) < 0.03
+    }
+
+    private var gridColumns: Int { 12 }
+
+    private var grayscaleRow: [GridSwatch] {
+        (0..<gridColumns).map { i in
+            let v = 1 - Double(i) / Double(gridColumns - 1)
+            return GridSwatch(hue: 0, saturation: 0, brightness: v)
+        }
+    }
+
+    private var colorRows: [[GridSwatch]] {
+        let rows = 10
+        return (0..<rows).map { r in
+            let t = Double(r) / Double(rows - 1)
+            var s = 1.0
+            var b = 1.0
+            if t < 0.5 {
+                b = 0.4 + (t / 0.5) * 0.6
+            } else {
+                s = 1.0 - ((t - 0.5) / 0.5) * 0.8
+            }
+            return (0..<gridColumns).map { c in
+                GridSwatch(hue: Double(c) / Double(gridColumns), saturation: s, brightness: b)
+            }
+        }
+    }
+
+    // MARK: Spectrum mode
+
+    private var spectrumContent: some View {
+        VStack(spacing: 18) {
+            GeometryReader { geo in
+                ZStack(alignment: .topLeading) {
+                    Rectangle().fill(LinearGradient(colors: [.white, Color(hue: hue, saturation: 1, brightness: 1)],
+                                                    startPoint: .leading, endPoint: .trailing))
+                    Rectangle().fill(LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom))
+                    Circle()
+                        .fill(current)
+                        .overlay(Circle().stroke(.white, lineWidth: 3))
+                        .frame(width: 28, height: 28)
+                        .position(x: saturation * geo.size.width, y: (1 - brightness) * geo.size.height)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0).onChanged { g in
+                    let s = min(max(g.location.x / geo.size.width, 0), 1)
+                    let b = min(max(1 - g.location.y / geo.size.height, 0), 1)
+                    apply(h: hue, s: s, b: b)
+                })
+            }
+            .frame(height: 250)
+
+            CardColorSlider(value: $hue, gradient: rainbowGradient, knobColor: Color(hue: hue, saturation: 1, brightness: 1), trackHeight: 30) {
+                apply(h: hue, s: saturation, b: brightness)
+            }
+        }
+    }
+
+    // MARK: Sliders mode
+
+    private var slidersContent: some View {
+        VStack(spacing: 16) {
+            CardColorSlider(value: $hue, gradient: rainbowGradient, knobColor: Color(hue: hue, saturation: 1, brightness: 1), trackHeight: 40) {
+                apply(h: hue, s: saturation, b: brightness)
+            }
+            CardColorSlider(value: $saturation,
+                            gradient: LinearGradient(colors: [Color(hue: hue, saturation: 0, brightness: brightness),
+                                                              Color(hue: hue, saturation: 1, brightness: brightness)],
+                                                     startPoint: .leading, endPoint: .trailing),
+                            knobColor: current, trackHeight: 40) {
+                apply(h: hue, s: saturation, b: brightness)
+            }
+            CardColorSlider(value: $brightness,
+                            gradient: LinearGradient(colors: [.black, Color(hue: hue, saturation: saturation, brightness: 1)],
+                                                     startPoint: .leading, endPoint: .trailing),
+                            knobColor: current, trackHeight: 40) {
+                apply(h: hue, s: saturation, b: brightness)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var rainbowGradient: LinearGradient {
+        LinearGradient(colors: (0...6).map { Color(hue: Double($0) / 6.0, saturation: 1, brightness: 1) },
+                       startPoint: .leading, endPoint: .trailing)
+    }
+
+    // MARK: Hex + HSB readout
+
+    private var valueRow: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 6) {
+                Text("#").foregroundStyle(.white.opacity(0.5))
+                TextField("", text: $hexText)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .onSubmit { apply(hex: hexText) }
+                    .foregroundStyle(.white)
+                    .font(.system(.body, design: .monospaced))
+            }
+            .padding(.horizontal, 14).frame(height: 46)
+            .background(fieldBackground, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+
+            HStack(spacing: 12) {
+                Image("chevdown").renderingMode(.template).resizable().scaledToFit()
+                    .frame(width: 11, height: 11).foregroundStyle(.white.opacity(0.4))
+                hsbCell("H", Int((hue * 360).rounded()))
+                hsbCell("S", Int((saturation * 100).rounded()))
+                hsbCell("B", Int((brightness * 100).rounded()))
+            }
+            .padding(.horizontal, 14).frame(height: 46)
+            .background(fieldBackground, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        }
+    }
+
+    private func hsbCell(_ label: String, _ value: Int) -> some View {
+        HStack(spacing: 5) {
+            Text(label).font(.subheadline).foregroundStyle(.white.opacity(0.5))
+            Text("\(value)").font(.system(.subheadline, design: .rounded)).foregroundStyle(.white)
+        }
+    }
+
+    // MARK: Swatches
+
+    private var swatches: some View {
+        VStack(spacing: 12) {
+            swatchRow(swatchesTop)
+            swatchRow(swatchesBottom)
+        }
+    }
+
+    private func swatchRow(_ hexes: [String]) -> some View {
+        HStack(spacing: 12) {
+            ForEach(hexes, id: \.self) { hex in
+                Button { apply(hex: hex) } label: {
+                    Circle().fill(Color(vellixHex: hex)).frame(width: 38, height: 38)
+                        .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Color \(hex)")
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    // MARK: Updates
+
+    private func apply(h: Double, s: Double, b: Double) {
+        hue = min(max(h, 0), 1)
+        saturation = min(max(s, 0), 1)
+        brightness = min(max(b, 0), 1)
+        selection = current
+        hexText = String(current.vellixHexString(fallback: "#" + hexText).dropFirst())
+    }
+
+    private func apply(hex: String) {
+        let c = Color(vellixHex: hex).vellixHSB()
+        apply(h: c.hue, s: c.saturation, b: c.brightness)
+    }
+}
+
+private struct GridSwatch: Identifiable {
+    let hue: Double
+    let saturation: Double
+    let brightness: Double
+    var id: String { "\(hue)-\(saturation)-\(brightness)" }
+    var color: Color { Color(hue: hue, saturation: saturation, brightness: brightness) }
+}
+
+private struct CardColorSlider: View {
+    @Binding var value: Double
+    var gradient: LinearGradient
+    var knobColor: Color
+    var trackHeight: CGFloat = 30
+    var onChange: () -> Void
+
+    private var knob: CGFloat { trackHeight }
+
+    var body: some View {
+        GeometryReader { geo in
+            let usable = max(geo.size.width - knob, 1)
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: trackHeight / 2, style: .continuous)
+                    .fill(gradient)
+                    .frame(height: trackHeight)
+                Circle()
+                    .fill(knobColor)
+                    .overlay(Circle().stroke(.white, lineWidth: 3))
+                    .frame(width: knob, height: knob)
+                    .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+                    .offset(x: min(max(value, 0), 1) * usable)
+            }
+            .frame(height: knob)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { g in
+                value = min(max((g.location.x - knob / 2) / usable, 0), 1)
+                onChange()
+            })
+        }
+        .frame(height: trackHeight)
+    }
+}
+
+extension Color {
+    func vellixHSB() -> (hue: Double, saturation: Double, brightness: Double) {
+        #if canImport(UIKit)
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        if UIColor(self).getHue(&h, saturation: &s, brightness: &b, alpha: &a) {
+            return (Double(h), Double(s), Double(b))
+        }
+        #elseif canImport(AppKit)
+        if let c = NSColor(self).usingColorSpace(.sRGB) {
+            return (Double(c.hueComponent), Double(c.saturationComponent), Double(c.brightnessComponent))
+        }
+        #endif
+        return (0, 0, 1)
+    }
+}

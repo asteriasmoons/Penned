@@ -7,196 +7,298 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var environment: AppEnvironment
+    @ObservedObject private var searchModel: SearchModel
+    @FocusState private var isSearchFocused: Bool
+    @State private var searchScope = LibrarySearchScope.keyword
+    @State private var customizeHome = false
+    @State private var expandedStarred = false
+    @AppStorage("library.showPreviewStrip") private var showPreviewStrip = true
+    @AppStorage("library.showStarred") private var showStarred = true
+    @AppStorage("library.showFolders") private var showFolders = true
+
+    init(environment: AppEnvironment) {
+        _searchModel = ObservedObject(wrappedValue: environment.librarySearch)
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: VellixSpacing.xl) {
-                hero
+            VStack(alignment: .leading, spacing: 24) {
+                searchField
 
-                if environment.overview.all.isEmpty {
-                    emptyDesk
+                if searchModel.hasQuery {
+                    searchResults
                 } else {
-                    topShelf
-                    documentShelf(
-                        title: "Continue Writing",
-                        subtitle: "The pages you touched most recently.",
-                        documents: Array(environment.overview.recent.prefix(6)),
-                        actionTitle: "All Recents"
-                    ) {
-                        environment.selectedDestination = .recents
+                    if environment.overview.all.isEmpty {
+                        emptyDesk
+                    } else {
+                        if showPreviewStrip { previewStrip }
                     }
-                    if !environment.overview.favorites.isEmpty {
-                        documentShelf(
-                            title: "Starred",
-                            subtitle: "Pinned where your eyes naturally land.",
-                            documents: Array(environment.overview.favorites.prefix(6)),
-                            actionTitle: "View Starred"
-                        ) {
-                            environment.selectedDestination = .favorites
-                        }
-                    }
-                    quickStarts
+                    libraryLinks
+                    if showStarred { starredList }
+                    if showFolders { folderList }
+                    Button("Customize Home") { customizeHome = true }
+                        .font(.callout).foregroundStyle(.secondary)
+                        .padding(.horizontal, 18).padding(.vertical, 12)
+                        .background(.primary.opacity(0.08), in: Capsule())
+                        .frame(maxWidth: .infinity).padding(.top, 24)
                 }
             }
-            .padding(VellixSpacing.xl)
+            .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 100)
         }
-        .background(VellixBackground())
+        .background(Color.black)
         .navigationTitle("Home")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { LibraryBrandMark() }
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button("Customize Home") { customizeHome = true }
+                    Button("Recents") { open(.recents) }
+                    Button("Templates") { open(.templates) }
+                    Button("Trash") { open(.trash) }
+                } label: { LibraryIcon(name: "dotswavy") }
+                .accessibilityLabel("Home options")
+            }
+        }
+        .sheet(isPresented: $customizeHome) {
+            NavigationStack {
+                Form {
+                    Toggle("Document previews", isOn: $showPreviewStrip)
+                    Toggle("Starred", isOn: $showStarred)
+                    Toggle("Folders", isOn: $showFolders)
+                }
+                .navigationTitle("Customize Home")
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { customizeHome = false }
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        }
+        .onAppear {
+            focusRequestedSearch()
+        }
+        .onChange(of: environment.isLibrarySearchRequested) { _, _ in
+            focusRequestedSearch()
+        }
+        .onChange(of: environment.selectedDocumentID) { _, documentID in
+            if documentID != nil {
+                isSearchFocused = false
+            }
+        }
     }
 
-    private var hero: some View {
-        VStack(alignment: .leading, spacing: VellixSpacing.lg) {
-            HStack(alignment: .top, spacing: VellixSpacing.md) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Your workspace")
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundStyle(VellixSurface.ink)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.86)
-                    Text(Date.now.formatted(date: .complete, time: .omitted))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+    private var searchField: some View {
+        LibrarySearchField(query: Binding(
+                get: { searchModel.query },
+                set: { searchModel.updateQuery($0) }
+            ), scope: $searchScope, placeholder: "Search in Vellix", focus: $isSearchFocused)
+    }
+
+    @ViewBuilder
+    private var searchResults: some View {
+        if let error = searchModel.errorMessage {
+            VellixEmptyState(
+                title: "Search unavailable",
+                message: error,
+                systemImage: "searchwavy",
+                actionTitle: "Try Again",
+                action: { searchModel.refresh() }
+            )
+        } else if searchModel.results.isEmpty && searchModel.templates.isEmpty {
+            VellixEmptyState(
+                title: "No results",
+                message: "Try another title, phrase, or template name.",
+                systemImage: "searchwavy",
+                actionTitle: nil,
+                action: nil
+            )
+        } else {
+            if !searchModel.results.isEmpty {
+                resultSection(title: "Pages") {
+                    ForEach(searchModel.results.filter { searchScope == .keyword || $0.title.localizedCaseInsensitiveContains(searchModel.query) }) { result in
+                        Button {
+                            do {
+                                let document = try environment.documents.requireDocument(id: result.documentID)
+                                isSearchFocused = false
+                                environment.select(document)
+                            } catch {
+                                environment.report(error)
+                            }
+                        } label: {
+                            SearchResultRow(result: result)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                Spacer()
-                Button {
-                    _ = environment.createDocument(title: "Untitled")
-                } label: {
-                    Label("New Page", systemImage: "square.and.pencil")
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(.black)
-                        .lineLimit(1)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .background(.white.opacity(0.94), in: Capsule())
-                        .shadow(color: .black.opacity(0.20), radius: 12, x: 0, y: 6)
-                }
-                .buttonStyle(.plain)
             }
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 116), spacing: VellixSpacing.md)], spacing: VellixSpacing.md) {
-                WorkspacePill(
-                    title: "Pages",
-                    value: "\(environment.overview.all.count)",
-                    systemImage: "doc.text",
-                    tint: VellixSurface.accent
-                )
-                WorkspacePill(
-                    title: "Starred",
-                    value: "\(environment.overview.favorites.count)",
-                    systemImage: "star.fill",
-                    tint: VellixSurface.gold
-                )
-                WorkspacePill(
-                    title: "Templates",
-                    value: "\(environment.overview.templates.count)",
-                    systemImage: "square.on.square",
-                    tint: VellixSurface.violet
-                )
+            if !searchModel.templates.isEmpty {
+                resultSection(title: "Templates") {
+                    ForEach(searchModel.templates) { template in
+                        TemplateResultRow(template: template) {
+                            isSearchFocused = false
+                            _ = environment.createDocument(title: template.title, from: template)
+                        }
+                    }
+                }
             }
         }
-        .padding(22)
-        .vellixPaper()
+    }
+
+    private func resultSection<Content: View>(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: VellixSpacing.md) {
+            VellixSectionHeader(title: title, actionTitle: nil, action: nil)
+            LazyVStack(spacing: VellixSpacing.sm) {
+                content()
+            }
+        }
+    }
+
+    private func focusRequestedSearch() {
+        guard environment.isLibrarySearchRequested else { return }
+        isSearchFocused = true
+        environment.isLibrarySearchRequested = false
+    }
+
+    private func open(_ destination: AppDestination) {
+        environment.selectedFolderID = nil
+        environment.selectedDestination = destination
+    }
+
+    private var previewStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(alignment: .top, spacing: 10) {
+                ForEach(environment.overview.recent.prefix(10)) { document in
+                    Button { environment.select(document) } label: {
+                        LibraryDocumentPreview(document: document, fixedAspectRatio: 0.82)
+                            .frame(width: 138)
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu { DocumentContextMenu(document: document) }
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+        .padding(.horizontal, -16)
+        .padding(.vertical, 2)
+    }
+
+    private var libraryLinks: some View {
+        VStack(spacing: 0) {
+            libraryRow("All Docs", icon: "linedpages") { open(.allDocuments) }
+            libraryRow("Spaces", icon: "spaces") { open(.spaces) }
+            libraryRow("Templates", icon: "copy") { open(.templates) }
+        }
+    }
+
+    private var starredList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Button { open(.favorites) } label: {
+                    HStack(spacing: 7) {
+                        Text("Starred").font(.headline)
+                        LibraryIcon(name: "chevright", size: 12).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Menu {
+                    Button(expandedStarred ? "Show Fewer" : "Show All") { expandedStarred.toggle() }
+                    Button("Open Starred") { open(.favorites) }
+                } label: { LibraryIcon(name: "dotswavy", size: 18).foregroundStyle(.secondary) }
+                .accessibilityLabel("Starred options")
+            }
+            .padding(.horizontal, 8)
+            VStack(spacing: 0) {
+                ForEach(environment.overview.favorites.prefix(expandedStarred ? environment.overview.favorites.count : 5)) { document in
+                    Button { environment.select(document) } label: {
+                        HStack(spacing: 12) {
+                            LibraryDocumentPreview(document: document, fixedAspectRatio: 0.72, showsStar: false, cornerRadius: 2).frame(width: 19)
+                            Text(document.title).font(.system(size: 17)).lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .frame(minHeight: 48).padding(.horizontal, 10).contentShape(Rectangle())
+                    }
+                    .contextMenu { DocumentContextMenu(document: document) }
+                    Divider().opacity(0.15).padding(.leading, 41)
+                }
+                if environment.overview.favorites.isEmpty {
+                    Text("No starred pages").foregroundStyle(.secondary).padding(.vertical, 14).padding(.leading, 10)
+                } else if !expandedStarred && environment.overview.favorites.count > 5 {
+                    Button("Show \(environment.overview.favorites.count - 5) more") { expandedStarred = true }
+                        .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 41).padding(.top, 12)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var folderList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Button { open(.folders) } label: {
+                    HStack(spacing: 7) {
+                        Text("Folders").font(.headline)
+                        LibraryIcon(name: "chevright", size: 12).foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Menu {
+                    Button("New Folder") { environment.requestFolderCreation(parentFolderID: nil) }
+                } label: { LibraryIcon(name: "dotswavy", size: 18).foregroundStyle(.secondary) }
+                .accessibilityLabel("Folder options")
+            }
+            .padding(.horizontal, 8)
+            VStack(spacing: 0) {
+                libraryRow("Unsorted", icon: "openedfolder", count: environment.overview.all.filter { $0.folderID == nil }.count) {
+                    environment.selectedFolderID = "__unsorted"
+                    environment.selectedDestination = .allDocuments
+                }
+                ForEach(FolderHierarchy(folders: environment.overview.folders).children(of: nil)) { folder in
+                    libraryRow(folder.title, icon: VellixAssetIconLibrary.names.contains(folder.icon ?? "") ? (folder.icon ?? "linesfolderfill") : "linesfolderfill",
+                        count: FolderHierarchy(folders: environment.overview.folders).itemCount(in: folder.id, documents: environment.overview.all),
+                        iconColor: Color(vellixHex: folder.iconColorHex ?? "#909090")) {
+                        environment.openFolder(folder.id)
+                    }
+                    .contextMenu { FolderContextMenu(folder: folder) }
+                }
+            }
+        }
+    }
+
+    private func libraryRow(_ title: String, icon: String, count: Int? = nil, iconColor: Color = .secondary,
+                            action: @escaping () -> Void) -> some View {
+        VStack(spacing: 0) {
+            Button(action: action) {
+                HStack(spacing: 12) {
+                    LibraryIcon(name: icon, size: 20).foregroundStyle(iconColor)
+                    Text(title).font(.system(size: 17)).lineLimit(1)
+                    Spacer(minLength: 0)
+                    if let count { Text(String(count)).foregroundStyle(.tertiary).font(.callout) }
+                    if count != nil { LibraryIcon(name: "chevright", size: 12).foregroundStyle(.tertiary) }
+                }
+                .padding(.horizontal, 10).frame(minHeight: 48).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Divider().opacity(0.15).padding(.leading, 41)
+        }
     }
 
     private var emptyDesk: some View {
         VellixEmptyState(
             title: "Start with a page",
-            message: "Vellix opens into a local writing desk. Create a page and the editor will autosave structured BlockNote JSON to SQLite.",
-            systemImage: "doc.badge.plus",
+            message: "",
+            systemImage: "linedpages",
             actionTitle: "Create Page"
         ) {
             _ = environment.createDocument()
         }
-        .frame(minHeight: 420)
-        .vellixPaper()
-    }
-
-    private var topShelf: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: VellixSpacing.md)], spacing: VellixSpacing.md) {
-            QuickActionCard(
-                title: "Daily Note",
-                subtitle: "Open a page for today.",
-                systemImage: "calendar.badge.plus",
-                tint: VellixSurface.teal
-            ) {
-                if let template = environment.overview.templates.first(where: { $0.id == "built-in.daily-note" }) {
-                    _ = environment.createDocument(title: "Today", from: template)
-                } else {
-                    _ = environment.createDocument(title: "Today")
-                }
-            }
-
-            QuickActionCard(
-                title: "Blank Page",
-                subtitle: "A clean canvas.",
-                systemImage: "doc",
-                tint: VellixSurface.accent
-            ) {
-                _ = environment.createDocument(title: "Untitled")
-            }
-
-            QuickActionCard(
-                title: "Search Library",
-                subtitle: "Find text, titles, and templates.",
-                systemImage: "magnifyingglass",
-                tint: VellixSurface.violet
-            ) {
-                environment.selectedDestination = .search
-            }
-        }
-    }
-
-    private func documentShelf(
-        title: String,
-        subtitle: String,
-        documents: [DocumentRecord],
-        actionTitle: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        VStack(alignment: .leading, spacing: VellixSpacing.md) {
-            VellixSectionHeader(
-                title: title,
-                subtitle: subtitle,
-                actionTitle: actionTitle,
-                action: action
-            )
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: VellixSpacing.md) {
-                    ForEach(documents) { document in
-                        DocumentCard(document: document, style: .paper)
-                            .frame(width: 268)
-                            .onTapGesture {
-                                environment.select(document)
-                            }
-                            .contextMenu {
-                                DocumentContextMenu(document: document)
-                            }
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-        }
-    }
-
-    private var quickStarts: some View {
-        VStack(alignment: .leading, spacing: VellixSpacing.md) {
-            VellixSectionHeader(
-                title: "Start From A Template",
-                subtitle: "Quiet structure when you do not want to stare at an empty page.",
-                actionTitle: "All Templates"
-            ) {
-                environment.selectedDestination = .templates
-            }
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: VellixSpacing.md)], spacing: VellixSpacing.md) {
-                ForEach(environment.overview.templates.prefix(4)) { template in
-                    TemplateCard(template: template) {
-                        _ = environment.createDocument(title: template.title, from: template)
-                    }
-                }
-            }
-        }
+        .frame(minHeight: 180)
     }
 }
 
@@ -233,51 +335,44 @@ struct QuickActionCard: View {
 }
 
 struct TemplateCard: View {
+    @EnvironmentObject private var environment: AppEnvironment
     var template: TemplateRecord
+    var document: DocumentRecord? = nil
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: VellixSpacing.md) {
-                HStack {
-                    IconTile(systemName: template.icon, tint: templateTint)
-                    Spacer()
-                    Text(template.category)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(templateTint)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(templateTint.opacity(0.10), in: Capsule())
-                }
-                Text(template.title)
-                    .font(.system(.headline, design: .rounded).weight(.semibold))
-                    .foregroundStyle(VellixSurface.ink)
-                    .lineLimit(2)
-                Text(template.templateDescription)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                Spacer(minLength: 0)
+            HStack(spacing: 10) {
+                NestedPageThumbnail(json: document?.tipTapJSON ?? template.tipTapJSON,
+                    title: template.title, appearance: document?.appearance ?? .plain,
+                    size: CGSize(width: 43, height: 56),
+                    cover: document?.cover, attachmentStore: environment.attachmentStore)
+                    .equatable()
+                    .shadow(color: .black.opacity(0.48), radius: 6, x: 0, y: 4)
+                    .shadow(color: .black.opacity(0.30), radius: 1, x: 0, y: 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(template.title)
+                        .font(.system(size: 18, weight: .black, design: .rounded))
+                        .foregroundStyle(VellixSurface.ink)
+                        .lineLimit(2)
+                    Text(previewText)
+                        .font(.system(size: 14, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(VellixSpacing.lg)
-            .frame(maxWidth: .infinity, minHeight: 188, alignment: .topLeading)
-            .vellixPaper()
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .padding(.vertical, 2)
+        .accessibilityLabel(template.isBuiltIn ? "Use \(template.title)" : "Edit \(template.title)")
     }
 
-    private var templateTint: Color {
-        switch template.category {
-        case "Planning":
-            return VellixSurface.teal
-        case "Creative":
-            return VellixSurface.coral
-        case "Research":
-            return VellixSurface.violet
-        case "Personal":
-            return VellixSurface.gold
-        default:
-            return VellixSurface.accent
-        }
+    private var previewText: String {
+        if let description = template.templateDescription.trimmedNonEmpty { return description }
+        if let document, document.previewText != "No content yet" { return document.previewText }
+        return document?.appearance.displaysCover == true ? "Template" : "Empty template"
     }
 }

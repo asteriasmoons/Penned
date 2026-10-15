@@ -20,6 +20,12 @@ struct VellixShellView: View {
                 regularWorkspace
             }
         }
+        .sheet(item: $environment.librarySheet) { sheet in
+            switch sheet {
+            case .folder(let request): FolderEditorSheet(request: request)
+            case .move(let request): FolderDestinationPicker(request: request)
+            }
+        }
         .alert("Vellix", isPresented: Binding(
             get: { environment.errorMessage != nil },
             set: { if !$0 { environment.errorMessage = nil } }
@@ -27,6 +33,21 @@ struct VellixShellView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(environment.errorMessage ?? "")
+        }
+        .confirmationDialog(environment.documentPendingDeletion?.templateID != nil && environment.documentPendingDeletion?.parentDocumentID == nil
+            ? "Delete this template?" : "Delete this page permanently?", isPresented: Binding(
+            get: { environment.documentPendingDeletion != nil },
+            set: { if !$0 { environment.documentPendingDeletion = nil } }
+        ), titleVisibility: .visible) {
+            if let document = environment.documentPendingDeletion {
+                Button(document.templateID != nil && document.parentDocumentID == nil ? "Delete Template" : "Delete Page and Nested Pages", role: .destructive) {
+                    environment.permanentlyDelete(document)
+                    environment.documentPendingDeletion = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { environment.documentPendingDeletion = nil }
+        } message: {
+            Text("This permanently removes the page and every page nested inside it, including their snapshots and attachments.")
         }
     }
 
@@ -43,25 +64,40 @@ struct VellixShellView: View {
 
     private var compactWorkspace: some View {
         NavigationStack {
-            Group {
-                if environment.selectedDocumentID == nil {
-                    destinationContent
-                } else {
-                    compactEditorDetail
+            destinationContent
+                .opacity(environment.selectedDocumentID == nil ? 1 : 0)
+                .allowsHitTesting(environment.selectedDocumentID == nil)
+                .accessibilityHidden(environment.selectedDocumentID != nil)
+                .overlay {
+                    compactEditorDeck
                 }
+                .overlay(alignment: .bottom) {
+                    if environment.selectedDocumentID == nil { LibraryBottomBar() }
+                }
+                #if os(iOS)
+                .navigationBarTitleDisplayMode(environment.selectedDocumentID == nil && environment.selectedDestination != .templates ? .large : .inline)
+                .toolbar(environment.selectedDocumentID == nil ? .visible : .hidden, for: .navigationBar)
+                #endif
+        }
+    }
+
+    private var compactEditorDeck: some View {
+        ZStack {
+            ForEach(environment.editorCache.preparedModels, id: \.documentID) { model in
+                compactEditorDetail(model: model)
+                    .opacity(environment.selectedDocumentID == model.documentID ? 1 : 0)
+                    .allowsHitTesting(environment.selectedDocumentID == model.documentID)
+                    .accessibilityHidden(environment.selectedDocumentID != model.documentID)
             }
         }
     }
 
     @ViewBuilder
-    private var compactEditorDetail: some View {
+    private func compactEditorDetail(model: DocumentEditorModel) -> some View {
         #if os(iOS)
-        editorDetail
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationBarBackButtonHidden(true)
-            .toolbar(.hidden, for: .navigationBar)
+        editorContent(model: model)
         #else
-        editorDetail
+        editorContent(model: model)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     compactLibraryButton
@@ -79,14 +115,40 @@ struct VellixShellView: View {
         }
     }
 
+    @ViewBuilder
     private var editorDetail: some View {
-        HStack(spacing: 0) {
-            DocumentEditorView(environment: environment)
-            if environment.isInspectorVisible {
-                Divider().opacity(0.45)
-                DocumentInspectorView(document: selectedDocument)
+        ZStack {
+            if environment.selectedDocumentID == nil {
+                VellixEmptyState(
+                    title: "Choose a page",
+                    message: "Open a page from the library or create a new one.",
+                    systemImage: "linedpages",
+                    actionTitle: "New Page"
+                ) {
+                    _ = environment.createDocument()
+                }
+                .frame(maxWidth: 520)
+                .vellixPaper()
+                .padding(VellixSpacing.xl)
+            }
+            ForEach(environment.editorCache.preparedModels, id: \.documentID) { model in
+                editorContent(model: model)
+                    .opacity(environment.selectedDocumentID == model.documentID ? 1 : 0)
+                    .allowsHitTesting(environment.selectedDocumentID == model.documentID)
+                    .accessibilityHidden(environment.selectedDocumentID != model.documentID)
             }
         }
+    }
+
+    private func editorContent(model: DocumentEditorModel) -> some View {
+        HStack(spacing: 0) {
+            DocumentEditorView(model: model)
+            if environment.isInspectorVisible {
+                Divider().opacity(0.45)
+                DocumentInspectorView(document: model.document)
+            }
+        }
+        .id(model.documentID)
     }
 
     private var sidebar: some View {
@@ -101,9 +163,11 @@ struct VellixShellView: View {
                                 title: destination.title,
                                 systemImage: destination.fallbackSymbol,
                                 count: count(for: destination),
-                                isSelected: environment.selectedDestination == destination
+                                isSelected: environment.selectedDestination == destination,
+                                tint: destination == .calendar ? CalendarStyle.accent : VellixSurface.accent
                             ) {
                                 environment.selectedDestination = destination
+                                environment.selectedFolderID = nil
                                 if destination != .spaces {
                                     environment.selectedSpaceID = nil
                                 }
@@ -172,10 +236,14 @@ struct VellixShellView: View {
             }
 
             Button {
-                environment.selectedDestination = .search
+                environment.focusLibrarySearch()
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
+                    Image("searchwavy")
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
                     Text("Search")
                     Spacer()
                     Text("Cmd-F")
@@ -230,44 +298,46 @@ struct VellixShellView: View {
     private var destinationContent: some View {
         switch environment.selectedDestination {
         case .home:
-            HomeView()
-        case .today:
-            DocumentBrowserView(mode: .today, documents: environment.overview.recent)
+            HomeView(environment: environment)
+        case .calendar:
+            CalendarView(model: environment.calendar)
         case .recents:
             DocumentBrowserView(mode: .recent, documents: environment.overview.recent)
         case .favorites:
             DocumentBrowserView(mode: .favorites, documents: environment.overview.favorites)
+        case .folders:
+            DocumentBrowserView(mode: .folders, documents: [])
         case .allDocuments:
-            DocumentBrowserView(mode: .all, documents: environment.overview.all)
+            if let folderID = environment.selectedFolderID {
+                DocumentBrowserView(mode: .folder(folderID),
+                    documents: environment.overview.all.filter { folderID == "__unsorted" ? $0.folderID == nil : $0.folderID == folderID },
+                    displayTitle: folderID == "__unsorted" ? "Unsorted" : environment.overview.folders.first { $0.id == folderID }?.title)
+            } else {
+                DocumentBrowserView(mode: .all, documents: environment.overview.all)
+            }
         case .spaces:
             SpacesView()
         case .templates:
             TemplatesView()
         case .trash:
             TrashView()
-        case .search:
-            SearchView(environment: environment)
         }
-    }
-
-    private var selectedDocument: DocumentRecord? {
-        guard let selectedDocumentID = environment.selectedDocumentID else {
-            return nil
-        }
-
-        return try? environment.documents.requireDocument(id: selectedDocumentID)
     }
 
     private func count(for destination: AppDestination) -> Int? {
         switch destination {
-        case .home, .search:
+        case .home:
             return nil
-        case .today, .recents:
+        case .calendar:
+            return nil
+        case .recents:
             return environment.overview.recent.count
         case .favorites:
             return environment.overview.favorites.count
         case .allDocuments:
             return environment.overview.all.count
+        case .folders:
+            return FolderHierarchy(folders: environment.overview.folders).children(of: nil).count
         case .spaces:
             return environment.overview.spaces.count
         case .templates:
@@ -304,6 +374,7 @@ private struct SidebarRow: View {
     var systemImage: String
     var count: Int?
     var isSelected: Bool
+    var tint: Color = VellixSurface.accent
     var action: () -> Void
 
     var body: some View {
@@ -311,7 +382,7 @@ private struct SidebarRow: View {
             HStack(spacing: 10) {
                 Image(systemName: systemImage)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(isSelected ? VellixSurface.accent : .secondary)
+                    .foregroundStyle(isSelected ? tint : .secondary)
                     .frame(width: 22)
                 Text(title)
                     .font(.callout.weight(isSelected ? .semibold : .regular))
@@ -431,43 +502,103 @@ struct SpaceCard: View {
 
 struct TemplatesView: View {
     @EnvironmentObject private var environment: AppEnvironment
+    @State private var renameTarget: TemplateRecord?
+    @State private var renamedTitle = ""
+    @State private var deleteTarget: TemplateRecord?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: VellixSpacing.xl) {
-                VellixSectionHeader(
-                    title: "Templates",
-                    subtitle: "Start from useful structure, then make it yours.",
-                    actionTitle: nil,
-                    action: nil
-                )
-
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: VellixSpacing.md)], spacing: VellixSpacing.md) {
+                if environment.overview.templates.isEmpty {
+                    VellixEmptyState(title: "No templates yet", message: "", systemImage: "copy",
+                        actionTitle: "Create Template", actionIcon: "writepen", action: environment.createTemplate)
+                        .frame(minHeight: 300)
+                }
+                LazyVStack(spacing: VellixSpacing.md) {
                     ForEach(environment.overview.templates) { template in
-                        TemplateCard(template: template) {
-                            _ = environment.createDocument(title: template.title, from: template)
+                        HStack(spacing: VellixSpacing.md) {
+                            TemplateCard(template: template,
+                                document: environment.editorCache.model(for: template.rootDocumentID)?.document) {
+                                if template.isBuiltIn { _ = environment.createDocument(title: template.title, from: template) }
+                                else { environment.editTemplate(template) }
+                            }
+                            Menu {
+                                templateActions(template)
+                            } label: {
+                                LibraryIcon(name: "dotswavy")
+                                    .foregroundStyle(VellixSurface.ink)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Actions for \(template.title)")
                         }
                         .contextMenu {
-                            if !template.isBuiltIn {
-                                Button(role: .destructive) {
-                                    do {
-                                        try environment.templates.delete(id: template.id)
-                                        environment.refresh()
-                                    } catch {
-                                        environment.report(error)
-                                    }
-                                } label: {
-                                    Label("Delete Template", systemImage: "trash")
-                                }
-                            }
+                            templateActions(template)
                         }
                     }
                 }
             }
-            .padding(VellixSpacing.xl)
+            .padding(.horizontal, VellixSpacing.xl)
+            .padding(.top, 12)
+            .padding(.bottom, 100)
         }
         .background(VellixBackground())
         .navigationTitle("Templates")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button {
+                    environment.selectedDestination = .home
+                } label: { LibraryIcon(name: "chevleft") }
+                .accessibilityLabel("Home")
+            }
+            ToolbarItem(placement: .principal) {
+                Text("Templates").font(.system(size: 22, weight: .black, design: .rounded))
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: environment.createTemplate) {
+                    LibraryIcon(name: "writefeather").frame(width: 46, height: 46).contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .background(.thinMaterial, in: Circle())
+                .accessibilityLabel("New Template")
+            }
+        }
+        .alert("Rename Template", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
+            TextField("Name", text: $renamedTitle)
+            Button("Save") {
+                guard let template = renameTarget else { return }
+                do { try environment.templates.rename(id: template.id, title: renamedTitle); environment.refresh() }
+                catch { environment.report(error) }
+                renameTarget = nil
+            }
+            Button("Cancel", role: .cancel) { renameTarget = nil }
+        }
+        .confirmationDialog("Delete this template?", isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }), titleVisibility: .visible) {
+            Button("Delete Template", role: .destructive) {
+                guard let template = deleteTarget else { return }
+                do { try environment.templates.delete(id: template.id, attachmentStore: environment.attachmentStore); environment.refresh() }
+                catch { environment.report(error) }
+                deleteTarget = nil
+            }
+            Button("Cancel", role: .cancel) { deleteTarget = nil }
+        }
+    }
+
+    @ViewBuilder
+    private func templateActions(_ template: TemplateRecord) -> some View {
+        Button("Use Template") { _ = environment.createDocument(title: template.title, from: template) }
+        Button("Duplicate Template") {
+            do {
+                _ = try environment.templates.duplicate(id: template.id, attachmentStore: environment.attachmentStore)
+                environment.refresh()
+            } catch { environment.report(error) }
+        }
+        if !template.isBuiltIn {
+            Button("Edit Template") { environment.editTemplate(template) }
+            Button("Rename") { renamedTitle = template.title; renameTarget = template }
+            Button("Delete Template", role: .destructive) { deleteTarget = template }
+        }
     }
 }
 

@@ -14,7 +14,10 @@ final class SearchModel: ObservableObject {
     @Published var errorMessage: String?
 
     private let service: DocumentSearchService
-    private var searchTask: Task<Void, Never>?
+
+    var hasQuery: Bool {
+        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     init(service: DocumentSearchService) {
         self.service = service
@@ -22,123 +25,23 @@ final class SearchModel: ObservableObject {
 
     func updateQuery(_ query: String) {
         self.query = query
-        searchTask?.cancel()
-        searchTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            self?.performSearch()
-        }
+        refresh()
     }
 
-    private func performSearch() {
+    func refresh() {
+        errorMessage = nil
+        guard hasQuery else {
+            results = []
+            templates = []
+            return
+        }
         do {
             results = try service.search(query)
             templates = try service.searchableTemplates(matching: query)
         } catch {
+            results = []
+            templates = []
             errorMessage = error.localizedDescription
-        }
-    }
-}
-
-struct SearchView: View {
-    @EnvironmentObject private var environment: AppEnvironment
-    @StateObject private var model: SearchModel
-
-    init(environment: AppEnvironment) {
-        _model = StateObject(wrappedValue: SearchModel(service: environment.search))
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: VellixSpacing.xl) {
-                VStack(alignment: .leading, spacing: VellixSpacing.md) {
-                    Text("Search")
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundStyle(VellixSurface.ink)
-                    searchField
-                }
-
-                if model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    VellixEmptyState(
-                        title: "Find anything",
-                        message: "Search page titles, saved content, previews, spaces, folders, and templates.",
-                        systemImage: "magnifyingglass",
-                        actionTitle: nil,
-                        action: nil
-                    )
-                    .frame(minHeight: 420)
-                    .vellixPaper()
-                } else if model.results.isEmpty && model.templates.isEmpty {
-                    VellixEmptyState(
-                        title: "No results",
-                        message: "Try another title, phrase, or template name.",
-                        systemImage: "doc.text.magnifyingglass",
-                        actionTitle: nil,
-                        action: nil
-                    )
-                    .frame(minHeight: 420)
-                    .vellixPaper()
-                } else {
-                    if !model.results.isEmpty {
-                        resultSection(title: "Pages") {
-                            ForEach(model.results) { result in
-                                SearchResultRow(result: result)
-                                    .contentShape(RoundedRectangle(cornerRadius: VellixRadius.md, style: .continuous))
-                                    .onTapGesture {
-                                        if let document = try? environment.documents.requireDocument(id: result.documentID) {
-                                            environment.select(document)
-                                        }
-                                    }
-                            }
-                        }
-                    }
-
-                    if !model.templates.isEmpty {
-                        resultSection(title: "Templates") {
-                            ForEach(model.templates) { template in
-                                TemplateResultRow(template: template) {
-                                    _ = environment.createDocument(title: template.title, from: template)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(VellixSpacing.xl)
-        }
-        .background(VellixBackground())
-        .navigationTitle("Search")
-    }
-
-    private var searchField: some View {
-        HStack(spacing: VellixSpacing.sm) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField("Search pages and templates", text: Binding(
-                get: { model.query },
-                set: { model.updateQuery($0) }
-            ))
-            .textFieldStyle(.plain)
-            .font(.title3)
-        }
-        .padding(.horizontal, VellixSpacing.lg)
-        .padding(.vertical, 16)
-        .vellixPaper(cornerRadius: VellixRadius.md)
-    }
-
-    private func resultSection<Content: View>(
-        title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: VellixSpacing.md) {
-            VellixSectionHeader(
-                title: title,
-                subtitle: nil,
-                actionTitle: nil,
-                action: nil
-            )
-            LazyVStack(spacing: VellixSpacing.sm) {
-                content()
-            }
         }
     }
 }

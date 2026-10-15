@@ -47,6 +47,7 @@ struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, 
     var parentFolderID: String?
     var title: String
     var icon: String?
+    var iconColorHex: String?
     var createdAt: Date
     var updatedAt: Date
     var sortOrder: Double
@@ -57,6 +58,7 @@ struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, 
         parentFolderID: String? = nil,
         title: String,
         icon: String? = nil,
+        iconColorHex: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         sortOrder: Double = 0
@@ -66,6 +68,7 @@ struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, 
         self.parentFolderID = parentFolderID
         self.title = title
         self.icon = icon
+        self.iconColorHex = iconColorHex
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.sortOrder = sortOrder
@@ -81,7 +84,8 @@ struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
     var icon: String?
     var cover: String?
     var appearanceJSON: String?
-    var blockNoteJSON: String
+    var cardStyleJSON: String?
+    var tipTapJSON: String
     var plainText: String
     var previewText: String
     var spaceID: String?
@@ -91,6 +95,7 @@ struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
     var isArchived: Bool
     var isTrashed: Bool
     var trashedAt: Date?
+    var trashBatchID: String?
     var createdAt: Date
     var updatedAt: Date
     var lastOpenedAt: Date?
@@ -101,6 +106,7 @@ struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
     var estimatedReadingMinutes: Int
     var sortOrder: Double
     var templateOriginID: String?
+    var templateID: String?
 
     init(
         id: String = UUID().uuidString,
@@ -109,7 +115,8 @@ struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
         icon: String? = "doc.text",
         cover: String? = nil,
         appearanceJSON: String? = nil,
-        blockNoteJSON: String = BlockNoteContentAnalyzer.emptyDocumentJSON,
+        cardStyleJSON: String? = nil,
+        tipTapJSON: String = TipTapContentAnalyzer.emptyDocumentJSON,
         plainText: String = "",
         previewText: String = "No content yet",
         spaceID: String? = nil,
@@ -119,6 +126,7 @@ struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
         isArchived: Bool = false,
         isTrashed: Bool = false,
         trashedAt: Date? = nil,
+        trashBatchID: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         lastOpenedAt: Date? = nil,
@@ -128,7 +136,8 @@ struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
         characterCount: Int = 0,
         estimatedReadingMinutes: Int = 0,
         sortOrder: Double = 0,
-        templateOriginID: String? = nil
+        templateOriginID: String? = nil,
+        templateID: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -136,7 +145,8 @@ struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
         self.icon = icon
         self.cover = cover
         self.appearanceJSON = appearanceJSON
-        self.blockNoteJSON = blockNoteJSON
+        self.cardStyleJSON = cardStyleJSON
+        self.tipTapJSON = tipTapJSON
         self.plainText = plainText
         self.previewText = previewText
         self.spaceID = spaceID
@@ -146,6 +156,7 @@ struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
         self.isArchived = isArchived
         self.isTrashed = isTrashed
         self.trashedAt = trashedAt
+        self.trashBatchID = trashBatchID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastOpenedAt = lastOpenedAt
@@ -156,6 +167,7 @@ struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
         self.estimatedReadingMinutes = estimatedReadingMinutes
         self.sortOrder = sortOrder
         self.templateOriginID = templateOriginID
+        self.templateID = templateID
     }
 }
 
@@ -172,7 +184,7 @@ struct DocumentSnapshotRecord: Codable, FetchableRecord, PersistableRecord, Iden
 
     var id: String
     var documentID: String
-    var blockNoteJSON: String
+    var tipTapJSON: String
     var createdAt: Date
     var revision: Int
     var reason: String
@@ -181,7 +193,7 @@ struct DocumentSnapshotRecord: Codable, FetchableRecord, PersistableRecord, Iden
     init(
         id: String = UUID().uuidString,
         documentID: String,
-        blockNoteJSON: String,
+        tipTapJSON: String,
         createdAt: Date = Date(),
         revision: Int,
         reason: SnapshotReason,
@@ -189,7 +201,7 @@ struct DocumentSnapshotRecord: Codable, FetchableRecord, PersistableRecord, Iden
     ) {
         self.id = id
         self.documentID = documentID
-        self.blockNoteJSON = blockNoteJSON
+        self.tipTapJSON = tipTapJSON
         self.createdAt = createdAt
         self.revision = revision
         self.reason = reason.rawValue
@@ -204,32 +216,35 @@ struct TemplateRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
     var title: String
     var templateDescription: String
     var icon: String?
-    var blockNoteJSON: String
+    var tipTapJSON: String
     var category: String
     var isBuiltIn: Bool
     var createdAt: Date
     var updatedAt: Date
+    var rootDocumentID: String?
 
     init(
         id: String = UUID().uuidString,
         title: String,
         templateDescription: String,
         icon: String? = "doc.text",
-        blockNoteJSON: String,
+        tipTapJSON: String,
         category: String,
         isBuiltIn: Bool,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        rootDocumentID: String? = nil
     ) {
         self.id = id
         self.title = title
         self.templateDescription = templateDescription
         self.icon = icon
-        self.blockNoteJSON = blockNoteJSON
+        self.tipTapJSON = tipTapJSON
         self.category = category
         self.isBuiltIn = isBuiltIn
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.rootDocumentID = rootDocumentID
     }
 }
 

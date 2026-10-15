@@ -1,0 +1,53 @@
+import Foundation
+import CryptoKit
+
+struct DocumentPreviewContent: Equatable {
+    var document: DocumentRecord
+    var children: [DocumentRecord]
+    var collections: [CollectionSnapshot]
+
+    var entryContext: (CollectionSnapshot, CollectionEntrySummary)? {
+        for collection in collections {
+            if let entry = collection.entries.first(where: { $0.id == document.id }) { return (collection, entry) }
+        }
+        return nil
+    }
+
+    var payloads: [[String: Any]] {
+        let ids = TipTapContentAnalyzer.collectionIDs(in: document.tipTapJSON)
+        return CollectionStore.payloads(from: collections.filter { ids.contains($0.record.id) })
+    }
+
+    var cacheKey: String { Self.cacheKey(document, children: children, collections: collections) }
+    var hasResolvedCollections: Bool {
+        TipTapContentAnalyzer.collectionIDs(in: document.tipTapJSON).isSubset(of: Set(collections.map { $0.record.id }))
+    }
+
+    static func cacheKey(_ document: DocumentRecord, children: [DocumentRecord], collections: [CollectionSnapshot] = []) -> String {
+        func content(_ record: DocumentRecord) -> [String] {
+            [record.title, record.tipTapJSON, record.appearanceJSON ?? "", record.cover ?? "", record.cardStyleJSON ?? "", record.icon ?? ""]
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let metadata = (try? encoder.encode(collections.sorted { $0.record.id < $1.record.id })) ?? Data()
+        let inlineRevision = ([document] + children).contains { TipTapContentAnalyzer.hasInlineProperties(in: $0.tipTapJSON) }
+            ? ["inline-property-presentation-v1", Locale.current.identifier, TimeZone.current.identifier] : []
+        let inputs = [["library-preview-v10-collections", metadata.base64EncodedString()] + content(document) + inlineRevision]
+            + children.sorted { $0.id < $1.id }.map { [$0.id] + content($0) }
+        let data = (try? encoder.encode(inputs)) ?? Data()
+        return document.id + "-" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+extension CollectionRepository {
+    func previewContent(for document: DocumentRecord, documents: DocumentRepository) throws -> DocumentPreviewContent {
+        var children = try documents.children(of: document.id, includingCollectionEntries: false)
+        let known = Set(children.map(\.id))
+        for id in TipTapContentAnalyzer.pageReferenceIDs(in: document.tipTapJSON) where id != document.id && !known.contains(id) {
+            if let child = try documents.document(id: id), !child.isTrashed, !child.isArchived { children.append(child) }
+        }
+        var ids = Set(try collectionIDs(forDocument: document.id))
+        if let parent = try collectionID(forEntry: document.id) { ids.insert(parent) }
+        return DocumentPreviewContent(document: document, children: children, collections: try ids.sorted().map { try snapshot(id: $0) })
+    }
+}
