@@ -90,6 +90,7 @@ struct ImmediateTablePreview: View {
 
     private func cellText(_ node: [String: Any]) -> String {
         let attrs = node["attrs"] as? [String: Any] ?? [:]
+        if node["type"] as? String == "inlineTag", let name = attrs["name"] as? String { return "#" + name }
         if let calculated = attrs["calculated"] as? String { return calculated }
         if let text = node["text"] as? String { return text }
         let children = node["content"] as? [[String: Any]] ?? []

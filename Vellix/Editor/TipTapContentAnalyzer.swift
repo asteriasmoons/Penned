@@ -119,6 +119,22 @@ enum TipTapContentAnalyzer {
         return contains(documentObject(from: json))
     }
 
+    nonisolated static func hasCallouts(in json: String) -> Bool {
+        func contains(_ node: [String: Any]) -> Bool {
+            ["callout", "plainCallout"].contains(node["type"] as? String ?? "")
+                || (node["content"] as? [[String: Any]] ?? []).contains(where: contains)
+        }
+        return contains(documentObject(from: json))
+    }
+
+    nonisolated static func hasInlineTags(in json: String) -> Bool {
+        func contains(_ node: [String: Any]) -> Bool {
+            node["type"] as? String == "inlineTag"
+                || (node["content"] as? [[String: Any]] ?? []).contains(where: contains)
+        }
+        return contains(documentObject(from: json))
+    }
+
     nonisolated static func appendingPageReferences(to json: String, documentIDs: [String]) throws -> String {
         var content = documentObject(from: json)["content"] as? [Any] ?? []
         let existing = pageReferenceIDs(in: json)
@@ -235,8 +251,30 @@ enum TipTapContentAnalyzer {
         ]
     }
 
+    nonisolated static func orderedPageReferenceIDs(in json: String) -> [String] {
+        var result: [String] = []
+        func walk(_ node: [String: Any]) {
+            if node["type"] as? String == "pageReference", let id = (node["attrs"] as? [String: Any])?["documentID"] as? String {
+                result.append(id)
+            }
+            for child in node["content"] as? [[String: Any]] ?? [] { walk(child) }
+        }
+        walk(documentObject(from: json))
+        return result
+    }
+
     private nonisolated static func normalizeTipTapNodes(_ nodes: [Any]) -> [[String: Any]] {
-        let normalized = unwrapRetiredColumns(nodes).map(normalizeTipTapNode)
+        var seen: Set<String> = []
+        func uniqueIDs(_ node: [String: Any]) -> [String: Any] {
+            var copy = node
+            if var attrs = copy["attrs"] as? [String: Any], let id = attrs["id"] as? String {
+                if !seen.insert(id).inserted { attrs["id"] = UUID().uuidString }
+                copy["attrs"] = attrs
+            }
+            if let children = copy["content"] as? [[String: Any]] { copy["content"] = children.map(uniqueIDs) }
+            return copy
+        }
+        let normalized = unwrapRetiredColumns(nodes).map(normalizeTipTapNode).map(uniqueIDs)
         return normalized.isEmpty ? [emptyParagraph()] : normalized
     }
 
@@ -277,6 +315,11 @@ enum TipTapContentAnalyzer {
             attrs["color"] = trimmedString(attrs["color"]) ?? "#ffffff"
         }
 
+        if type == "plainCallout" {
+            attrs.removeValue(forKey: "icon")
+            attrs["color"] = trimmedString(attrs["color"]) ?? "#ffffff"
+        }
+
         if type == "divider" {
             attrs["style"] = normalizedDividerStyle(attrs["style"])
         }
@@ -298,7 +341,7 @@ enum TipTapContentAnalyzer {
 
         if let content = dictionary["content"] as? [Any] {
             let normalizedContent = content.map(normalizeTipTapNode)
-            dictionary["content"] = type == "callout"
+            dictionary["content"] = ["callout", "plainCallout"].contains(type)
                 ? normalizeCalloutContent(normalizedContent)
                 : normalizedContent
         }
@@ -387,6 +430,12 @@ enum TipTapContentAnalyzer {
                     "icon": trimmedString(props["icon"]) ?? "sparkle",
                     "color": trimmedString(props["color"]) ?? "#ffffff"
                 ],
+                "content": [paragraph(content: inline)]
+            ]
+        case "plainCallout":
+            return [
+                "type": "plainCallout",
+                "attrs": ["id": blockID, "color": trimmedString(props["color"]) ?? "#ffffff"],
                 "content": [paragraph(content: inline)]
             ]
         case "divider":
@@ -525,7 +574,7 @@ enum TipTapContentAnalyzer {
 
     private nonisolated static func isTextBearingBlock(_ type: String?) -> Bool {
         switch type {
-        case "paragraph", "heading", "blockquote", "callout", "listItem", "taskItem", "toggleItem", "inlineProperty":
+        case "paragraph", "heading", "blockquote", "callout", "plainCallout", "listItem", "taskItem", "toggleItem", "inlineProperty", "templateComponent", "attachment":
             return true
         default:
             return false
@@ -542,6 +591,24 @@ enum TipTapContentAnalyzer {
         }
 
         if let dictionary = node as? [String: Any] {
+            if dictionary["type"] as? String == "inlineTag",
+               let name = (dictionary["attrs"] as? [String: Any])?["name"] as? String {
+                return "#" + name
+            }
+            if dictionary["type"] as? String == "attachment",
+               let attrs = dictionary["attrs"] as? [String: Any], let file = attrs["file"] as? [String: Any] {
+                return file["name"] as? String ?? ""
+            }
+            if dictionary["type"] as? String == "templateComponent",
+               let attrs = dictionary["attrs"] as? [String: Any],
+               let definition = TemplateComponentDefinition.decode(attrs["definition"]) {
+                let selected: [String]
+                if let ids = attrs["response"] as? [String] { selected = definition.choices.filter { ids.contains($0.id) }.map(\.label) }
+                else if let id = attrs["response"] as? String { selected = definition.choices.filter { $0.id == id }.map(\.label) }
+                else if let value = attrs["response"] as? NSNumber { selected = [value.stringValue] }
+                else { selected = [] }
+                return ([definition.label] + selected).filter { !$0.isEmpty }.joined(separator: " ")
+            }
             if dictionary["type"] as? String == "inlineProperty",
                let attrs = dictionary["attrs"] as? [String: Any],
                let property = InlinePropertyDefinition.decode(attrs["property"]) {

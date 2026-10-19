@@ -103,6 +103,14 @@ private struct ImmediatePreviewBlock: View {
     private var attrs: [String: Any] { node["attrs"] as? [String: Any] ?? [:] }
     private var nodes: [[String: Any]] { node["content"] as? [[String: Any]] ?? [] }
     private var color: Color { Color(vellixHex: attrs["color"] as? String ?? appearance.textColorHex) }
+    private var populatedIconCallout: Bool {
+        func hasText(_ node: [String: Any]) -> Bool {
+            if node["type"] as? String == "text" { return !(node["text"] as? String ?? "").isEmpty }
+            if node["type"] as? String == "inlineTag" { return true }
+            return (node["content"] as? [[String: Any]] ?? []).contains(where: hasText)
+        }
+        return type == "callout" && nodes.contains(where: hasText)
+    }
 
     var body: some View {
         if depth < 16 {
@@ -112,6 +120,15 @@ private struct ImmediatePreviewBlock: View {
 
     @ViewBuilder private var content: some View {
         switch type {
+        case "attachment":
+            if let file = attrs["file"] as? [String: Any], let path = file["relativePath"] as? String,
+               let resolved = try? environment.attachments.editorAttachment(relativePath: path) {
+                AttachmentBlockPreview(file: resolved, attrs: attrs, store: environment.attachmentStore)
+            }
+        case "templateComponent":
+            if let definition = TemplateComponentDefinition.decode(attrs["definition"]) {
+                TemplateComponentPreview(definition: definition, response: attrs["response"], appearance: appearance)
+            }
         case "collection":
             if let id = attrs["collectionID"] as? String, let snapshot = collections.first(where: { $0.record.id == id }) {
                 CollectionSnapshotPreview(snapshot: snapshot, appearance: appearance, attachments: environment.attachmentStore)
@@ -129,12 +146,23 @@ private struct ImmediatePreviewBlock: View {
                 .opacity(guided ? 0.38 : 1).multilineTextAlignment(alignment)
                 .frame(maxWidth: .infinity, minHeight: inline.isEmpty ? 20 : nil,
                     alignment: alignment == .center ? .center : (alignment == .trailing ? .trailing : .leading))
-        case "callout":
-            HStack(alignment: .top, spacing: 12) {
-                LibraryIcon(name: attrs["icon"] as? String ?? "sparkle", size: 22).foregroundStyle(color.opacity(0.55))
+        case "callout", "plainCallout":
+            HStack(alignment: populatedIconCallout ? .top : .firstTextBaseline, spacing: 11) {
+                if type == "callout" {
+                    LibraryIcon(name: attrs["icon"] as? String ?? "sparkle", size: 26).foregroundStyle(color)
+                        .frame(width: 42, height: 42)
+                        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 17))
+                        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] }
+                }
                 children(nodes)
+                    .alignmentGuide(.firstTextBaseline) { dimensions in
+                        // First-line center, even when the text spans many lines.
+                        (dimensions[.firstTextBaseline] + dimensions.height - dimensions[.lastTextBaseline]) / 2
+                    }
             }
-            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minHeight: 42)
+            .padding(.vertical, 8).padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
             .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(color.opacity(0.18)))
         case "blockquote":
@@ -189,7 +217,9 @@ private struct ImmediatePreviewBlock: View {
 
     private func richText(_ values: [[String: Any]]) -> Text {
         values.reduce(Text("")) { result, item in
-            var text = Text(item["type"] as? String == "hardBreak" ? "\n" : (item["text"] as? String ?? ""))
+            let tag = item["type"] as? String == "inlineTag" ? (item["attrs"] as? [String: Any])?["name"] as? String : nil
+            var text = Text(tag.map { "#" + $0 } ?? (item["type"] as? String == "hardBreak" ? "\n" : (item["text"] as? String ?? "")))
+            if tag != nil { text = text.foregroundColor(Color(vellixHex: "#B59AD9")).bold() }
             for mark in item["marks"] as? [[String: Any]] ?? [] {
                 switch mark["type"] as? String {
                 case "bold": text = text.bold()
@@ -202,5 +232,55 @@ private struct ImmediatePreviewBlock: View {
             }
             return result + text
         }
+    }
+}
+
+private struct TemplateComponentPreview: View {
+    let definition: TemplateComponentDefinition
+    let response: Any?
+    let appearance: DocumentAppearance
+    private var ink: Color { Color(vellixHex: appearance.textColorHex) }
+    private var selectedIDs: Set<String> {
+        if let value = response as? String { return [value] }
+        return Set(response as? [String] ?? [])
+    }
+    private var inverse: Color {
+        let number = UInt32(appearance.textColorHex.replacingOccurrences(of: "#", with: ""), radix: 16) ?? 0xFFFFFF
+        let brightness = Double((number >> 16) & 255) * 0.299 + Double((number >> 8) & 255) * 0.587 + Double(number & 255) * 0.114
+        return brightness < 140 ? .white : .black
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: definition.kind == .rating ? 14 : 6) {
+            if !definition.label.isEmpty { Text(definition.label).fontWeight(.semibold) }
+            switch definition.kind {
+            case .rating:
+                CollectionChipLayout(spacing: 8) {
+                    ForEach(Int(definition.minimum)...Int(definition.maximum), id: \.self) { value in
+                        chip(String(value), selected: (response as? NSNumber)?.doubleValue == Double(value), rating: true)
+                    }
+                }
+            case .singleSelect, .multiSelect:
+                CollectionChipLayout(spacing: 6) {
+                    ForEach(definition.choices) { choice in chip(choice.label, selected: selectedIDs.contains(choice.id)) }
+                }
+            case .slider:
+                let value = (response as? NSNumber)?.doubleValue
+                if let value { Text(value.formatted()).fontWeight(.bold).frame(maxWidth: .infinity, alignment: .trailing) }
+                Slider(value: .constant(max(definition.minimum, min(definition.maximum, value ?? definition.minimum))), in: definition.minimum...definition.maximum, step: definition.step).tint(ink)
+                HStack {
+                    Text(definition.minimumLabel.isEmpty ? definition.minimum.formatted() : definition.minimumLabel)
+                    Spacer()
+                    Text(definition.maximumLabel.isEmpty ? definition.maximum.formatted() : definition.maximumLabel)
+                }.font(.caption).opacity(0.65)
+            }
+        }.font(.system(size: 16, design: appearance.fontStyle.design)).foregroundStyle(ink)
+    }
+    private func chip(_ text: String, selected: Bool, rating: Bool = false) -> some View {
+        Text(text).font(.system(size: 14, weight: rating ? (selected ? .semibold : .regular) : .bold, design: appearance.fontStyle.design))
+            .foregroundStyle(selected && !rating ? inverse : ink).padding(.horizontal, rating ? 18 : 12).padding(.vertical, rating ? 10 : 4)
+            .frame(minHeight: rating ? nil : 30)
+            .background(selected ? ink.opacity(rating ? 0.16 : 1) : .clear, in: RoundedRectangle(cornerRadius: rating ? 10 : 18))
+            .overlay(RoundedRectangle(cornerRadius: rating ? 10 : 18).stroke(ink.opacity(0.28)))
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

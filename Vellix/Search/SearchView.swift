@@ -82,13 +82,18 @@ struct SearchResultRow: View {
 }
 
 struct TemplateResultRow: View {
+    @EnvironmentObject private var environment: AppEnvironment
     var template: TemplateRecord
     var action: () -> Void
 
     var body: some View {
+        let document = environment.overview.templateDocuments[template.id]
         Button(action: action) {
             HStack(spacing: VellixSpacing.md) {
-                IconTile(systemName: template.icon, size: 38, tint: VellixSurface.teal)
+                NestedPageThumbnail(json: document?.tipTapJSON ?? template.tipTapJSON,
+                    title: template.title, appearance: document?.appearance ?? .plain,
+                    cover: document?.cover, attachmentStore: environment.attachmentStore)
+                    .equatable()
                 VStack(alignment: .leading, spacing: 5) {
                     Text(template.title)
                         .font(.headline)

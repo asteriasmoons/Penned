@@ -12,7 +12,74 @@ import UIKit
 
 private final class TipTapWKWebView: WKWebView {
     override var inputAccessoryView: UIView? { nil }
+
+    #if DEBUG
+    weak var diagnosticCoordinator: Coordinator?
+
+    override func removeFromSuperview() {
+        TipTapHostLifecycleTrace.record("removeFromSuperview.before", webView: self, includeStack: superview != nil)
+        super.removeFromSuperview()
+        TipTapHostLifecycleTrace.record("removeFromSuperview.after", webView: self)
+    }
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        TipTapHostLifecycleTrace.record("didMoveToSuperview", webView: self, includeStack: superview == nil)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        TipTapHostLifecycleTrace.record("didMoveToWindow", webView: self, includeStack: window == nil)
+    }
+    #endif
 }
+
+#if DEBUG
+@MainActor
+private enum TipTapHostLifecycleTrace {
+    private static var sequence = 0
+    private static let logger = Logger(subsystem: "im.lystaria.Vellix", category: "TipTapHostTrace")
+
+    static func record(_ event: String, webView: WKWebView?, container: UIView? = nil,
+                       coordinator: Coordinator? = nil, documentID: String? = nil, includeStack: Bool = false) {
+        guard UIDevice.current.userInterfaceIdiom == .pad,
+              let coordinator = coordinator ?? (webView as? TipTapWKWebView)?.diagnosticCoordinator,
+              coordinator.session.preparesInteractivePresentation, sequence < 2_000 else { return }
+        sequence += 1
+        let parent = webView?.superview
+        let document = coordinator.session.documentForRecovery?()
+        let report: [String: Any] = [
+            "sequence": sequence, "uptime": ProcessInfo.processInfo.systemUptime,
+            "pid": ProcessInfo.processInfo.processIdentifier, "event": event,
+            "documentID": documentID ?? document?.id ?? "nil",
+            "webView": identity(webView), "container": identity(container), "parent": identity(parent),
+            "parentType": parent.map { NSStringFromClass(type(of: $0)) } ?? "nil",
+            "coordinator": identity(coordinator), "session": identity(coordinator.session),
+            "containerOwnsWebView": container != nil && parent === container,
+            "containerHasWindow": container?.window != nil, "webViewHasWindow": webView?.window != nil,
+            "ready": coordinator.session.isReady, "loading": coordinator.session.isLoadingDocument,
+            "presentationReady": coordinator.session.isPresentationReady,
+            "stack": includeStack ? Array(Thread.callStackSymbols.prefix(32)) : []
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: report, options: .sortedKeys) else { return }
+        logger.info("PENNED-HOST \(String(decoding: data, as: UTF8.self), privacy: .public)")
+        // Ordered native lifecycle events only; never read or write document content.
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("PennedEditorHostLifecycle.jsonl")
+        var line = data
+        line.append(0x0A)
+        if let file = try? FileHandle(forWritingTo: url) {
+            defer { try? file.close() }
+            if let size = try? file.seekToEnd(), size < 2_000_000 { try? file.write(contentsOf: line) }
+        } else {
+            try? line.write(to: url, options: .atomic)
+        }
+    }
+
+    private static func identity(_ object: AnyObject?) -> String {
+        object.map { ObjectIdentifier($0).debugDescription } ?? "nil"
+    }
+}
+#endif
 #elseif os(macOS)
 import AppKit
 #endif
@@ -25,7 +92,7 @@ private enum TipTapEditorStartupTiming {
     }
 }
 
-private enum TipTapEditorAssetCache {
+enum TipTapEditorAssetCache {
     static let cachedDocument: (html: String, baseURL: URL)? = {
         guard let bundleURL = Bundle.main.url(
             forResource: "VellixEditor",
@@ -34,27 +101,32 @@ private enum TipTapEditorAssetCache {
             return nil
         }
 
-        let htmlURL = bundleURL.appendingPathComponent("tiptap.html")
-        guard var html = try? String(contentsOf: htmlURL, encoding: .utf8) else {
-            return nil
-        }
+        return try? document(in: bundleURL)
+    }()
 
-        let bundleJSURL = bundleURL.appendingPathComponent("tiptap.bundle.js")
+    static func document(in bundleURL: URL) throws -> (html: String, baseURL: URL) {
+        var html = try String(contentsOf: bundleURL.appendingPathComponent("tiptap.html"), encoding: .utf8)
         let placeholdersURL = bundleURL.appendingPathComponent("structured-placeholders.js")
         if let script = try? String(contentsOf: placeholdersURL, encoding: .utf8) {
             html = html.replacingOccurrences(of: "</head>",
                 with: "<script>\(script.replacingOccurrences(of: "</script>", with: "<\\/script>"))</script></head>")
         }
-        if let bundleJS = try? String(contentsOf: bundleJSURL, encoding: .utf8) {
+        // loadHTMLString cannot reliably read sibling file scripts on its first
+        // navigation. Keep every required dependency inline, in its original order.
+        for path in ["vendor/formula-parser.min.js", "table-formulas.js", "vellix-tables.js", "vendor/table-library.js", "tiptap.bundle.js"] {
+            let bundleJS = try String(contentsOf: bundleURL.appendingPathComponent(path), encoding: .utf8)
             let safeJS = bundleJS.replacingOccurrences(of: "</script>", with: "<\\/script>")
             html = html.replacingOccurrences(
-                of: #"<script src="./tiptap.bundle.js"></script>"#,
+                of: "<script src=\"./\(path)\"></script>",
                 with: "<script>\n\(safeJS)\n</script>"
             )
         }
+        let tableCSS = try String(contentsOf: bundleURL.appendingPathComponent("vellix-tables.css"), encoding: .utf8)
+        html = html.replacingOccurrences(of: #"<link rel="stylesheet" href="./vellix-tables.css" />"#,
+            with: "<style>\(tableCSS)</style>")
 
         return (html, bundleURL)
-    }()
+    }
 }
 
 struct TipTapWebView {
@@ -80,11 +152,29 @@ struct TipTapWebView {
 final class TipTapEditorWebViewStore {
     let coordinator: Coordinator
     let webView: WKWebView
+    private weak var activeHost: TipTapWebViewContainer?
 
-    init(session: TipTapEditorSession) {
-        let coordinator = Coordinator(session: session)
+    init(session: TipTapEditorSession, loadEditor: ((WKWebView, Coordinator) -> Void)? = nil) {
+        let coordinator = loadEditor.map { Coordinator(session: session, loadEditor: $0) } ?? Coordinator(session: session)
         self.coordinator = coordinator
         self.webView = TipTapWebView.makeWebView(coordinator: coordinator)
+    }
+
+    func claimHost(_ container: TipTapWebViewContainer) {
+        // SwiftUI may update an outgoing representable after making its replacement.
+        activeHost = container
+        container.owningStore = self
+        container.host(webView)
+    }
+
+    func ownsHost(_ container: TipTapWebViewContainer) -> Bool {
+        activeHost === container && container.owningStore === self
+    }
+
+    fileprivate func releaseHost(_ container: TipTapWebViewContainer) -> Bool {
+        guard ownsHost(container) else { return false }
+        activeHost = nil
+        return true
     }
 }
 
@@ -92,6 +182,7 @@ final class TipTapEditorWebViewStore {
 
 final class TipTapWebViewContainer: UIView {
     private weak var hostedWebView: WKWebView?
+    fileprivate weak var owningStore: TipTapEditorWebViewStore?
     var onLayout: (() -> Void)?
 
     override func layoutSubviews() {
@@ -100,8 +191,18 @@ final class TipTapWebViewContainer: UIView {
     }
 
     func host(_ webView: WKWebView) {
+        #if DEBUG
+        TipTapHostLifecycleTrace.record("host.request", webView: webView, container: self)
+        #endif
+        guard let owningStore, owningStore.ownsHost(self), owningStore.webView === webView else {
+            #if DEBUG
+            TipTapHostLifecycleTrace.record("host.ignoredStaleHost", webView: webView, container: self)
+            #endif
+            return
+        }
         guard webView.superview !== self else { return }
         webView.removeFromSuperview()
+        guard owningStore.ownsHost(self) else { return }
         webView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(webView)
         NSLayoutConstraint.activate([
@@ -111,9 +212,21 @@ final class TipTapWebViewContainer: UIView {
             webView.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
         hostedWebView = webView
+        #if DEBUG
+        TipTapHostLifecycleTrace.record("host.attached", webView: webView, container: self)
+        #endif
     }
 
     func unhost() {
+        #if DEBUG
+        TipTapHostLifecycleTrace.record("unhost.request", webView: hostedWebView, container: self)
+        #endif
+        guard owningStore?.releaseHost(self) == true else {
+            #if DEBUG
+            TipTapHostLifecycleTrace.record("unhost.ignoredStaleHost", webView: hostedWebView, container: self)
+            #endif
+            return
+        }
         guard let hostedWebView, hostedWebView.superview === self else { return }
         hostedWebView.removeFromSuperview()
     }
@@ -121,25 +234,65 @@ final class TipTapWebViewContainer: UIView {
 
 extension TipTapWebView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator {
-        store.coordinator
+        #if DEBUG
+        TipTapHostLifecycleTrace.record("makeCoordinator", webView: store.webView, coordinator: store.coordinator, documentID: documentID)
+        #endif
+        return store.coordinator
     }
 
     func makeUIView(context: Context) -> TipTapWebViewContainer {
         let container = TipTapWebViewContainer()
-        container.onLayout = { [weak session] in session?.editorDidLayout() }
-        container.host(store.webView)
-        scheduleSessionLoad(store.webView, coordinator: context.coordinator)
+        #if DEBUG
+        TipTapHostLifecycleTrace.record("makeUIView.begin", webView: store.webView, container: container,
+                                       coordinator: context.coordinator, documentID: documentID)
+        #endif
+        container.onLayout = { [weak session, weak coordinator = context.coordinator] in
+            session?.editorDidLayout()
+            #if DEBUG
+            coordinator?.scheduleRenderingDiagnostic(reason: "layout")
+            #endif
+        }
+        store.claimHost(container)
+        scheduleSessionLoad(store.webView, coordinator: context.coordinator, container: container)
+        #if DEBUG
+        TipTapHostLifecycleTrace.record("makeUIView.end", webView: store.webView, container: container,
+                                       coordinator: context.coordinator, documentID: documentID)
+        #endif
         return container
     }
 
     func updateUIView(_ container: TipTapWebViewContainer, context: Context) {
+        #if DEBUG
+        TipTapHostLifecycleTrace.record("updateUIView.begin", webView: store.webView, container: container,
+                                       coordinator: context.coordinator, documentID: documentID)
+        #endif
+        guard store.ownsHost(container) else {
+            #if DEBUG
+            TipTapHostLifecycleTrace.record("updateUIView.ignoredStaleHost", webView: store.webView, container: container,
+                                           coordinator: context.coordinator, documentID: documentID)
+            #endif
+            return
+        }
         container.host(store.webView)
         context.coordinator.pinInternalScrollPosition(store.webView.scrollView)
-        scheduleSessionLoad(store.webView, coordinator: context.coordinator)
+        scheduleSessionLoad(store.webView, coordinator: context.coordinator, container: container)
+        #if DEBUG
+        context.coordinator.scheduleRenderingDiagnostic(reason: "update")
+        TipTapHostLifecycleTrace.record("updateUIView.end", webView: store.webView, container: container,
+                                       coordinator: context.coordinator, documentID: documentID)
+        #endif
     }
 
     static func dismantleUIView(_ container: TipTapWebViewContainer, coordinator: Coordinator) {
+        #if DEBUG
+        TipTapHostLifecycleTrace.record("dismantleUIView.begin", webView: coordinator.session.tagNavigationWebView,
+                                       container: container, coordinator: coordinator)
+        #endif
         container.unhost()
+        #if DEBUG
+        TipTapHostLifecycleTrace.record("dismantleUIView.end", webView: coordinator.session.tagNavigationWebView,
+                                       container: container, coordinator: coordinator)
+        #endif
     }
 }
 
@@ -147,6 +300,7 @@ extension TipTapWebView: UIViewRepresentable {
 
 final class TipTapWebViewContainer: NSView {
     private weak var hostedWebView: WKWebView?
+    fileprivate weak var owningStore: TipTapEditorWebViewStore?
     var onLayout: (() -> Void)?
 
     override func layout() {
@@ -155,8 +309,10 @@ final class TipTapWebViewContainer: NSView {
     }
 
     func host(_ webView: WKWebView) {
+        guard let owningStore, owningStore.ownsHost(self), owningStore.webView === webView else { return }
         guard webView.superview !== self else { return }
         webView.removeFromSuperview()
+        guard owningStore.ownsHost(self) else { return }
         webView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(webView)
         NSLayoutConstraint.activate([
@@ -169,6 +325,7 @@ final class TipTapWebViewContainer: NSView {
     }
 
     func unhost() {
+        guard owningStore?.releaseHost(self) == true else { return }
         guard let hostedWebView, hostedWebView.superview === self else { return }
         hostedWebView.removeFromSuperview()
     }
@@ -182,14 +339,15 @@ extension TipTapWebView: NSViewRepresentable {
     func makeNSView(context: Context) -> TipTapWebViewContainer {
         let container = TipTapWebViewContainer()
         container.onLayout = { [weak session] in session?.editorDidLayout() }
-        container.host(store.webView)
-        scheduleSessionLoad(store.webView, coordinator: context.coordinator)
+        store.claimHost(container)
+        scheduleSessionLoad(store.webView, coordinator: context.coordinator, container: container)
         return container
     }
 
     func updateNSView(_ container: TipTapWebViewContainer, context: Context) {
+        guard store.ownsHost(container) else { return }
         container.host(store.webView)
-        scheduleSessionLoad(store.webView, coordinator: context.coordinator)
+        scheduleSessionLoad(store.webView, coordinator: context.coordinator, container: container)
     }
 
     static func dismantleNSView(_ container: TipTapWebViewContainer, coordinator: Coordinator) {
@@ -200,16 +358,18 @@ extension TipTapWebView: NSViewRepresentable {
 #endif
 
 fileprivate extension TipTapWebView {
-    func scheduleSessionLoad(_ webView: WKWebView, coordinator: Coordinator) {
+    func scheduleSessionLoad(_ webView: WKWebView, coordinator: Coordinator, container: TipTapWebViewContainer) {
         let session = session
+        let store = store
         let documentID = documentID
         let canonicalJSON = canonicalJSON
 
-        Task { @MainActor [weak webView, weak coordinator] in
+        Task { @MainActor [weak webView, weak coordinator, weak store, weak container] in
             await Task.yield()
             guard
                 let webView,
                 let coordinator,
+                let store, let container, store.ownsHost(container),
                 coordinator.isActive
             else {
                 return
@@ -228,12 +388,15 @@ fileprivate extension TipTapWebView {
 
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = contentController
+        #if os(iOS)
         configuration.allowsInlineMediaPlayback = true
+        #endif
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.setURLSchemeHandler(VellixTipTapIconSchemeHandler(), forURLScheme: "vellix-icon")
         configuration.setURLSchemeHandler(CollectionCoverSchemeHandler(store: { [weak session = coordinator.session] in
             session?.attachmentStore
         }), forURLScheme: "penned-cover")
+        configuration.setURLSchemeHandler(AttachmentSchemeHandler(session: coordinator.session), forURLScheme: "penned-file")
 
         #if os(iOS)
         let webView = TipTapWKWebView(frame: .zero, configuration: configuration)
@@ -241,6 +404,13 @@ fileprivate extension TipTapWebView {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         #endif
         webView.navigationDelegate = coordinator
+        #if DEBUG && os(iOS)
+        webView.diagnosticCoordinator = coordinator
+        if UIDevice.current.userInterfaceIdiom == .pad, coordinator.session.preparesInteractivePresentation,
+           #available(iOS 16.4, *) {
+            webView.isInspectable = true
+        }
+        #endif
         coordinator.logInfo("⏱️ STARTUP +\(TipTapEditorStartupTiming.elapsedMS())ms makeWebView created \(ObjectIdentifier(webView).debugDescription)")
 
         #if os(iOS)
@@ -276,7 +446,7 @@ fileprivate extension TipTapWebView {
             coordinator.session.attach(webView: webView)
         }
 
-        loadEditor(into: webView, coordinator: coordinator)
+        coordinator.loadEditor(webView, coordinator)
         return webView
     }
 
@@ -314,9 +484,17 @@ final class Coordinator:
     let session: TipTapEditorSession
     private(set) var isActive = true
     private let logger = Logger(subsystem: "im.lystaria.Vellix", category: "TipTapWebView")
+    let loadEditor: (WKWebView, Coordinator) -> Void
+    #if DEBUG && os(iOS)
+    private var renderingDiagnosticTask: Task<Void, Never>?
+    private var renderingDiagnosticSignature = ""
+    private var renderingDiagnosticCount = 0
+    #endif
 
-    init(session: TipTapEditorSession) {
+    init(session: TipTapEditorSession,
+         loadEditor: @escaping (WKWebView, Coordinator) -> Void = { TipTapWebView.loadEditor(into: $0, coordinator: $1) }) {
         self.session = session
+        self.loadEditor = loadEditor
     }
 
     func userContentController(
@@ -333,6 +511,12 @@ final class Coordinator:
         }
 
         session.handleRawMessage(message.body)
+        #if DEBUG && os(iOS)
+        if let kind = (message.body as? [String: Any])?["kind"] as? String,
+           ["editorReady", "contentHeightChanged", "collectionRegionsChanged"].contains(kind) {
+            scheduleRenderingDiagnostic(reason: kind)
+        }
+        #endif
     }
 
     func webView(
@@ -355,6 +539,7 @@ final class Coordinator:
         didFail navigation: WKNavigation!,
         withError error: Error
     ) {
+        session.bridgeErrorMessage = error.localizedDescription
         logError("TipTap editor navigation failed: \(error.localizedDescription)")
     }
 
@@ -364,11 +549,15 @@ final class Coordinator:
         withError error: Error
     ) {
         session.markNavigationStarted()
+        session.bridgeErrorMessage = error.localizedDescription
         logError("🌐🚨 TipTap editor failed to begin loading: \(error.localizedDescription)")
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard isActive else { return }
         logError("💥 WEBVIEW PROCESS TERMINATED url=\(webView.url?.absoluteString ?? "nil")")
+        session.markNavigationStarted()
+        loadEditor(webView, self)
     }
 
     func cleanUp(_ webView: WKWebView) {
@@ -389,6 +578,93 @@ final class Coordinator:
     func logError(_ message: String) {
         logger.error("\(message, privacy: .public)")
     }
+
+    #if DEBUG && os(iOS)
+    func scheduleRenderingDiagnostic(reason: String) {
+        guard UIDevice.current.userInterfaceIdiom == .pad, session.preparesInteractivePresentation,
+              isActive, renderingDiagnosticTask == nil, renderingDiagnosticCount < 32 else { return }
+        renderingDiagnosticTask = Task { @MainActor [weak self] in
+            // Observe the committed SwiftUI layout without changing readiness or editor state.
+            try? await Task.sleep(for: .milliseconds(200))
+            guard let self else { return }
+            self.renderingDiagnosticTask = nil
+            guard self.isActive, let webView = self.session.tagNavigationWebView else { return }
+            let document = self.session.documentForRecovery?()
+            let views = sequence(first: webView as UIView, next: { $0.superview }).map { view in
+                ["type": NSStringFromClass(type(of: view)), "frame": NSCoder.string(for: view.frame),
+                 "bounds": NSCoder.string(for: view.bounds), "alpha": view.alpha, "hidden": view.isHidden,
+                 "clips": view.clipsToBounds, "siblingIndex": view.superview?.subviews.firstIndex(of: view) ?? -1] as [String: Any]
+            }
+            let layers = sequence(first: webView.layer, next: { $0.superlayer }).map { layer in
+                ["type": NSStringFromClass(type(of: layer)), "frame": NSCoder.string(for: layer.frame),
+                 "opacity": layer.opacity, "presentationOpacity": layer.presentation()?.opacity ?? layer.opacity,
+                 "hidden": layer.isHidden, "clips": layer.masksToBounds] as [String: Any]
+            }
+            let native: [String: Any] = [
+                "documentID": document?.id ?? "nil", "savedJSONBytes": document?.json.utf8.count ?? 0,
+                "renderedDocumentID": self.session.renderedDocumentID ?? "nil",
+                "ready": self.session.isReady, "loading": self.session.isLoadingDocument,
+                "presentationReady": self.session.isPresentationReady,
+                "presentation": self.session.presentationDiagnostics,
+                "contentHeight": self.session.editorContentHeight, "visualBottom": self.session.editorVisualContentBottom,
+                "hasWindow": webView.window != nil,
+                "windowFrame": NSCoder.string(for: webView.convert(webView.bounds, to: webView.window)),
+                "windowBounds": NSCoder.string(for: webView.window?.bounds ?? .zero),
+                "internalContentSize": NSCoder.string(for: webView.scrollView.contentSize),
+                "internalContentOffset": NSCoder.string(for: webView.scrollView.contentOffset),
+                "views": views, "layers": layers
+            ]
+            guard let signature = try? JSONSerialization.data(withJSONObject: native, options: .sortedKeys),
+                  String(decoding: signature, as: UTF8.self) != self.renderingDiagnosticSignature else { return }
+            self.renderingDiagnosticSignature = String(decoding: signature, as: UTF8.self)
+            self.renderingDiagnosticCount += 1
+            let script = #"""
+            (() => {
+              const describe = element => {
+                if (!element) return null;
+                const rect = element.getBoundingClientRect(), style = getComputedStyle(element);
+                return {tag:element.tagName, classes:element.className, textCharacters:element.textContent.length,
+                  rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},
+                  display:style.display, visibility:style.visibility, opacity:style.opacity,
+                  color:style.color, background:style.backgroundColor, fontSize:style.fontSize,
+                  overflow:style.overflow, contentVisibility:style.contentVisibility, transform:style.transform};
+              };
+              const editor = document.querySelector('.tiptap-editor');
+              const ancestors = [];
+              for (let node = editor; node; node = node.parentElement) ancestors.push(describe(node));
+              return {readyState:document.readyState, visibility:document.visibilityState,
+                viewport:{width:innerWidth,height:innerHeight,scale:devicePixelRatio},
+                commandAvailable:typeof window.tiptapCommand === 'function', editor:describe(editor),
+                blocks:editor?.children.length ?? 0, ancestors,
+                firstBlocks:editor ? [...editor.children].slice(0,6).map(describe) : [],
+                images:[...document.images].map(image => ({complete:image.complete,
+                  naturalWidth:image.naturalWidth,naturalHeight:image.naturalHeight})),
+                bodyScrollHeight:document.body?.scrollHeight ?? 0};
+            })()
+            """#
+            webView.evaluateJavaScript(script) { [weak self] result, error in
+                guard let self else { return }
+                let report: [String: Any] = [
+                    "time": ISO8601DateFormatter().string(from: Date()), "pid": ProcessInfo.processInfo.processIdentifier,
+                    "reason": reason, "webView": ObjectIdentifier(webView).debugDescription,
+                    "native": native, "dom": result ?? NSNull(), "error": error?.localizedDescription ?? "none"
+                ]
+                guard let data = try? JSONSerialization.data(withJSONObject: report, options: .sortedKeys) else { return }
+                self.logInfo("PENNED-RENDER \(String(decoding: data, as: UTF8.self))")
+                // Temporary diagnostics only; no editor text, account secrets, or library writes.
+                let url = FileManager.default.temporaryDirectory.appendingPathComponent("PennedEditorDiagnostics.jsonl")
+                var line = data
+                line.append(0x0A)
+                if let file = try? FileHandle(forWritingTo: url) {
+                    defer { try? file.close() }
+                    if let size = try? file.seekToEnd(), size < 512_000 { try? file.write(contentsOf: line) }
+                } else {
+                    try? line.write(to: url, options: .atomic)
+                }
+            }
+        }
+    }
+    #endif
 }
 
 #if os(iOS)

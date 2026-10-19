@@ -94,20 +94,13 @@ struct InlinePropertyEditorSheet: View {
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(VellixSurface.sidebar)
-            .safeAreaInset(edge: .top, spacing: 0) {
-                PropertyConfigurationHeader(
-                    title: "Edit Property", showsBack: false,
-                    doneDisabled: property.validationMessage != nil,
-                    onBack: { dismiss() },
-                    onDone: {
-                        property.name = property.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                        onSave(property)
-                        dismiss()
-                    }
-                )
+            .pennedSheet(title: "Edit Property", close: { dismiss() }) {
+                Button("Done") {
+                    property.name = property.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    onSave(property)
+                    dismiss()
+                }.disabled(property.validationMessage != nil)
             }
-            .propertyConfigurationNavigation()
             .onAppear { isNameFocused = property.name.isEmpty }
             .onChange(of: property.kind) { _, newKind in
                 if newKind == .select { property.selectedOptionIDs = Array(property.selectedOptionIDs.prefix(1)) }
@@ -133,6 +126,7 @@ struct InlinePropertyEditorSheet: View {
                 Button("Cancel", role: .cancel) {}
             }
         }
+        .environment(\.pennedSheetDismiss, { dismiss() })
         .tint(VellixSurface.violet)
         .preferredColorScheme(.dark)
     }
@@ -158,11 +152,8 @@ struct InlinePropertyEditorSheet: View {
                 .foregroundStyle(VellixSurface.violet)
             }
             if !property.options.isEmpty {
-                VStack(spacing: 0) {
+                VStack(spacing: 10) {
                     ForEach(property.options) { option in
-                        if option.id != property.options.first?.id {
-                            Divider().padding(.horizontal, 16)
-                        }
                         Button { editingOptionID = option.id } label: {
                             HStack(spacing: 12) {
                                 InlinePropertyOptionPill(option: option)
@@ -174,6 +165,7 @@ struct InlinePropertyEditorSheet: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
                             .contentShape(Rectangle())
+                            .pennedSheetField(cornerRadius: 16)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Edit option \(option.name)")
@@ -191,7 +183,6 @@ struct InlinePropertyEditorSheet: View {
                         .accessibilityAction(named: "Move down") { moveOptionBy(option.id, offset: 1) }
                     }
                 }
-                .background(VellixSurface.paperLifted, in: RoundedRectangle(cornerRadius: 16))
             }
         }
     }
@@ -204,24 +195,7 @@ struct InlinePropertyEditorSheet: View {
         case .number:
             TextField("Number", text: $property.value).propertyNumericKeyboard().propertyConfigurationSurface()
         case .checkbox:
-            Button { property.checked.toggle() } label: {
-                HStack(spacing: 12) {
-                    Circle()
-                        .strokeBorder(Color.white.opacity(0.5), lineWidth: 2)
-                        .background(Circle().fill(property.checked ? Color(vellixHex: "#2EC5F4") : .clear))
-                        .overlay {
-                            if property.checked {
-                                propertyIcon("checkwavy", size: 14)
-                            }
-                        }
-                        .frame(width: 24, height: 24)
-                    Text(property.checked ? "Checked" : "Unchecked")
-                    Spacer()
-                }
-                .propertyConfigurationSurface()
-            }
-            .buttonStyle(.plain)
-            .accessibilityValue(property.checked ? "Checked" : "Unchecked")
+            Toggle("Checked", isOn: $property.checked).propertyConfigurationSurface()
         case .url:
             TextField("URL", text: $property.value).propertyURLKeyboard().propertyConfigurationSurface()
             TextField("Button title", text: $property.urlLabel).propertyConfigurationSurface()
@@ -299,6 +273,7 @@ struct InlinePropertyEditorSheet: View {
 
 struct InlinePropertyOptionEditor: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.pennedSheetDismiss) private var closeSheet
     @Binding var option: InlinePropertyOption
     @FocusState private var isNameFocused: Bool
     var onDelete: () -> Void
@@ -336,19 +311,13 @@ struct InlinePropertyOptionEditor: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(VellixSurface.sidebar)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            PropertyConfigurationHeader(
-                title: "Edit Option", showsBack: true,
-                doneDisabled: option.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                onBack: { dismiss() },
-                onDone: {
-                    option.name = option.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                    dismiss()
-                }
-            )
+        .pennedSheet(title: "Edit Option", close: { if let closeSheet { closeSheet() } else { dismiss() } }) {
+            Button("Back") { dismiss() }
+            Button("Done") {
+                option.name = option.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                dismiss()
+            }.disabled(option.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .propertyConfigurationNavigation()
         .onAppear { isNameFocused = option.name.isEmpty }
     }
 }
@@ -381,47 +350,6 @@ private struct PropertyOptionDragHandle: View {
         .frame(width: 44, height: 44)
         .contentShape(Rectangle())
         .accessibilityLabel("Reorder option")
-    }
-}
-
-private struct PropertyConfigurationHeader: View {
-    var title: String
-    var showsBack: Bool
-    var doneDisabled: Bool
-    var onBack: () -> Void
-    var onDone: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                Text(title)
-                    .font(.headline)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 72)
-                    .frame(maxWidth: .infinity)
-                HStack {
-                    Button(action: onBack) {
-                        if showsBack {
-                            propertyIcon("chevleft", size: 18).frame(width: 44, height: 44, alignment: .leading)
-                        } else {
-                            Text("Cancel").foregroundStyle(.secondary).frame(minHeight: 44)
-                        }
-                    }
-                    .accessibilityLabel(showsBack ? "Back" : "Cancel")
-                    Spacer()
-                    Button("Done", action: onDone)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(doneDisabled ? Color.secondary : VellixSurface.violet)
-                        .frame(minHeight: 44)
-                        .disabled(doneDisabled)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 8)
-            Divider().padding(.horizontal, 20)
-        }
-        .background(VellixSurface.sidebar)
     }
 }
 
@@ -462,15 +390,8 @@ private extension View {
         textFieldStyle(.plain)
             .padding(16)
             .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
-            .background(VellixSurface.paperLifted, in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    @ViewBuilder func propertyConfigurationNavigation() -> some View {
-        #if os(iOS)
-        toolbar(.hidden, for: .navigationBar)
-        #else
-        self
-        #endif
+            .pennedSheetField(cornerRadius: 16)
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.10)))
     }
 
     @ViewBuilder func propertyNumericKeyboard() -> some View {

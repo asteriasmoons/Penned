@@ -1,0 +1,4 @@
+# Auth is enforced in the handler with Supabase Auth getUser(jwt), not API keys.
+[functions.penned-delete-account]
+verify_jwt = false
+entrypoint = "./functions/penned-delete-account/index.ts"

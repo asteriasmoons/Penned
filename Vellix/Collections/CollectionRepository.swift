@@ -60,6 +60,7 @@ final class CollectionRepository {
     func create(ownerID: String, name: String, viewName: String, kind: CollectionViewKind) throws -> CollectionSnapshot {
         let id = try database.write { db in
             let owner = try documents.requireDocumentInDatabase(ownerID, db: db)
+            guard !owner.isTrashed, !owner.isArchived else { throw VellixError.impossibleMove("Restore this page before adding a collection.") }
             guard let name = name.trimmedNonEmpty else { throw VellixError.impossibleMove("Enter a collection name.") }
             let view = CollectionViewRecord(collectionID: UUID().uuidString, name: viewName.trimmedNonEmpty ?? "Main", kind: kind)
             let record = CollectionRecord(id: view.collectionID, documentID: owner.id, name: name, activeViewID: view.id)
@@ -77,7 +78,9 @@ final class CollectionRepository {
     }
 
     func collectionID(forEntry documentID: String) throws -> String? {
-        try database.read { db in try String.fetchOne(db, sql: """
+        try database.read { db in
+            _ = try SpaceOwnership.document(documentID, scope: documents.spaceID, in: db)
+            return try String.fetchOne(db, sql: """
             SELECT e.collectionID FROM collectionEntries e JOIN documents d ON d.id = e.documentID
             JOIN collections c ON c.id = e.collectionID JOIN documents p ON p.id = c.documentID
             WHERE e.documentID = ? AND d.isTrashed = 0 AND p.isTrashed = 0
@@ -87,20 +90,22 @@ final class CollectionRepository {
 
     func collectionIDs(forDocument documentID: String) throws -> [String] {
         try database.read { db in
+            let owner = try SpaceOwnership.document(documentID, scope: documents.spaceID, in: db)
             let json = try String.fetchOne(db, sql: "SELECT tipTapJSON FROM documents WHERE id = ?", arguments: [documentID]) ?? "{}"
             let referencedIDs = TipTapContentAnalyzer.collectionIDs(in: json).sorted()
             let references = referencedIDs.isEmpty ? "" : " OR c.id IN (\(Array(repeating: "?", count: referencedIDs.count).joined(separator: ",")))"
             return try String.fetchAll(db, sql: """
                 SELECT c.id FROM collections c JOIN documents d ON c.documentID = d.id
                 WHERE (d.id = ?\(references))
-                    AND d.isTrashed = 0 AND d.isArchived = 0 ORDER BY c.createdAt, c.id
-                """, arguments: StatementArguments([documentID] + referencedIDs))
+                    AND d.spaceID = ? AND d.isTrashed = 0 AND d.isArchived = 0 ORDER BY c.createdAt, c.id
+                """, arguments: StatementArguments([documentID] + referencedIDs + [owner.spaceID!]))
         }
     }
 
     func snapshot(id: String) throws -> CollectionSnapshot {
         try database.read { db in
             let record = try Self.requireCollection(id, in: db)
+            _ = try SpaceOwnership.document(record.documentID, scope: documents.spaceID, in: db)
             let fields = try CollectionField.fetchAll(db, sql: "SELECT * FROM collectionFields WHERE collectionID = ? ORDER BY position, id", arguments: [id])
             let views = try CollectionViewRecord.fetchAll(db, sql: "SELECT * FROM collectionViews WHERE collectionID = ? ORDER BY position, id", arguments: [id])
             // Agenda projections do not load any rich-text document bodies.
@@ -133,6 +138,7 @@ final class CollectionRepository {
 
     func addEntry(collectionID: String, title: String, kanbanViewID: String? = nil, columnID: String? = nil) throws -> DocumentRecord {
         try database.write { db in
+            try checkScope(collectionID, in: db)
             guard (kanbanViewID == nil) == (columnID == nil) else { throw VellixError.impossibleMove("Choose both a board and its column.") }
             guard title.trimmedNonEmpty != nil else { throw VellixError.impossibleMove("Enter an entry title.") }
             let collection = try Self.requireCollection(collectionID, in: db)
@@ -155,6 +161,7 @@ final class CollectionRepository {
     func rename(collectionID: String, name: String) throws {
         guard let name = name.trimmedNonEmpty else { throw VellixError.impossibleMove("Enter a collection name.") }
         try database.write { db in
+            try checkScope(collectionID, in: db)
             _ = try Self.requireCollection(collectionID, in: db)
             try db.execute(sql: "UPDATE collections SET name = ? WHERE id = ?", arguments: [name, collectionID])
         }
@@ -162,6 +169,7 @@ final class CollectionRepository {
 
     func saveValue(collectionID: String, documentID: String, fieldID: String, value: CollectionValue) throws {
         try database.write { db in
+            try checkScope(collectionID, in: db)
             guard try String.fetchOne(db, sql: "SELECT collectionID FROM collectionEntries WHERE documentID = ?", arguments: [documentID]) == collectionID,
                   let field = try CollectionField.fetchOne(db, key: fieldID), field.collectionID == collectionID else {
                 throw VellixError.impossibleMove("This field does not belong to this collection entry.")
@@ -198,6 +206,7 @@ final class CollectionRepository {
 
     func saveField(_ proposed: CollectionField, allowClearingValues: Bool = false) throws {
         try database.write { db in
+            try checkScope(proposed.collectionID, in: db)
             _ = try Self.requireCollection(proposed.collectionID, in: db)
             var field = proposed
             guard let name = field.name.trimmedNonEmpty else { throw VellixError.impossibleMove("Enter a field name.") }
@@ -256,6 +265,7 @@ final class CollectionRepository {
 
     func deleteField(_ field: CollectionField) throws {
         try database.write { db in
+            try checkScope(field.collectionID, in: db)
             guard try CollectionField.fetchOne(db, key: field.id)?.collectionID == field.collectionID else { return }
             try db.execute(sql: "DELETE FROM collectionFields WHERE id = ?", arguments: [field.id])
             for var view in try CollectionViewRecord.fetchAll(db, sql: "SELECT * FROM collectionViews WHERE collectionID = ?", arguments: [field.collectionID]) {
@@ -271,6 +281,7 @@ final class CollectionRepository {
 
     @discardableResult func addView(collectionID: String, name: String, kind: CollectionViewKind, duplicateID: String? = nil) throws -> CollectionViewRecord {
         try database.write { db in
+            try checkScope(collectionID, in: db)
             _ = try Self.requireCollection(collectionID, in: db)
             var view = CollectionViewRecord(collectionID: collectionID, name: name.trimmedNonEmpty ?? kind.title, kind: kind)
             view.position = try Int.fetchOne(db, sql: "SELECT COALESCE(MAX(position), -1) + 1 FROM collectionViews WHERE collectionID = ?", arguments: [collectionID]) ?? 0
@@ -292,6 +303,7 @@ final class CollectionRepository {
 
     func saveView(_ view: CollectionViewRecord) throws {
         try database.write { db in
+            try checkScope(view.collectionID, in: db)
             guard let original = try CollectionViewRecord.fetchOne(db, key: view.id), original.collectionID == view.collectionID,
                   view.name.trimmedNonEmpty != nil else { throw VellixError.impossibleMove("Enter a view name.") }
             let fields = Set(try String.fetchAll(db, sql: "SELECT id FROM collectionFields WHERE collectionID = ?", arguments: [view.collectionID]))
@@ -320,6 +332,7 @@ final class CollectionRepository {
 
     func selectView(collectionID: String, viewID: String) throws {
         try database.write { db in
+            try checkScope(collectionID, in: db)
             guard try CollectionViewRecord.fetchOne(db, key: viewID)?.collectionID == collectionID else { throw VellixError.impossibleMove("This view no longer exists.") }
             try db.execute(sql: "UPDATE collections SET activeViewID = ? WHERE id = ?", arguments: [viewID, collectionID])
         }
@@ -327,6 +340,7 @@ final class CollectionRepository {
 
     func deleteView(collectionID: String, viewID: String) throws {
         try database.write { db in
+            try checkScope(collectionID, in: db)
             let views = try CollectionViewRecord.fetchAll(db, sql: "SELECT * FROM collectionViews WHERE collectionID = ? ORDER BY position", arguments: [collectionID])
             guard views.count > 1 else { throw VellixError.impossibleMove("Add a replacement view before deleting the last view.") }
             guard views.contains(where: { $0.id == viewID }) else { return }
@@ -339,6 +353,7 @@ final class CollectionRepository {
     func reorder(collectionID: String, table: String, ids: [String]) throws {
         guard ["collectionViews", "collectionFields", "collectionEntries"].contains(table) else { return }
         try database.write { db in
+            try checkScope(collectionID, in: db)
             let key = table == "collectionEntries" ? "documentID" : "id"
             let visible = table == "collectionEntries" ? " AND documentID IN (SELECT id FROM documents WHERE isTrashed = 0 AND isArchived = 0)" : ""
             let originals = try String.fetchAll(db, sql: "SELECT \(key) FROM \(table) WHERE collectionID = ?\(visible)", arguments: [collectionID])
@@ -354,7 +369,13 @@ final class CollectionRepository {
               try Bool.fetchOne(db, sql: "SELECT isTrashed = 0 AND isArchived = 0 FROM documents WHERE id = ?", arguments: [record.documentID]) == true else {
             throw VellixError.impossibleMove("This collection is no longer available. Restore its page from Trash.")
         }
+        _ = try SpaceOwnership.document(record.documentID, scope: nil, in: db)
         return record
+    }
+
+    private func checkScope(_ id: String, in db: Database) throws {
+        let owner = try Self.requireCollection(id, in: db)
+        _ = try SpaceOwnership.document(owner.documentID, scope: documents.spaceID, in: db)
     }
 
     private static func updateKanban(collectionID: String, viewID: String, in db: Database,
@@ -389,6 +410,7 @@ final class CollectionRepository {
     @discardableResult func addKanbanColumn(collectionID: String, viewID: String, name: String, color: String) throws -> CollectionKanbanColumn {
         let column = CollectionKanbanColumn(name: name.trimmingCharacters(in: .whitespacesAndNewlines), color: color)
         try database.write { db in
+            try checkScope(collectionID, in: db)
             try Self.updateKanban(collectionID: collectionID, viewID: viewID, in: db) { $0.kanbanColumns.append(column) }
         }
         return column
@@ -397,6 +419,7 @@ final class CollectionRepository {
     func updateKanbanColumn(collectionID: String, viewID: String, columnID: String,
         name: String? = nil, color: String? = nil, collapsed: Bool? = nil) throws {
         try database.write { db in
+            try checkScope(collectionID, in: db)
             try Self.updateKanban(collectionID: collectionID, viewID: viewID, in: db) { config in
                 guard let index = config.kanbanColumns.firstIndex(where: { $0.id == columnID }) else { throw VellixError.impossibleMove("This column no longer exists.") }
                 if let name { config.kanbanColumns[index].name = name.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -408,6 +431,7 @@ final class CollectionRepository {
 
     func reorderKanbanColumns(collectionID: String, viewID: String, ids: [String]) throws {
         try database.write { db in
+            try checkScope(collectionID, in: db)
             try Self.updateKanban(collectionID: collectionID, viewID: viewID, in: db) { config in
                 guard Set(ids) == Set(config.kanbanColumns.map(\.id)), ids.count == config.kanbanColumns.count else { throw VellixError.impossibleMove("The column list changed. Reopen it before reordering.") }
                 // Materialize the implicit default before changing the first column.
@@ -421,6 +445,7 @@ final class CollectionRepository {
 
     func deleteKanbanColumn(collectionID: String, viewID: String, columnID: String, destinationID: String) throws {
         try database.write { db in
+            try checkScope(collectionID, in: db)
             try Self.updateKanban(collectionID: collectionID, viewID: viewID, in: db) { config in
                 guard columnID != destinationID, config.kanbanColumns.count > 1,
                       config.kanbanColumns.contains(where: { $0.id == columnID }),
@@ -441,6 +466,7 @@ final class CollectionRepository {
 
     func moveKanbanEntry(collectionID: String, viewID: String, documentID: String, columnID: String, beforeID: String? = nil) throws {
         try database.write { db in
+            try checkScope(collectionID, in: db)
             try Self.updateKanban(collectionID: collectionID, viewID: viewID, in: db) { config in
                 let members = try String.fetchAll(db, sql: "SELECT e.documentID FROM collectionEntries e JOIN documents d ON d.id = e.documentID WHERE e.collectionID = ? AND d.isTrashed = 0 AND d.isArchived = 0 ORDER BY e.position, e.documentID", arguments: [collectionID])
                 guard members.contains(documentID), config.kanbanColumns.contains(where: { $0.id == columnID }) else { throw VellixError.impossibleMove("This entry or column is no longer available.") }
@@ -460,7 +486,7 @@ final class CollectionRepository {
     }
 
     // Called inside the existing document/template tree-copy transaction.
-    static func copyCollections(documentIDs: [String: String], in db: Database) throws {
+    @discardableResult static func copyCollections(documentIDs: [String: String], in db: Database) throws -> [String: String] {
         var collections: [String: String] = [:]
         var fields: [String: String] = [:]
         for source in try CollectionRecord.fetchAll(db) where documentIDs[source.documentID] != nil {
@@ -522,12 +548,17 @@ final class CollectionRepository {
                 }
             }
         }
+        try remapCollectionReferences(documentIDs: documentIDs, collectionIDs: collections, in: db)
+        return collections
+    }
+
+    static func remapCollectionReferences(documentIDs: [String: String], collectionIDs: [String: String], in db: Database) throws {
         for copyID in documentIDs.values {
             guard var document = try DocumentRecord.fetchOne(db, key: copyID) else { continue }
             func remap(_ node: [String: Any]) -> [String: Any] {
                 var result = node
                 if node["type"] as? String == "collection", var attrs = node["attrs"] as? [String: Any],
-                   let oldID = attrs["collectionID"] as? String, let newID = collections[oldID] {
+                   let oldID = attrs["collectionID"] as? String, let newID = collectionIDs[oldID] {
                     attrs["collectionID"] = newID
                     if let oldDocument = attrs["documentID"] as? String { attrs["documentID"] = documentIDs[oldDocument] ?? oldDocument }
                     result["attrs"] = attrs
@@ -538,13 +569,16 @@ final class CollectionRepository {
             document.tipTapJSON = try TipTapContentAnalyzer.normalizePayloadToJSON(remap(TipTapContentAnalyzer.documentObject(from: document.tipTapJSON)))
             try document.update(db)
             try DocumentRepository.upsertSearchIndex(document, in: db)
+            for var snapshot in try DocumentSnapshotRecord.fetchAll(db, sql: "SELECT * FROM documentSnapshots WHERE documentID=?", arguments: [copyID]) {
+                snapshot.tipTapJSON = try TipTapContentAnalyzer.normalizePayloadToJSON(remap(TipTapContentAnalyzer.documentObject(from: snapshot.tipTapJSON)))
+                try snapshot.update(db)
+            }
         }
     }
 }
 
 extension DocumentRepository {
     func requireDocumentInDatabase(_ id: String, db: Database) throws -> DocumentRecord {
-        guard let record = try DocumentRecord.fetchOne(db, key: id) else { throw VellixError.documentNotFound(id) }
-        return record
+        try SpaceOwnership.document(id, scope: spaceID, in: db)
     }
 }

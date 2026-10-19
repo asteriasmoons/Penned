@@ -1,10 +1,22 @@
 import SwiftUI
 
 struct CalendarView: View {
+    private static let agendaBottomInset: CGFloat = 110
     @EnvironmentObject private var environment: AppEnvironment
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.pennedWorkspaceTabActive) private var workspaceTabActive
     @ObservedObject var model: CalendarModel
+    @State private var configuringDailyNote: DailyNoteDay?
+    @State private var openingDailyNote = false
+    @State private var agendaPosition: ScrollPosition
+
+    init(model: CalendarModel) {
+        self.model = model
+        _agendaPosition = State(initialValue: model.mode == .week
+            ? ScrollPosition(id: model.initialScrollDate(), anchor: .top)
+            : ScrollPosition(idType: Date.self, edge: .top))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -12,31 +24,43 @@ struct CalendarView: View {
                 navigator
                 Divider().padding(.horizontal, 18)
             }
-            ScrollViewReader { proxy in
+            GeometryReader { geometry in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 18) {
                         if dynamicTypeSize.isAccessibilitySize { navigator; Divider() }
                         calendarActions
+                        dailyNoteAction
                         if model.mode == .week {
                             expansionControls
                             ForEach(model.days, id: \.self) { day in
-                                weekSection(day).id(day)
+                                VStack(alignment: .leading, spacing: 18) {
+                                    weekSection(day)
+                                    if day == model.days.last { unscheduledAgenda }
+                                }
+                                // Leave only the trailing room needed to top-align the final day.
+                                .frame(minHeight: day == model.days.last ? max(0, geometry.size.height - Self.agendaBottomInset) : nil,
+                                    alignment: .topLeading)
+                                .id(day)
                             }
                         } else {
                             Text(dayHeading(model.selectedDate))
                                 .font(.system(.title3, design: .rounded).weight(.bold))
                             CalendarDayAgenda(model: model, day: model.selectedDate)
-                        }
-                        if !model.unscheduledTasks.isEmpty {
-                            Text("Unscheduled").font(.system(.headline, design: .rounded)).padding(.top, 12)
-                            ForEach(model.unscheduledTasks) { CalendarTaskRow(model: model, entry: $0) }
+                            unscheduledAgenda
                         }
                     }
-                    .padding(.horizontal, 18).padding(.top, 18).padding(.bottom, 110)
+                    .scrollTargetLayout()
+                    .padding(.horizontal, 18).padding(.top, 18).padding(.bottom, Self.agendaBottomInset)
                 }
+                .scrollPosition($agendaPosition, anchor: .top)
                 .refreshable { await model.refreshAndWait() }
                 .onChange(of: model.selectionRevision) { _, _ in
-                    if model.mode == .week { withAnimation { proxy.scrollTo(model.selectedDate, anchor: .top) } }
+                    scrollAgenda(to: model.mode == .week ? model.scrollTargetDate : nil)
+                    model.acknowledgeScrollRequest()
+                }
+                .onChange(of: model.mode) { _, mode in
+                    scrollAgenda(to: mode == .week ? model.initialScrollDate() : nil)
+                    model.acknowledgeScrollRequest()
                 }
             }
         }
@@ -53,16 +77,43 @@ struct CalendarView: View {
             }
         }
         .sheet(item: $model.selectedEvent) { event in CalendarEventDetailSheet(event: event, model: model) }
+        .sheet(item: $configuringDailyNote) { day in
+            NavigationStack {
+                DailyNotesSettingsView(onSelected: {
+                    configuringDailyNote = nil
+                    openDailyNote(day)
+                })
+                .pennedSheet(title: "Daily Notes", close: { configuringDailyNote = nil })
+            }
+        }
         .alert("Calendar", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK") { model.errorMessage = nil }
         } message: { Text(model.errorMessage ?? "") }
         .onAppear {
-            if horizontalSizeClass != .compact || environment.selectedDocumentID == nil { model.activate() }
+            model.acknowledgeScrollRequest()
+            if workspaceTabActive && (horizontalSizeClass != .compact || environment.selectedDocumentID == nil) { model.activate() }
         }
         .onDisappear { model.deactivate() }
         .onChange(of: environment.selectedDocumentID) { _, id in
-            if horizontalSizeClass == .compact && id != nil { model.deactivate() }
+            if !workspaceTabActive || (horizontalSizeClass == .compact && id != nil) { model.deactivate() }
             else { model.activate() }
+        }
+        .onChange(of: workspaceTabActive) { _, active in if active { model.activate() } else { model.deactivate() } }
+    }
+
+    private func scrollAgenda(to day: Date?) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            if let day { agendaPosition.scrollTo(id: day, anchor: .top) }
+            else { agendaPosition.scrollTo(edge: .top) }
+        }
+    }
+
+    @ViewBuilder private var unscheduledAgenda: some View {
+        if !model.unscheduledTasks.isEmpty {
+            Text("Unscheduled").font(.system(.headline, design: .rounded)).padding(.top, 12)
+            ForEach(model.unscheduledTasks) { CalendarTaskRow(model: model, entry: $0) }
         }
     }
 
@@ -90,7 +141,8 @@ struct CalendarView: View {
         HStack(spacing: expandsToFill ? 0 : 6) {
             ForEach(model.days, id: \.self) { day in
                 CalendarDateBubble(date: day, selected: model.calendar.isDate(day, inSameDayAs: model.selectedDate),
-                    hasContent: !model.events(on: day).isEmpty || !model.tasks(on: day).isEmpty) { model.select(day) }
+                    hasContent: !model.events(on: day).isEmpty || !model.tasks(on: day).isEmpty,
+                    hasDailyNote: model.dailyNote(on: day) != nil) { model.select(day) }
                     .frame(maxWidth: expandsToFill ? .infinity : nil)
             }
         }.frame(maxWidth: expandsToFill ? .infinity : nil)
@@ -108,6 +160,33 @@ struct CalendarView: View {
                 .contentShape(Rectangle())
                 .buttonStyle(.plain)
         }.frame(maxWidth: .infinity)
+    }
+
+    private var dailyNoteAction: some View {
+        Button { openDailyNote(DailyNoteDay(date: model.selectedDate)) } label: {
+            HStack(spacing: 10) {
+                LibraryIcon(name: "mooncal", size: 20)
+                Text(model.dailyNote(on: model.selectedDate) == nil ? "Create Daily Note" : "Open Daily Note")
+                    .font(.system(.body, design: .rounded).weight(.semibold))
+                Spacer()
+                if openingDailyNote { ProgressView() }
+                else { Text(DailyNoteDay(date: model.selectedDate).title).font(.subheadline) }
+            }.padding(.vertical, 12).contentShape(Rectangle())
+        }.buttonStyle(.plain).foregroundStyle(CalendarStyle.accent)
+        .disabled(openingDailyNote || environment.isSwitchingSpace)
+        .accessibilityIdentifier("daily-note-action")
+    }
+
+    private func openDailyNote(_ day: DailyNoteDay) {
+        guard !openingDailyNote else { return }
+        openingDailyNote = true
+        Task {
+            defer { openingDailyNote = false }
+            do { try await environment.openDailyNote(day: day) }
+            catch DailyNoteError.chooseTemplate { configuringDailyNote = day }
+            catch DailyNoteError.unavailableTemplate { configuringDailyNote = day }
+            catch { model.errorMessage = error.localizedDescription }
+        }
     }
 
     private func navigationButton(_ title: String, icon: String, direction: Int) -> some View {
@@ -195,6 +274,7 @@ struct CalendarView: View {
         if events > 0 { parts.append("\(events) \(events == 1 ? "event" : "events")") }
         if tasks > 0 { parts.append("\(tasks) \(tasks == 1 ? "task" : "tasks")") }
         if notes > 0 { parts.append("\(notes) \(notes == 1 ? "note" : "notes")") }
+        if model.dailyNote(on: day) != nil { parts.append("Daily Note") }
         return parts.isEmpty ? "Nothing scheduled" : parts.joined(separator: ", ")
     }
 
@@ -204,6 +284,7 @@ private struct CalendarDateBubble: View {
     let date: Date
     let selected: Bool
     let hasContent: Bool
+    let hasDailyNote: Bool
     let action: () -> Void
     @ScaledMetric(relativeTo: .body) private var diameter: CGFloat = 34
 
@@ -217,12 +298,15 @@ private struct CalendarDateBubble: View {
                     .frame(width: diameter, height: diameter)
                     .background(selected ? CalendarStyle.accent : .white.opacity(0.04), in: Circle())
                     .overlay { if Calendar.current.isDateInToday(date) { Circle().stroke(CalendarStyle.accent, lineWidth: 1.5) } }
-                Circle().fill(hasContent ? CalendarStyle.accent : .clear).frame(width: 4, height: 4)
+                HStack(spacing: 3) {
+                    Circle().fill(hasContent ? CalendarStyle.accent : .clear).frame(width: 4, height: 4)
+                    if hasDailyNote { RoundedRectangle(cornerRadius: 1).fill(CalendarStyle.accent).frame(width: 5, height: 5) }
+                }.frame(height: 5)
             }.frame(minWidth: diameter + 6, minHeight: 66).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(date.formatted(date: .complete, time: .omitted))
-        .accessibilityValue(hasContent ? "Scheduled content" : "Nothing scheduled")
+        .accessibilityValue(hasDailyNote ? "Daily Note" : hasContent ? "Scheduled content" : "Nothing scheduled")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

@@ -87,6 +87,7 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
         func inlineText(_ node: [String: Any], depth: Int = 0) -> String {
             guard depth < 16 else { return "" }
             if node["type"] as? String == "hardBreak" { return "\n" }
+            if node["type"] as? String == "inlineTag", let name = (node["attrs"] as? [String: Any])?["name"] as? String { return "#" + name }
             if let text = node["text"] as? String { return String(text.prefix(2048)) }
             var result = ""
             for child in (node["content"] as? [[String: Any]] ?? []).prefix(256) {
@@ -134,7 +135,7 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                     if open {
                         blocks(Array(children.dropFirst()), x: x + 7, width: width - 7, depth: depth + 1)
                     }
-                case "callout", "blockquote", "codeBlock":
+                case "callout", "plainCallout", "blockquote", "codeBlock":
                     let top = y - 2
                     let insertionIndex = marks.count
                     let color = attrs["color"] as? String
@@ -172,11 +173,46 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                 case "image":
                     add(.image, CGRect(x: x, y: y, width: width, height: 22), type)
                     y += 27
+                case "attachment":
+                    let file = attrs["file"] as? [String: Any] ?? [:]
+                    let kind = file["kind"] as? String ?? "file", mode = attrs["displayMode"] as? String ?? "auto"
+                    let fraction = mode == "fullWidth" ? 1 : max(0.1, min(1, (attrs["widthPercent"] as? Double ?? 100) / 100))
+                    let w = width * fraction
+                    let left = attrs["textAlign"] as? String == "right" ? x + width - w : attrs["textAlign"] as? String == "center" ? x + (width - w) / 2 : x
+                    if kind == "image" && mode != "card" {
+                        let ratio = max(1, file["width"] as? Double ?? 100) / max(1, file["height"] as? Double ?? 30)
+                        let height = max(3, min(32, w / ratio))
+                        add(.image, CGRect(x: left, y: y, width: w, height: height), type); y += height + 5
+                    } else {
+                        let height: CGFloat = kind == "pdf" && mode != "card" ? 28 : 10
+                        add(.container, CGRect(x: left, y: y, width: w, height: height), type); y += height + 5
+                    }
                 case "pageReference":
                     add(.container, CGRect(x: x, y: y, width: 12, height: 16), type)
                     y += 21
                 case "inlineProperty":
                     property(attrs["property"], x: x, width: width)
+                case "templateComponent":
+                    if let definition = TemplateComponentDefinition.decode(attrs["definition"]) {
+                        if !definition.label.isEmpty { text(definition.label, type: type, x: x, width: width, thickness: 3) }
+                        if definition.kind == .slider {
+                            add(.line, CGRect(x: x, y: y + 3, width: width, height: 1.5), type)
+                            let value = (attrs["response"] as? NSNumber)?.doubleValue ?? definition.minimum
+                            let progress = max(0, min(1, (value - definition.minimum) / (definition.maximum - definition.minimum)))
+                            add(.chip, CGRect(x: x + (width - 4) * progress, y: y, width: 4, height: 6), type)
+                            y += 12
+                        } else {
+                            let labels = definition.kind == .rating ? (Int(definition.minimum)...Int(definition.maximum)).map(String.init) : definition.choices.map(\.label)
+                            var left = x
+                            for label in labels {
+                                let chipWidth = min(width, max(8, CGFloat(label.prefix(40).count) * 1.8 + 6))
+                                if left + chipWidth > x + width { y += 9; left = x }
+                                add(.chip, CGRect(x: left, y: y, width: chipWidth, height: 6), type)
+                                left += chipWidth + 3
+                            }
+                            y += 13
+                        }
+                    }
                 default:
                     blocks(children, x: x, width: width, depth: depth + 1)
                 }

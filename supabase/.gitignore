@@ -1,0 +1,7 @@
+.temp/
+.branches/
+.env*
+!.env.example
+functions/.env*
+!functions/.env.example
+node_modules/

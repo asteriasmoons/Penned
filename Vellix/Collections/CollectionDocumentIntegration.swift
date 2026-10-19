@@ -16,19 +16,16 @@ struct CollectionCreateSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Collection") { TextField("Collection name", text: $name).focused($focused) }
+                Section("Collection") { TextField("Collection name", text: $name).focused($focused) }.collectionFormRows()
                 Section("First View") {
-                    TextField("View name", text: $viewName)
+                    TextField("View name", text: $viewName).collectionFormRows(showsSeparator: true)
                     Picker("Presentation", selection: $kind) { ForEach(CollectionViewKind.allCases) { Text($0.title).tag($0) } }.pickerStyle(.segmented)
-                }
-                if let error { Text(error).foregroundStyle(.red) }
+                }.collectionFormRows()
+                if let error { Text(error).foregroundStyle(.red).collectionFormRows() }
             }.collectionForm().navigationTitle("New Collection")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button(saving ? "Creating..." : "Create") { create() }
-                            .disabled(saving || name.trimmedNonEmpty == nil || viewName.trimmedNonEmpty == nil)
-                    }
+                .pennedSheet(title: "New Collection", closeDisabled: saving, close: { dismiss() }) {
+                    Button(saving ? "Creating..." : "Create") { create() }
+                        .disabled(saving || name.trimmedNonEmpty == nil || viewName.trimmedNonEmpty == nil)
                 }.onAppear { focused = true }
         }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.medium, .large])
             .interactiveDismissDisabled(saving)
@@ -38,6 +35,8 @@ struct CollectionCreateSheet: View {
         saving = true
         let ownerID = model.documentID
         Task { @MainActor in
+            let operation = model.beginPersistentOperation()
+            defer { model.endPersistentOperation(operation) }
             defer { saving = false }
             do {
                 try await model.captureAndSave()
@@ -70,13 +69,12 @@ struct CollectionAddEntrySheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Page title", text: $title).focused($focused)
-                Button("Create and Open") { create(open: true) }.disabled(title.trimmedNonEmpty == nil)
-                if let error { Text(error).foregroundStyle(.red) }
+                TextField("Page title", text: $title).focused($focused).collectionFormRows(showsSeparator: true)
+                Button("Create and Open") { create(open: true) }.disabled(title.trimmedNonEmpty == nil).collectionFormRows()
+                if let error { Text(error).foregroundStyle(.red).collectionFormRows() }
             }.collectionForm().navigationTitle("New Entry")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) { Button("Create") { create(open: false) }.disabled(title.trimmedNonEmpty == nil) }
+                .pennedSheet(title: "New Entry", close: { dismiss() }) {
+                    Button("Create") { create(open: false) }.disabled(title.trimmedNonEmpty == nil)
                 }.onAppear { focused = true }
         }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.medium])
     }
@@ -106,27 +104,24 @@ struct CollectionEntryActionsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Page title", text: $title)
-                Button("Open Page") { dismiss(); onOpen(documentID) }
+                TextField("Page title", text: $title).collectionFormRows(showsSeparator: true)
+                Button("Open Page") { dismiss(); onOpen(documentID) }.collectionFormRows(showsSeparator: true)
                 Button("Duplicate Entry") {
                     do {
                         _ = try environment.documents.duplicate(id: documentID, attachmentStore: environment.attachmentStore)
                         store.refresh(); dismiss()
                     } catch { self.error = error.localizedDescription }
-                }
-                Button("Move Up") { move(-1) }
-                Button("Move Down") { move(1) }
-                Button("Delete Entry", role: .destructive) { confirmDelete = true }
-                if let error { Text(error).foregroundStyle(.red) }
+                }.collectionFormRows(showsSeparator: true)
+                Button("Move Up") { move(-1) }.collectionFormRows(showsSeparator: true)
+                Button("Move Down") { move(1) }.collectionFormRows(showsSeparator: true)
+                Button("Delete Entry", role: .destructive) { confirmDelete = true }.collectionFormRows()
+                if let error { Text(error).foregroundStyle(.red).collectionFormRows() }
             }.collectionForm().navigationTitle("Entry")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") {
-                            do { _ = try environment.documents.updateTitle(id: documentID, title: title); store.refresh(); dismiss() }
-                            catch { self.error = error.localizedDescription }
-                        }.disabled(title.trimmedNonEmpty == nil)
-                    }
+                .pennedSheet(title: "Entry", close: { dismiss() }) {
+                    Button("Save") {
+                        do { _ = try environment.documents.updateTitle(id: documentID, title: title); store.refresh(); dismiss() }
+                        catch { self.error = error.localizedDescription }
+                    }.disabled(title.trimmedNonEmpty == nil)
                 }
                 .confirmationDialog("Move this entry to Trash?", isPresented: $confirmDelete, titleVisibility: .visible) {
                     Button("Delete Entry", role: .destructive) {

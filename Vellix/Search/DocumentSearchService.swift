@@ -19,6 +19,7 @@ struct SearchResult: Identifiable, Hashable {
 
 final class DocumentSearchService: @unchecked Sendable {
     private let database: AppDatabase
+    var spaceID: String?
 
     init(database: AppDatabase) {
         self.database = database
@@ -30,7 +31,7 @@ final class DocumentSearchService: @unchecked Sendable {
         }
 
         return try database.read { db in
-            let hierarchy = FolderHierarchy(folders: try FolderRecord.fetchAll(db))
+            let hierarchy = FolderHierarchy(folders: try FolderRecord.fetchAll(db, sql: "SELECT * FROM folders WHERE \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID=?)", arguments: [spaceID, spaceID]))
             return try Row.fetchAll(
                 db,
                 sql: """
@@ -48,12 +49,14 @@ final class DocumentSearchService: @unchecked Sendable {
                     JOIN documents d ON d.id = documentSearch.documentID
                     LEFT JOIN spaces s ON s.id = d.spaceID
                     WHERE documentSearch MATCH ?
+                      AND \(LibraryAccess.spaces("d.spaceID"))
                       AND d.templateID IS NULL
                       AND (? OR d.isTrashed = 0)
+                      AND (? IS NULL OR d.spaceID = ?)
                     ORDER BY rank
                     LIMIT 50
                     """,
-                arguments: [searchQuery, includeTrash]
+                arguments: [searchQuery, includeTrash, spaceID, spaceID]
             )
             .map { row in
                 let folderID: String? = row["folderID"]
@@ -90,15 +93,26 @@ final class DocumentSearchService: @unchecked Sendable {
                 db,
                 sql: """
                     SELECT * FROM templates
-                    WHERE lower(title) LIKE ? OR lower(templateDescription) LIKE ?
+                    WHERE \(LibraryAccess.spaces()) AND (lower(title) LIKE ? OR lower(templateDescription) LIKE ?) AND (? IS NULL OR spaceID=?)
                     ORDER BY title ASC
                     """,
-                arguments: ["%\(normalized)%", "%\(normalized)%"]
+                arguments: ["%\(normalized)%", "%\(normalized)%", spaceID, spaceID]
             )
         }
     }
 
-    private static func ftsQuery(from query: String) -> String? {
+    nonisolated static func matchingDocumentIDs(_ query: String, titleOnly: Bool, spaceID: String?, in db: Database) throws -> Set<String> {
+        guard let expression = ftsQuery(from: query) else { return [] }
+        let match = titleOnly ? "title : (\(expression))" : expression
+        return Set(try String.fetchAll(db, sql: """
+            SELECT d.id FROM documentSearch JOIN documents d ON d.id=documentSearch.documentID
+            WHERE documentSearch MATCH ? AND d.templateID IS NULL AND d.isTrashed=0 AND d.isArchived=0
+            AND \(LibraryAccess.spaces("d.spaceID"))
+            AND (? IS NULL OR d.spaceID=?)
+            """, arguments: [match, spaceID, spaceID]))
+    }
+
+    private nonisolated static func ftsQuery(from query: String) -> String? {
         let tokens = query
             .lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)

@@ -506,6 +506,8 @@
         --vellix-blockquote-color: #ffffff;
         box-sizing: border-box;
         position: relative;
+        display: flex;
+        align-items: center;
         margin: 8px 0 !important;
         padding: 8px 18px 8px 24px !important;
         min-height: 58px;
@@ -543,8 +545,20 @@
       }
 
       .vellix-blockquote-content {
+        flex: 1;
         min-width: 0;
         display: flow-root;
+      }
+
+      .vellix-blockquote-content .vellix-guided-empty {
+        display: flow-root;
+        min-height: 0 !important;
+      }
+
+      .vellix-blockquote-content .vellix-guided-empty::before {
+        width: 100%;
+        height: auto;
+        margin-right: -100%;
       }
 
       .tiptap-editor code {
@@ -558,7 +572,8 @@
 
       .vellix-callout {
         --vellix-callout-color: #ffffff;
-        --vellix-callout-first-line-top: 0px;
+        --vellix-callout-text-offset: 8px;
+        --vellix-callout-icon-offset: 0px;
         box-sizing: border-box;
         position: relative;
         display: grid;
@@ -574,7 +589,7 @@
         background: color-mix(in srgb, var(--vellix-callout-color) 8%, transparent);
         border: 1px solid rgba(255, 255, 255, 0.14);
         border-color: color-mix(in srgb, var(--vellix-callout-color) 18%, transparent);
-        border-radius: 22px;
+        border-radius: 12px;
       }
 
       .vellix-callout-icon-button {
@@ -588,7 +603,7 @@
         justify-content: center;
         width: 42px;
         height: 42px;
-        margin: max(0px, var(--vellix-callout-first-line-top)) 0 0;
+        margin: var(--vellix-callout-icon-offset) 0 0;
         padding: 8px;
         box-sizing: border-box;
         background: inherit;
@@ -616,7 +631,7 @@
         margin: 0;
         border-radius: 0;
         background-image: none !important;
-        background-color: color-mix(in srgb, var(--vellix-callout-color) 25%, transparent);
+        background-color: var(--vellix-callout-color);
         -webkit-mask-image: var(--vellix-callout-icon-mask, linear-gradient(transparent, transparent));
         mask-image: var(--vellix-callout-icon-mask, linear-gradient(transparent, transparent));
         -webkit-mask-position: center;
@@ -633,7 +648,8 @@
         display: none;
       }
 
-      .vellix-callout-text {
+      .vellix-callout-text,
+      .vellix-plain-callout-text {
         min-width: 0;
         max-width: 100%;
         color: var(--vellix-primary-text);
@@ -642,7 +658,12 @@
         word-break: break-word;
       }
 
-      .vellix-callout-text p {
+      .vellix-callout-text {
+        padding-block: var(--vellix-callout-text-offset);
+      }
+
+      .vellix-callout-text p,
+      .vellix-plain-callout-text p {
         margin: 0;
         max-width: 100%;
         white-space: pre-wrap;
@@ -650,8 +671,50 @@
         word-break: break-word;
       }
 
-      .vellix-callout-text p + p {
+      .vellix-callout-text p + p,
+      .vellix-plain-callout-text p + p {
         margin-top: 6px;
+      }
+
+      .vellix-plain-callout {
+        --vellix-callout-color: #ffffff;
+        box-sizing: border-box;
+        position: relative;
+        display: flex;
+        align-items: center;
+        width: 100%;
+        min-height: 60px;
+        margin: 10px 0;
+        padding: 8px 10px;
+        background: color-mix(in srgb, var(--vellix-callout-color) 8%, transparent);
+        border: 1px solid color-mix(in srgb, var(--vellix-callout-color) 18%, transparent);
+        border-radius: 12px;
+      }
+
+      .tiptap-editor .vellix-plain-callout { width: auto; }
+      .vellix-plain-callout-text { position: relative; width: 100%; }
+
+      /* Let guidance size itself; a stale estimated paragraph height pushes it to the top. */
+      .vellix-plain-callout-text .vellix-guided-empty {
+        display: flow-root;
+        min-height: 0 !important;
+      }
+
+      .vellix-plain-callout-text .vellix-guided-empty::before {
+        width: 100%;
+        height: auto;
+        margin-right: -100%;
+      }
+
+      .vellix-plain-callout-color-button {
+        position: absolute;
+        inset: 0;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: inherit;
+        background: transparent;
+        cursor: pointer;
       }
 
       .tiptap-editor ul,
@@ -880,6 +943,17 @@
         padding-top: 20px !important;
       }
 
+      /* Page-edge breathing room must remain outside a callout's painted box. */
+      .tiptap-editor.ProseMirror > :is(.vellix-callout, .vellix-plain-callout):has(+ :is([data-vellix-page-break], [data-type="pageBreak"], [data-page-break])) {
+        padding-bottom: 8px !important;
+        margin-bottom: 20px;
+      }
+
+      .tiptap-editor.ProseMirror > :is([data-vellix-page-break], [data-type="pageBreak"], [data-page-break]) + :is(.vellix-callout, .vellix-plain-callout) {
+        padding-top: 8px !important;
+        margin-top: 20px;
+      }
+
       .tiptap-editor [data-vellix-toggle] {
         position: relative;
         display: grid;
@@ -1074,6 +1148,145 @@
       .penned-collection-empty { font-size: 14px; opacity: .6; padding: 20px 8px; }
       .penned-collection-compact .penned-collection-card-title { font-size: 14px; padding: 6px 8px 2px; }
       .penned-collection-compact .penned-collection-card-values { padding: 2px 8px; }
+      .penned-template-component { margin: 20px 0; padding: 12px 0; min-width: 0; max-width: 100%; color: var(--vellix-primary-text); }
+      .penned-template-component:is([data-component-kind="slider"], [data-component-kind="rating"]) { margin: 6px 0 12px; padding: 0; }
+      .penned-component-configure { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; padding: 0; background: transparent; color: inherit; cursor: pointer; }
+      .penned-component-configure:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+      .penned-component-question { display: block; font: inherit; font-weight: 600; color: inherit; border: 0; background: none; padding: 0; margin: 0 0 14px; text-align: inherit; max-width: 100%; overflow-wrap: anywhere; }
+      button.penned-component-question { min-height: 44px; cursor: pointer; }
+      .penned-component-choices { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; justify-content: inherit; }
+      .penned-component-choices button { font: inherit; font-size: 0.92em; color: inherit; background: transparent; border: 1px solid color-mix(in srgb,currentColor 28%,transparent); border-radius: 24px; padding: 9px 16px; min-height: 44px; max-width: 100%; overflow-wrap: anywhere; cursor: pointer; }
+      .penned-component-choices.is-rating button { flex: 1 0 42px; border-radius: 10px; padding: 12px 8px; min-width: 42px; }
+      .penned-component-choices button.is-selected { background: var(--vellix-primary-text); color: var(--vellix-component-selected-text, #000); border-color: var(--vellix-primary-text); font-weight: 600; }
+      .penned-template-component:is([data-component-kind="singleSelect"], [data-component-kind="multiSelect"]) { margin: 6px 0 12px; padding: 0; }
+      .penned-template-component:is([data-component-kind="singleSelect"], [data-component-kind="multiSelect"]) .penned-component-question { margin-bottom: 6px; }
+      .penned-template-component:is([data-component-kind="singleSelect"], [data-component-kind="multiSelect"]) .penned-component-choices { gap: 6px; }
+      .penned-template-component:is([data-component-kind="singleSelect"], [data-component-kind="multiSelect"]) .penned-component-choices button { padding: 4px 12px; min-height: 30px; line-height: 1.35; border-radius: 18px; font-weight: 700; }
+      .penned-component-choices.is-rating button.is-selected { background: color-mix(in srgb,var(--vellix-primary-text) 16%,transparent); color: var(--vellix-primary-text); border-color: color-mix(in srgb,var(--vellix-primary-text) 35%,transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--vellix-primary-text) 16%,transparent); }
+      .penned-component-choices button[data-selected-multi="true"]::before { content: "\2713"; margin-right: 6px; }
+      .penned-component-choices button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+      .penned-template-component input[type="range"] { appearance: none; -webkit-appearance: none; display: block; width: 100%; min-width: 0; height: 44px; margin: 6px 0; background: transparent; color: inherit; accent-color: var(--vellix-primary-text); touch-action: pan-y; cursor: pointer; }
+      .penned-template-component input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: color-mix(in srgb,var(--vellix-primary-text) 18%,transparent); }
+      .penned-template-component input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 30px; height: 20px; margin-top: -7px; border: 0; border-radius: 10px; background: var(--vellix-primary-text); }
+      .penned-template-component input[type="range"]::-moz-range-track { height: 6px; border-radius: 3px; background: color-mix(in srgb,var(--vellix-primary-text) 18%,transparent); }
+      .penned-template-component input[type="range"]::-moz-range-thumb { width: 30px; height: 20px; border: 0; border-radius: 10px; background: var(--vellix-primary-text); }
+      .penned-component-value { display: block; font: inherit; font-weight: 700; text-align: right; }
+      .penned-component-value[hidden] { display: none; }
+      .penned-component-endpoints { display: flex; justify-content: space-between; gap: 12px; font-size: 0.85em; opacity: 0.65; }
+      .penned-component-endpoints span { max-width: 48%; overflow-wrap: anywhere; }
+      .tiptap-editor .penned-attachment {
+        display: block;
+        box-sizing: border-box;
+        max-width: 100%;
+        margin: 8px 0;
+        padding: 0;
+        background: none;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+        line-height: 0;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      .penned-attachment > img {
+        display: block;
+        max-width: 100%;
+        width: 100%;
+        height: auto;
+        object-fit: contain;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+      }
+      .penned-video-frame { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; max-height: 320px; overflow: hidden; background: transparent; }
+      .penned-video-frame > video, .penned-video-poster {
+        position: absolute; inset: 0; display: block; width: 100%; height: 100%; max-width: none; max-height: none;
+        margin: 0; padding: 0; border: 0; border-radius: 0; object-fit: contain; object-position: center; background: transparent;
+      }
+      .penned-video-cover { position: absolute; inset: 0; pointer-events: none; }
+      .penned-video-cover[hidden] { display: none; }
+      .penned-video-play { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        display: flex; align-items: center; justify-content: center; width: 56px; height: 56px;
+        margin: 0; padding: 0; border: 0; border-radius: 50%; background: #0008; color: white;
+        pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+      .penned-video-play span { display: block; width: 28px; height: 28px; background: currentColor;
+        mask-size: contain; mask-repeat: no-repeat; mask-position: center;
+        -webkit-mask-size: contain; -webkit-mask-repeat: no-repeat; -webkit-mask-position: center; }
+      .penned-video-play:focus-visible { outline: 2px solid var(--vellix-property-accent); outline-offset: 2px; }
+      .penned-attachment[data-kind="audio"][data-mode="player"] { min-width: min(100%, 250px); }
+      .penned-audio-pill {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) 32px 32px;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        min-height: 76px;
+        padding: 12px;
+        border: 1px solid color-mix(in srgb, var(--vellix-property-accent) 45%, transparent);
+        border-radius: 28px;
+        background: linear-gradient(110deg, #efabd91c, #b59ad91f);
+        color: var(--vellix-primary-text);
+        text-align: left;
+        line-height: 1.3;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .penned-audio-pill > audio { display: none !important; }
+      .penned-audio-pill button {
+        display: flex; align-items: center; justify-content: center;
+        width: 32px; height: 44px; min-width: 0; padding: 0; margin: 0;
+        color: inherit; background: transparent; border: 0; border-radius: 50%; cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .penned-audio-pill button.penned-audio-play { width: 44px; height: 44px; background: #e7b9ef; color: #24162e; }
+      .penned-audio-icon { display: block; width: 20px; height: 20px; flex: 0 0 20px; background: currentColor;
+        mask-size: contain; mask-position: center; mask-repeat: no-repeat;
+        -webkit-mask-size: contain; -webkit-mask-position: center; -webkit-mask-repeat: no-repeat; }
+      .penned-audio-play .penned-audio-icon { width: 22px; height: 22px; flex-basis: 22px; }
+      .penned-audio-pill .penned-audio-more { height: 32px; background: color-mix(in srgb, var(--vellix-property-accent) 12%, transparent); }
+      .penned-audio-info { min-width: 0; }
+      .penned-audio-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; line-height: 1.4; }
+      .penned-audio-timeline { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 1px; }
+      .penned-audio-time { flex: 0 0 auto; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; opacity: 0.8; }
+      .penned-audio-pill input[type="range"] { appearance: none; -webkit-appearance: none; flex: 1 1 0; min-width: 0; width: 0;
+        height: 28px; padding: 0; margin: 0; border: 0; background: transparent; cursor: pointer; touch-action: pan-y; }
+      .penned-audio-pill input[type="range"]::-webkit-slider-runnable-track { height: 5px; border-radius: 3px;
+        background: linear-gradient(to right, #e7b9ef var(--penned-audio-progress, 0%), color-mix(in srgb, var(--vellix-property-accent) 30%, transparent) var(--penned-audio-progress, 0%)); }
+      .penned-audio-pill input[type="range"]::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 9px; height: 9px; margin-top: -2px; border: 0; border-radius: 50%; background: #e7b9ef; }
+      .penned-audio-pill input[type="range"]::-moz-range-track { height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--vellix-property-accent) 30%, transparent); }
+      .penned-audio-pill input[type="range"]::-moz-range-progress { height: 5px; border-radius: 3px; background: #e7b9ef; }
+      .penned-audio-pill input[type="range"]::-moz-range-thumb { width: 9px; height: 9px; border: 0; border-radius: 50%; background: #e7b9ef; }
+      .penned-audio-pill :is(button, input):focus-visible { outline: 2px solid var(--vellix-property-accent); outline-offset: 2px; }
+      .penned-audio-pill input:disabled { opacity: 0.45; cursor: default; }
+      .penned-attachment.is-pdf > img { max-height: 220px; width: 100%; object-fit: contain; object-position: left; }
+      .penned-file-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 56px;
+        padding: 8px 12px;
+        border: 1px solid color-mix(in srgb, var(--vellix-primary-text) 18%, transparent);
+        border-radius: 8px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        line-height: 1.3;
+        cursor: pointer;
+      }
+      .penned-file-type { flex: 0 0 auto; font-size: 11px; font-weight: 700; opacity: 0.75; }
+      .penned-file-info { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
+      .penned-file-info strong { font-size: 14px; overflow-wrap: anywhere; }
+      .penned-file-info small { font-size: 12px; opacity: 0.65; }
+      .penned-attachment.ProseMirror-selectednode { outline: 2px solid #a970ff; outline-offset: 2px; }
+      .vellix-selection-mode .penned-attachment > :is(video, audio) { pointer-events: none; }
+      .vellix-selection-mode .penned-audio-pill { pointer-events: none; }
+      .vellix-selection-mode .penned-video-frame { pointer-events: none; }
     </style>
   </head>
   <body>
@@ -1091,7 +1304,7 @@
         const rules = new Map();
         let frame = 0;
 
-        function firstLineTop(text) {
+        function firstLineAlignment(text) {
           const first = [...text.querySelectorAll("p,h1,h2,h3,h4,h5,h6,pre")]
             .find((element) => element.getClientRects().length &&
               !element.closest('[contenteditable="false"]'));
@@ -1115,11 +1328,16 @@
               }
             }
           }
-          const textTop = text.getBoundingClientRect().top;
-          if (top !== null) return top - textTop;
+          // Ignore our own offset so the next measurement cannot feed it back
+          // into the layout. Measure the first line, not the full text height.
+          const textTop = text.getBoundingClientRect().top + parseFloat(getComputedStyle(text).paddingTop);
+          if (top !== null) return { populated: true, anchor: top - textTop };
+          const emptyLine = first.querySelector("br")?.getBoundingClientRect();
+          if (emptyLine?.height) return { populated: false, anchor: emptyLine.top + emptyLine.height / 2 - textTop };
           const firstStyle = getComputedStyle(first);
-          return first.getBoundingClientRect().top - textTop +
-            parseFloat(firstStyle.borderTopWidth) + parseFloat(firstStyle.paddingTop);
+          return { populated: false, anchor: first.getBoundingClientRect().top - textTop +
+            parseFloat(firstStyle.borderTopWidth) + parseFloat(firstStyle.paddingTop) +
+            (parseFloat(firstStyle.lineHeight) || parseFloat(firstStyle.fontSize) * 1.52) / 2 };
         }
 
         function update() {
@@ -1137,7 +1355,7 @@
                 `.vellix-callout[data-vellix-block-id="${CSS.escape(id)}"] {}`,
                 sheet.cssRules.length,
               );
-              entry = { rule: sheet.cssRules[index], text, top: null };
+              entry = { rule: sheet.cssRules[index], text, alignment: null };
               rules.set(id, entry);
               resize.observe(text);
             } else if (entry.text !== text) {
@@ -1153,16 +1371,20 @@
                 `var(--vellix-asset-${CSS.escape(icon)}, var(--vellix-asset-sparkle))`,
               );
             }
-            const top = firstLineTop(text);
-            if (top !== null && Number.isFinite(top) &&
-                (entry.top === null || Math.abs(top - entry.top) > 0.03)) {
-              measurements.push([entry, top]);
+            const alignment = firstLineAlignment(text);
+            if (alignment !== null && Number.isFinite(alignment.anchor) &&
+                (entry.alignment === null || entry.alignment.populated !== alignment.populated ||
+                  Math.abs(alignment.anchor - entry.alignment.anchor) > 0.03)) {
+              measurements.push([entry, alignment]);
             }
           }
           // Keep presentation outside ProseMirror's DOM so measuring never changes the document.
-          for (const [entry, top] of measurements) {
-            entry.top = top;
-            entry.rule.style.setProperty("--vellix-callout-first-line-top", `${top}px`);
+          for (const [entry, alignment] of measurements) {
+            entry.alignment = alignment;
+            // Populated text aligns to the whole icon box's top. Preserve the
+            // existing centered caret calculation only for the empty state.
+            entry.rule.style.setProperty("--vellix-callout-text-offset", `${alignment.populated ? 0 : Math.max(0, 21 - alignment.anchor)}px`);
+            entry.rule.style.setProperty("--vellix-callout-icon-offset", `${alignment.populated ? Math.max(0, alignment.anchor) : Math.max(0, alignment.anchor - 21)}px`);
           }
           for (const [id, entry] of rules) {
             if (active.has(id)) continue;
@@ -1190,6 +1412,16 @@
         schedule();
       })();
     </script>
+    <style>
+      .penned-inline-tag { color: #b59ad9; background: rgba(181,154,217,.12); border-radius: 4px; padding: 0 2px; cursor: pointer; font-weight: 600; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+      .penned-inline-tag:focus-visible { outline: 2px solid #b59ad9; outline-offset: 2px; }
+      .penned-tag-suggestions { position: absolute; z-index: 10000; box-sizing: border-box; max-height: 220px; overflow-y: auto; padding: 6px; background: #242424; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; box-shadow: 0 8px 24px #0006; font: 15px -apple-system, sans-serif; }
+      .penned-tag-suggestions button { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: #f3f3f3; border-radius: 6px; padding: 10px 12px; font: inherit; overflow-wrap: anywhere; }
+      .penned-tag-suggestions button[aria-selected=true] { background: rgba(181,154,217,.18); color: #d7c0f3; }
+      .penned-tag-destination { animation: penned-tag-arrival 2.4s ease-out; }
+      @keyframes penned-tag-arrival { 0%,35% { background-color: rgba(181,154,217,.22); } 100% { background-color: transparent; } }
+      @media (prefers-reduced-motion: reduce) { .penned-tag-destination { animation-timing-function: step-end; } }
+    </style>
     <link rel="stylesheet" href="./vellix-tables.css" />
     <script src="./vendor/formula-parser.min.js"></script>
     <script src="./table-formulas.js"></script>

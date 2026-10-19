@@ -96,6 +96,11 @@ nonisolated enum CalendarAgenda {
         (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: week.start) }
     }
 
+    static func initialVisibleDay(in week: DateInterval, now: Date = Date(), calendar: Calendar = .current) -> Date {
+        let today = calendar.startOfDay(for: now)
+        return today >= week.start && today < week.end ? today : week.start
+    }
+
     static func uniqueEvents(_ events: [CalendarEvent]) -> [CalendarEvent] {
         var unique: [String: CalendarEvent] = [:]
         for event in events {

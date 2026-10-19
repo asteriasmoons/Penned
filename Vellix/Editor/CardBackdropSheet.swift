@@ -18,13 +18,6 @@ struct CardBackdropSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Backdrop").font(.system(size: 19, weight: .semibold))
-                Spacer()
-                Button { dismiss() } label: { Image("xmarkwavy").renderingMode(.template).resizable().scaledToFit().frame(width: 18, height: 18).frame(width: 36, height: 36) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Close Backdrop")
-            }
-            Divider()
             modes
             ScrollView {
                 switch style.backdrop {
@@ -36,7 +29,7 @@ struct CardBackdropSheet: View {
             }.scrollIndicators(.hidden)
         }
         .padding(18).frame(maxWidth: 550, maxHeight: .infinity, alignment: .topLeading)
-        .background(VellixSurface.paperLifted)
+        .pennedSheet(title: "Backdrop", close: { dismiss() })
         .sheet(item: $colorTarget) { target in
             CardThreeModeColorPicker(selection: colorBinding(target), title: target == .start && style.backdrop != .gradient ? "Select Color" : target.title)
                 .presentationDetents([.medium, .large])
@@ -86,7 +79,7 @@ struct CardBackdropSheet: View {
                     .background(mode == style.backdrop ? Color.black : Color.clear, in: Capsule())
                 }.buttonStyle(.plain).accessibilityLabel(mode.title)
             }
-        }.padding(3).background(Color.white.opacity(0.12), in: Capsule())
+        }.padding(3).pennedSheetField(cornerRadius: 22)
     }
 
     private var solidColors: some View {
@@ -132,7 +125,7 @@ struct CardBackdropSheet: View {
                 Text(target.title)
                 Spacer()
                 RoundedRectangle(cornerRadius: 9).fill(Color(vellixHex: target == .start ? style.startColor : style.endColor)).frame(width: 48, height: 40)
-            }.foregroundStyle(.primary)
+            }.foregroundStyle(.primary).padding(.horizontal, 12).pennedSheetField()
         }.buttonStyle(.plain)
     }
 
@@ -171,7 +164,7 @@ struct CardBackdropSheet: View {
             Image(asset).renderingMode(.template).resizable().scaledToFit().frame(width: 18, height: 18)
             Text(title).font(.caption).lineLimit(2).multilineTextAlignment(.center)
         }.foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 70)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+            .pennedSheetField()
     }
     private func colorBinding(_ target: CardColorTarget) -> Binding<Color> {
         Binding(get: { Color(vellixHex: target == .start ? style.startColor : style.endColor) }, set: {

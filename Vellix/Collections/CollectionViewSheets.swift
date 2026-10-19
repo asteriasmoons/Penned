@@ -21,11 +21,17 @@ struct CollectionManagementSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                if !closesOnSelection { Section("Collection") { TextField("Collection name", text: $name) } }
+                if !closesOnSelection {
+                    Section {
+                        TextField("Collection name", text: $name)
+                    } header: {
+                        Text("Collection").pennedSheetSectionHeader()
+                    }.collectionFormRows().pennedSheetSectionBackground("collection-name")
+                }
                 if let snapshot {
-                    Section("Views") {
+                    Section {
                         ForEach(snapshot.views) { view in
-                            HStack {
+                            HStack(spacing: 12) {
                                 Button {
                                     do {
                                         try store.repository.selectView(collectionID: collectionID, viewID: view.id)
@@ -33,13 +39,13 @@ struct CollectionManagementSheet: View {
                                         if closesOnSelection { dismiss() }
                                     } catch { self.error = error.localizedDescription }
                                 } label: {
-                                    HStack {
+                                    HStack(spacing: 10) {
                                         LibraryIcon(name: view.kind.icon, size: 20)
                                         Text(view.name).foregroundStyle(.primary)
                                         if snapshot.record.activeViewID == view.id { LibraryIcon(name: "checkwavy", size: 18) }
                                     }
+                                    .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                                 }
-                                Spacer()
                                 Menu {
                                     Button("Edit View") { viewTarget = view }
                                     Button("Duplicate View") {
@@ -48,49 +54,59 @@ struct CollectionManagementSheet: View {
                                     Button("Move Up") { moveView(view.id, offset: -1) }.disabled(view.id == snapshot.views.first?.id)
                                     Button("Move Down") { moveView(view.id, offset: 1) }.disabled(view.id == snapshot.views.last?.id)
                                     Button("Delete View", role: .destructive) { deletingView = view }.disabled(snapshot.views.count == 1)
-                                } label: { LibraryIcon(name: "dotswavy", size: 22).frame(width: 44, height: 44) }
+                                } label: { LibraryIcon(name: "dotswavy", size: 22).frame(width: 44) }
                                 .accessibilityLabel("Actions for \(view.name)")
-                            }
+                            }.collectionFormRows(showsSeparator: true)
                         }.onMove { offsets, destination in
                             var ids = snapshot.views.map(\.id); ids.move(fromOffsets: offsets, toOffset: destination)
                             store.perform { try store.repository.reorder(collectionID: collectionID, table: "collectionViews", ids: ids) }
                         }
                         Menu {
                             ForEach(CollectionViewKind.allCases) { kind in
-                                Button { newViewKind = kind } label: { Label(kind.title, systemImage: kind.systemIcon) }
+                                Button { newViewKind = kind } label: {
+                                    Label { Text(kind.title) } icon: { LibraryIcon(name: kind.icon, size: 18) }
+                                }
                             }
-                        } label: { Label { Text("Add View") } icon: { LibraryIcon(name: "addwavy", size: 18) } }
-                    }
-                    Section("Shared Fields") {
+                        } label: {
+                            Label { Text("Add View") } icon: { LibraryIcon(name: "addwavy", size: 18) }
+                                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        }
+                    } header: {
+                        Text("Views").pennedSheetSectionHeader()
+                    }.collectionFormRows().pennedSheetSectionBackground("collection-views")
+                    Section {
                         HStack { LibraryIcon(name: "linedpages", size: 18); Text("Title"); Spacer(); Text("Document title").foregroundStyle(.secondary) }
+                            .collectionFormRows(showsSeparator: true)
                         ForEach(snapshot.fields) { field in
                             Button { fieldTarget = field } label: {
                                 HStack { LibraryIcon(name: field.resolvedIcon, size: 18); Text(field.name).foregroundStyle(.primary); Spacer(); Text(field.kind.title).foregroundStyle(.secondary) }
+                                    .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                             }
                             .contextMenu {
                                 Button("Move Up") { moveField(field.id, offset: -1) }.disabled(field.id == snapshot.fields.first?.id)
                                 Button("Move Down") { moveField(field.id, offset: 1) }.disabled(field.id == snapshot.fields.last?.id)
                             }
+                            .collectionFormRows(showsSeparator: true)
                         }.onMove { offsets, destination in
                             var ids = snapshot.fields.map(\.id); ids.move(fromOffsets: offsets, toOffset: destination)
                             store.perform { try store.repository.reorder(collectionID: collectionID, table: "collectionFields", ids: ids) }
                         }
                         Button { fieldTarget = CollectionField(collectionID: collectionID, name: "", kind: .text) } label: {
                             Label { Text("Add Field") } icon: { LibraryIcon(name: "addwavy", size: 18) }
+                                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                         }
-                    }
+                    } header: {
+                        Text("Shared Fields").pennedSheetSectionHeader()
+                    }.collectionFormRows().pennedSheetSectionBackground("collection-fields")
                 }
-                if let message = error ?? store.errorMessage { Text(message).foregroundStyle(.red) }
-            }.collectionForm().navigationTitle(closesOnSelection ? "Views" : "Collection")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") {
-                            do { try store.repository.rename(collectionID: collectionID, name: name); store.refresh(); dismiss() }
-                            catch { self.error = error.localizedDescription }
-                        }.disabled(name.trimmedNonEmpty == nil)
-                    }
-                    ToolbarItem(placement: .automatic) { EditButton() }
+                if let message = error ?? store.errorMessage { Text(message).foregroundStyle(.red).collectionFormRows() }
+            }.collectionForm(compact: true).pennedSheetGroupedSections()
+                .navigationTitle(closesOnSelection ? "Views" : "Collection")
+                .pennedSheet(title: closesOnSelection ? "Views" : "Collection", close: { dismiss() }) {
+                    Button("Done") {
+                        do { try store.repository.rename(collectionID: collectionID, name: name); store.refresh(); dismiss() }
+                        catch { self.error = error.localizedDescription }
+                    }.disabled(name.trimmedNonEmpty == nil)
                 }
                 .sheet(item: $fieldTarget) { CollectionFieldEditorSheet(store: store, field: $0) }
                 .sheet(item: $viewTarget) { view in
@@ -129,17 +145,14 @@ struct CollectionAddViewSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("View name", text: $name).focused($focused)
-                if let error { Text(error).foregroundStyle(.red) }
+                TextField("View name", text: $name).focused($focused).collectionFormRows()
+                if let error { Text(error).foregroundStyle(.red).collectionFormRows() }
             }.collectionForm().navigationTitle("Add \(kind.title) View")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Add") {
-                            do { _ = try store.repository.addView(collectionID: collectionID, name: name, kind: kind); store.refresh(); dismiss() }
-                            catch { self.error = error.localizedDescription }
-                        }.disabled(name.trimmedNonEmpty == nil)
-                    }
+                .pennedSheet(title: "Add \(kind.title) View", close: { dismiss() }) {
+                    Button("Add") {
+                        do { _ = try store.repository.addView(collectionID: collectionID, name: name, kind: kind); store.refresh(); dismiss() }
+                        catch { self.error = error.localizedDescription }
+                    }.disabled(name.trimmedNonEmpty == nil)
                 }.onAppear { focused = true }
         }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.medium])
     }
@@ -159,43 +172,47 @@ struct CollectionViewEditorSheet: View {
         _view = State(initialValue: view); _configuration = State(initialValue: view.configuration)
     }
     private var orderedFields: [CollectionField] { configuration.visibleFieldIDs.compactMap(snapshot.field) }
+    private var hiddenFields: [CollectionField] { snapshot.fields.filter { !configuration.visibleFieldIDs.contains($0.id) } }
     var body: some View {
         NavigationStack {
             Form {
                 Section("View") {
-                    TextField("View name", text: $view.name)
+                    TextField("View name", text: $view.name).collectionFormRows(showsSeparator: true)
                     Picker("Presentation", selection: $view.kind) { ForEach(CollectionViewKind.allCases) { Text($0.title).tag($0) } }.pickerStyle(.segmented)
-                }
+                }.collectionFormRows()
                 Section(view.kind == .table ? "Columns" : "Card Properties") {
-                    Text("Title").foregroundStyle(.secondary)
+                    Text("Title").foregroundStyle(.secondary).collectionFormRows(showsSeparator: !snapshot.fields.isEmpty)
                     ForEach(orderedFields) { field in
                         Toggle(field.name, isOn: visibility(field.id))
                             .contextMenu {
                                 Button("Move Up") { moveVisible(field.id, -1) }.disabled(field.id == configuration.visibleFieldIDs.first)
                                 Button("Move Down") { moveVisible(field.id, 1) }.disabled(field.id == configuration.visibleFieldIDs.last)
                             }
+                            .collectionFormRows(showsSeparator: field.id != orderedFields.last?.id || !hiddenFields.isEmpty)
                     }.onMove { configuration.visibleFieldIDs.move(fromOffsets: $0, toOffset: $1) }
-                    ForEach(snapshot.fields.filter { !configuration.visibleFieldIDs.contains($0.id) }) { field in Toggle(field.name, isOn: visibility(field.id)) }
-                }
+                    ForEach(hiddenFields) { field in
+                        Toggle(field.name, isOn: visibility(field.id)).collectionFormRows(showsSeparator: field.id != hiddenFields.last?.id)
+                    }
+                }.collectionFormRows()
                 if view.kind == .gallery {
                     Section("Gallery") {
-                        Picker("Columns", selection: $configuration.galleryColumns) { ForEach(1...3, id: \.self) { Text("\($0)").tag($0) } }.pickerStyle(.segmented)
-                        Toggle("Show Covers", isOn: $configuration.showsCover)
+                        Picker("Columns", selection: $configuration.galleryColumns) { ForEach(1...3, id: \.self) { Text("\($0)").tag($0) } }.pickerStyle(.segmented).collectionFormRows(showsSeparator: true)
+                        Toggle("Show Covers", isOn: $configuration.showsCover).collectionFormRows(showsSeparator: true)
                         Toggle("Compact Cards", isOn: $configuration.compactCards)
-                    }
+                    }.collectionFormRows()
                 }
                 Section("Filters") {
-                    Picker("Match", selection: $configuration.matchAll) { Text("All Conditions").tag(true); Text("Any Condition").tag(false) }.pickerStyle(.segmented)
+                    Picker("Match", selection: $configuration.matchAll) { Text("All Conditions").tag(true); Text("Any Condition").tag(false) }.pickerStyle(.segmented).collectionFormRows(showsSeparator: true)
                     ForEach(configuration.filters) { filter in
                         Button { filterTarget = filter } label: {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(snapshot.field(filter.fieldID)?.name ?? "Title").fontWeight(.semibold)
                                 Text(filter.operation.title + (filter.operation.needsValue ? " " + filterCaption(filter) : "")).font(.subheadline).foregroundStyle(.secondary)
                             }
-                        }
+                        }.collectionFormRows(showsSeparator: true)
                     }.onDelete { configuration.filters.remove(atOffsets: $0) }
                     Button { filterTarget = CollectionFilter() } label: { Label { Text("Add Filter") } icon: { LibraryIcon(name: "addwavy", size: 18) } }
-                }
+                }.collectionFormRows()
                 Section("Sort Priority") {
                     ForEach($configuration.sorts) { $sort in
                         VStack(alignment: .leading, spacing: 8) {
@@ -209,22 +226,20 @@ struct CollectionViewEditorSheet: View {
                             Button("Move Up") { moveSort(sort.id, -1) }.disabled(sort.id == configuration.sorts.first?.id)
                             Button("Move Down") { moveSort(sort.id, 1) }.disabled(sort.id == configuration.sorts.last?.id)
                         }
+                        .collectionFormRows(showsSeparator: true)
                     }.onMove { configuration.sorts.move(fromOffsets: $0, toOffset: $1) }
                         .onDelete { configuration.sorts.remove(atOffsets: $0) }
                     Button { configuration.sorts.append(CollectionSort()) } label: { Label { Text("Add Sort") } icon: { LibraryIcon(name: "addwavy", size: 18) } }
-                }
-                if let error { Text(error).foregroundStyle(.red) }
+                }.collectionFormRows()
+                if let error { Text(error).foregroundStyle(.red).collectionFormRows() }
             }.collectionForm().navigationTitle("Edit View")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Save") {
-                            var saved = view; saved.configuration = configuration
-                            do { try store.repository.saveView(saved); store.refresh(); dismiss() }
-                            catch { self.error = error.localizedDescription }
-                        }.disabled(view.name.trimmedNonEmpty == nil)
-                    }
-                    ToolbarItem(placement: .automatic) { EditButton() }
+                .pennedSheet(title: "Edit View", close: { dismiss() }) {
+                    EditButton()
+                    Button("Save") {
+                        var saved = view; saved.configuration = configuration
+                        do { try store.repository.saveView(saved); store.refresh(); dismiss() }
+                        catch { self.error = error.localizedDescription }
+                    }.disabled(view.name.trimmedNonEmpty == nil)
                 }
                 .sheet(item: $filterTarget) { filter in
                     CollectionFilterSheet(snapshot: snapshot, filter: filter) { saved in
@@ -275,17 +290,14 @@ struct CollectionFilterSheet: View {
                 }.onChange(of: filter.fieldID) { _, _ in
                     filter.operation = field.kind.operators.first!
                     filter.value = field.kind == .checkbox ? CollectionValue(checked: false) : CollectionValue()
-                }
-                Picker("Condition", selection: $filter.operation) { ForEach(field.kind.operators) { Text($0.title).tag($0) } }
-                if filter.operation.needsValue { Section("Value") { CollectionValueInput(field: field, value: $filter.value) } }
-                if let message = field.filterValidation(filter) { Text(message).font(.footnote).foregroundStyle(.secondary) }
-                Button("Remove Filter", role: .destructive) { onDelete(); dismiss() }
+                }.collectionFormRows(showsSeparator: true)
+                Picker("Condition", selection: $filter.operation) { ForEach(field.kind.operators) { Text($0.title).tag($0) } }.collectionFormRows()
+                if filter.operation.needsValue { Section("Value") { CollectionValueInput(field: field, value: $filter.value) }.collectionFormRows() }
+                if let message = field.filterValidation(filter) { Text(message).font(.footnote).foregroundStyle(.secondary).collectionFormRows(showsSeparator: true) }
+                Button("Remove Filter", role: .destructive) { onDelete(); dismiss() }.collectionFormRows()
             }.collectionForm().navigationTitle("Filter")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { onSave(filter); dismiss() }.disabled(field.filterValidation(filter) != nil)
-                    }
+                .pennedSheet(title: "Filter", close: { dismiss() }) {
+                    Button("Done") { onSave(filter); dismiss() }.disabled(field.filterValidation(filter) != nil)
                 }
         }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.medium, .large])
     }

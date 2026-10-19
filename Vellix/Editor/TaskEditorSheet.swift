@@ -33,7 +33,7 @@ struct TaskEditorSheet: View {
     @State private var anchorMonth: Int
     @State private var isConfirming = false
     @State private var selectedDetent: PresentationDetent
-    private let accent = Color(vellixHex: "#714FAB")
+    private let accent = PennedSheetStyle.accent
 
     init(model: DocumentEditorModel, notifications: TaskNotificationsManager, request: TaskEditorRequest) {
         self.model = model
@@ -73,7 +73,6 @@ struct TaskEditorSheet: View {
         sheetContent
         .tint(accent)
         .presentationDragIndicator(.visible)
-        .presentationCornerRadius(24)
         .presentationDetents([.height(290), .fraction(0.58), .large], selection: $selectedDetent)
         .interactiveDismissDisabled(isConfirming)
     }
@@ -93,8 +92,6 @@ struct TaskEditorSheet: View {
 
     private var sheetContent: some View {
         VStack(spacing: 16) {
-            header
-            Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) { panelContent }.padding(.bottom, 12)
             }.scrollIndicators(.hidden)
@@ -103,22 +100,20 @@ struct TaskEditorSheet: View {
         .font(.system(.body, design: .rounded))
         .foregroundStyle(.white)
         .frame(maxWidth: 620, maxHeight: .infinity, alignment: .top)
-        .background(.ultraThinMaterial)
-        .preferredColorScheme(.dark)
-        .disabled(isConfirming)
-    }
-
-    private var header: some View {
-        HStack {
-            Text(panel.title).font(.system(size: 20, weight: .bold, design: .rounded))
-            Spacer()
+        .pennedSheet(title: panel.title, closeDisabled: isConfirming, close: { dismiss() }) {
             if panel != .conversion && panel != .scheduling {
-                Button { panel = .scheduling } label: { LibraryIcon(name: "chevleft", size: 20) }
-                    .accessibilityLabel("Back to Task")
+                Button("Back") { panel = .scheduling }
             }
-            Button { dismiss() } label: { LibraryIcon(name: "xmarkwavy", size: 23).foregroundStyle(.secondary) }
-                .accessibilityLabel("Close")
-        }.buttonStyle(.plain)
+            if panel == .reminder {
+                Button(isConfirming ? "Saving..." : "Set") { setReminder() }
+                    .disabled(isConfirming || context.metadata == nil)
+            }
+            if panel == .customRepeat {
+                Button(isConfirming ? "Saving..." : "Confirm") { applyCustomRepeat() }
+                    .disabled(isConfirming || context.metadata == nil || (frequency == .weekly && weekdays.isEmpty))
+            }
+        }
+        .disabled(isConfirming)
     }
 
     @ViewBuilder private var panelContent: some View {
@@ -137,7 +132,6 @@ struct TaskEditorSheet: View {
                 model.convertChecklist(context, toTask: true)
                 panel = .scheduling
             }
-            Button("Cancel") { dismiss() }.frame(maxWidth: .infinity, minHeight: 44)
         }
     }
 
@@ -160,25 +154,15 @@ struct TaskEditorSheet: View {
     private var reminder: some View {
         VStack(spacing: 12) {
             DatePicker("Reminder Date", selection: $reminderDate, displayedComponents: [.date])
-                .datePickerStyle(.graphical)
+                .datePickerStyle(.graphical).pennedSheetField()
             DatePicker("Time", selection: $reminderDate, displayedComponents: [.hourAndMinute])
-                .padding(12).background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                .padding(12).pennedSheetField()
             if context.metadata?.reminderEnabled == true {
                 Button("Remove Reminder", role: .destructive) {
                     saveConfiguration(reminder: false,
                         scheduledDate: context.metadata?.recurrence == nil ? nil : context.metadata?.scheduledDate,
                         recurrence: context.metadata?.recurrence)
                 }.frame(maxWidth: .infinity, minHeight: 44)
-            }
-            actions(confirm: "Set") {
-                var rule = context.metadata?.recurrence
-                if rule != nil {
-                    rule?.anchor = reminderDate.timeIntervalSince1970
-                    rule?.hour = Calendar.current.component(.hour, from: reminderDate)
-                    rule?.minute = Calendar.current.component(.minute, from: reminderDate)
-                    rule?.timeZoneID = TimeZone.current.identifier
-                }
-                saveConfiguration(reminder: true, scheduledDate: reminderDate, recurrence: rule)
             }
         }
     }
@@ -209,12 +193,12 @@ struct TaskEditorSheet: View {
                     Text(value.title).tag(value)
                 }
             }.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12).background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                .padding(12).pennedSheetField()
             Stepper(value: $interval, in: 1...365) {
                 Text("Every \(interval) \(unit)")
-            }.padding(12).background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+            }.padding(12).pennedSheetField()
             DatePicker("Scheduled Time", selection: $scheduledTime, displayedComponents: [.hourAndMinute])
-                .padding(12).background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                .padding(12).pennedSheetField()
             if frequency == .weekly {
                 HStack(spacing: 4) {
                     ForEach([2, 3, 4, 5, 6, 7, 1], id: \.self) { day in
@@ -223,7 +207,8 @@ struct TaskEditorSheet: View {
                         } label: {
                             Text(Calendar.current.veryShortWeekdaySymbols[day - 1])
                                 .frame(maxWidth: .infinity, minHeight: 38)
-                                .background(weekdays.contains(day) ? accent.opacity(0.25) : .white.opacity(0.05), in: Circle())
+                                .background(weekdays.contains(day) ? accent.opacity(0.25) : .clear, in: Circle())
+                                .pennedSheetField(cornerRadius: 19)
                         }.buttonStyle(.plain).accessibilityLabel(Calendar.current.weekdaySymbols[day - 1])
                             .accessibilityAddTraits(weekdays.contains(day) ? .isSelected : [])
                     }
@@ -233,15 +218,13 @@ struct TaskEditorSheet: View {
                 if frequency == .yearly {
                     Picker("Month", selection: $anchorMonth) {
                         ForEach(1...12, id: \.self) { month in Text(Calendar.current.monthSymbols[month - 1]).tag(month) }
-                    }.pickerStyle(.menu)
+                    }.pickerStyle(.menu).padding(12).pennedSheetField()
                 }
-                Stepper("Day \(anchorDay)", value: $anchorDay, in: 1...31)
+                Stepper("Day \(anchorDay)", value: $anchorDay, in: 1...31).padding(12).pennedSheetField()
             }
             Text("When you complete your task, it schedules the next occurrence using your configuration, based on the completed task's scheduled date.")
                 .font(.system(size: 15, design: .rounded)).foregroundStyle(accent)
                 .padding(12).background(accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-            Divider()
-            actions(confirm: "Confirm") { applyCustomRepeat() }
         }
     }
 
@@ -276,23 +259,19 @@ struct TaskEditorSheet: View {
                 Spacer(minLength: 4)
                 LibraryIcon(name: "chevright", size: 16).foregroundStyle(.secondary)
             }.padding(12).frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                .pennedSheetField()
         }.buttonStyle(.plain)
     }
 
-    private func actions(confirm: String, action: @escaping () -> Void) -> some View {
-        HStack(spacing: 12) {
-            Button("Cancel") { dismiss() }
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-            Button(action: action) {
-                if isConfirming { ProgressView().tint(.black) }
-                else { Text(confirm) }
-            }
-                .foregroundStyle(.black).frame(maxWidth: .infinity, minHeight: 44)
-                .background(accent, in: RoundedRectangle(cornerRadius: 8))
-                .disabled(isConfirming || context.metadata == nil || (panel == .customRepeat && frequency == .weekly && weekdays.isEmpty))
-        }.buttonStyle(.plain)
+    private func setReminder() {
+        var rule = context.metadata?.recurrence
+        if rule != nil {
+            rule?.anchor = reminderDate.timeIntervalSince1970
+            rule?.hour = Calendar.current.component(.hour, from: reminderDate)
+            rule?.minute = Calendar.current.component(.minute, from: reminderDate)
+            rule?.timeZoneID = TimeZone.current.identifier
+        }
+        saveConfiguration(reminder: true, scheduledDate: reminderDate, recurrence: rule)
     }
 
     private func applyStandardRepeat(_ frequency: TaskRepeatFrequency) {

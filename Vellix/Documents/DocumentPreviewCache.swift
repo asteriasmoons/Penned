@@ -28,6 +28,9 @@ final class DocumentPreviewCache: ObservableObject {
         self.attachments = attachments
         self.collections = collections
         session.attachmentStore = attachments
+        session.attachmentResolver = { [weak documents] id, json in
+            try documents?.editorAttachments(documentID: id, json: json, store: attachments) ?? []
+        }
         session.preparesInteractivePresentation = false
         memory.totalCostLimit = 32 * 1024 * 1024
         latestImages.totalCostLimit = 16 * 1024 * 1024
@@ -47,6 +50,7 @@ final class DocumentPreviewCache: ObservableObject {
     }
 
     func content(for document: DocumentRecord) -> DocumentPreviewContent {
+        guard documents.spaceID == nil || documents.spaceID == document.spaceID else { return DocumentPreviewContent(document: document, children: [], collections: []) }
         if let cached = contents[document.id], cached.document.updatedAt >= document.updatedAt { return cached }
         guard let result = try? collections.previewContent(for: document, documents: documents) else {
             return contents[document.id] ?? DocumentPreviewContent(document: document, children: [], collections: [])
@@ -97,9 +101,27 @@ final class DocumentPreviewCache: ObservableObject {
         presentationEpoch += 1
     }
 
+    func resetForSpaceChange() {
+        pending.values.forEach { $0.cancel() }
+        pending.removeAll(); tail = nil; contents.removeAll()
+        beginLibraryPresentation()
+        contentRevision += 1
+    }
+
+    func remove(documentIDs: Set<String>) {
+        for id in documentIDs {
+            contents[id] = nil; latestFiles[id] = nil
+            latestImages.removeObject(forKey: id as NSString)
+        }
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        for file in files where documentIDs.contains(String(file.lastPathComponent.prefix(36))) { try? FileManager.default.removeItem(at: file) }
+        memory.removeAllObjects(); resetForSpaceChange()
+    }
+
     func prewarm(_ records: [DocumentRecord]) {
         // Metadata is ready before Home draws; image rendering stays off its first-frame path.
         for record in records {
+            guard documents.spaceID == nil || documents.spaceID == record.spaceID else { continue }
             _ = content(for: record)
             let cached = cachedImage(for: record)
             if cached == nil, record.appearance.displaysCover { _ = CardImageLoader.image(path: record.cover, store: attachments) }
@@ -111,6 +133,7 @@ final class DocumentPreviewCache: ObservableObject {
     }
 
     func image(for document: DocumentRecord) async -> CGImage? {
+        guard documents.spaceID == nil || documents.spaceID == document.spaceID else { return nil }
         let content = content(for: document)
         let key = content.cacheKey
         if let cached = memory.object(forKey: key as NSString) { return cached.image }
@@ -234,7 +257,7 @@ final class DocumentPreviewCache: ObservableObject {
                 context.drawImage(glyph, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
                 context.globalCompositeOperation = 'source-in';
                 context.fillStyle = callout.dataset.calloutColor || '#FFFFFF';
-                context.globalAlpha = 0.25;
+                context.globalAlpha = 1;
                 context.fillRect(0, 0, canvas.width, canvas.height);
                 const image = document.createElement('img');
                 image.className = 'vellix-preview-callout-icon';
@@ -393,7 +416,10 @@ struct LibrarySnapshotHeader: View {
                 }
                 .frame(width: 320, height: 180).clipped().clipShape(RoundedRectangle(cornerRadius: 7))
             }
-            Text(document.title)
+            HStack(spacing: 8) {
+                if document.dailyNoteDate != nil { LibraryIcon(name: "mooncal", size: 20) }
+                Text(document.title)
+            }
                 .font(.system(size: 26, weight: .black, design: document.appearance.fontStyle.design))
                 .foregroundStyle(Color(vellixHex: document.appearance.textColorHex))
                 .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)

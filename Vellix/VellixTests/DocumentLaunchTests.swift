@@ -179,6 +179,33 @@ struct DocumentLaunchTests {
         #expect(key == content.cacheKey)
     }
 
+    @Test func calloutRendererRevisionInvalidatesOnlyAffectedImages() throws {
+        let document = DocumentRecord(title: "Callout preview")
+        let unchanged = DocumentPreviewContent.cacheKey(document, children: [])
+        var callout = document
+        callout.tipTapJSON = try TipTapContentAnalyzer.makeDocumentJSON(content: [[
+            "type": "callout", "attrs": ["id": "callout", "icon": "sparkle", "color": "#FF5EAB"],
+            "content": [["type": "paragraph", "content": [["type": "text", "text": "A note"]]]]
+        ]])
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let metadata = try encoder.encode([CollectionSnapshot]())
+        let oldInputs = [["library-preview-v10-collections", metadata.base64EncodedString(), callout.title, callout.tipTapJSON,
+            callout.appearanceJSON ?? "", callout.cover ?? "", callout.cardStyleJSON ?? "", callout.icon ?? ""]]
+        let oldKey = callout.id + "-" + SHA256.hash(data: try encoder.encode(oldInputs)).map { String(format: "%02x", $0) }.joined()
+        #expect(DocumentPreviewContent.cacheKey(callout, children: []) != oldKey)
+        for revision in ["callout-presentation-v2", "callout-presentation-v3", "callout-presentation-v4", "callout-presentation-v5"] {
+            let previousRendererInputs = [oldInputs[0] + (callout.spaceID.map { [$0] } ?? []) + [revision]]
+            let previousRendererKey = callout.id + "-" + SHA256.hash(data: try encoder.encode(previousRendererInputs)).map { String(format: "%02x", $0) }.joined()
+            #expect(DocumentPreviewContent.cacheKey(callout, children: []) != previousRendererKey)
+        }
+        #expect(DocumentPreviewContent.cacheKey(document, children: []) == unchanged)
+        let nested = try TipTapContentAnalyzer.makeDocumentJSON(content: [["type": "blockquote", "content": [[
+            "type": "plainCallout", "content": [["type": "paragraph"]]
+        ]]]])
+        #expect(TipTapContentAnalyzer.hasCallouts(in: nested))
+        #expect(!TipTapContentAnalyzer.hasCallouts(in: document.tipTapJSON))
+    }
+
     @Test func inlineRendererRevisionInvalidatesAffectedImagesButKeepsOtherPreviewKeys() throws {
         func oldKey(_ document: DocumentRecord) throws -> String {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
@@ -201,6 +228,27 @@ struct DocumentLaunchTests {
         ]]]])
         #expect(TipTapContentAnalyzer.hasInlineProperties(in: nested))
         #expect(!TipTapContentAnalyzer.hasInlineProperties(in: plain.tipTapJSON))
+    }
+
+    @Test func componentRendererRevisionRefreshesTemplatesWithoutInvalidatingOrdinaryPreviews() throws {
+        func previousKey(_ document: DocumentRecord, revision: String? = nil) throws -> String {
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+            let metadata = try encoder.encode([CollectionSnapshot]())
+            let inputs = [["library-preview-v10-collections", metadata.base64EncodedString(), document.title, document.tipTapJSON,
+                document.appearanceJSON ?? "", document.cover ?? "", document.cardStyleJSON ?? "", document.icon ?? ""]
+                + (document.spaceID.map { [$0] } ?? []) + (revision.map { [$0] } ?? [])]
+            return document.id + "-" + SHA256.hash(data: try encoder.encode(inputs)).map { String(format: "%02x", $0) }.joined()
+        }
+        let plain = DocumentRecord(title: "Ordinary document")
+        #expect(DocumentPreviewContent.cacheKey(plain, children: []) == (try previousKey(plain)))
+        var template = plain
+        template.tipTapJSON = try TipTapContentAnalyzer.makeDocumentJSON(content: [["type": "templateComponent", "attrs": [
+            "id": "slider", "definition": TemplateComponentDefinition(kind: .slider).object, "response": NSNull()
+        ]]])
+        #expect(DocumentPreviewContent.cacheKey(template, children: []) != (try previousKey(template)))
+        #expect(DocumentPreviewContent.cacheKey(template, children: []) != (try previousKey(template, revision: "template-component-presentation-v2")))
+        #expect(DocumentPreviewContent.cacheKey(template, children: []) != (try previousKey(template, revision: "template-component-presentation-v3")))
+        #expect(DocumentPreviewContent.cacheKey(plain, children: []) == (try previousKey(plain)))
     }
 
     @Test func nativeInlinePreviewRendersColoredChipsAndWrapsAtPhoneAndTabletWidths() throws {

@@ -19,6 +19,7 @@
 		CFB7C20530D0A10000A17A01 /* Calendar/CalendarAgendaRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7C21530D0A10000A17A01 /* Calendar/CalendarAgendaRows.swift */; };
 		CFB7C20630D0A10000A17A01 /* Calendar/CalendarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7C21630D0A10000A17A01 /* Calendar/CalendarView.swift */; };
 		CFB7C20730D0A10000A17A01 /* Calendar/CalendarEventDetailSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7C21730D0A10000A17A01 /* Calendar/CalendarEventDetailSheet.swift */; };
+		CFB7D10330E0100000A17001 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = CFB7D10230E0100000A17001 /* Supabase */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -39,6 +40,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		CF8C0EA7308548190058BF74 /* PennedMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PennedMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CFA16D67301AC182007825F0 /* Vellix.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Vellix.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CFA16D74301AC183007825F0 /* VellixTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VellixTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CFA16D7E301AC183007825F0 /* VellixUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VellixUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -53,6 +55,7 @@
 		CFB7C21530D0A10000A17A01 /* Calendar/CalendarAgendaRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Calendar/CalendarAgendaRows.swift; sourceTree = "<group>"; };
 		CFB7C21630D0A10000A17A01 /* Calendar/CalendarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Calendar/CalendarView.swift; sourceTree = "<group>"; };
 		CFB7C21730D0A10000A17A01 /* Calendar/CalendarEventDetailSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Calendar/CalendarEventDetailSheet.swift; sourceTree = "<group>"; };
+		CFB7D20130E0200000A17001 /* Vellix/Configuration/Supabase.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Vellix/Configuration/Supabase.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -66,18 +69,31 @@
 				Calendar/CalendarEventNoteRepository.swift,
 				Calendar/CalendarModel.swift,
 				Calendar/CalendarView.swift,
+				Configuration/Supabase.xcconfig,
 				Editor/TaskEditorSheet.swift,
 				Resources/LaunchInfo.plist,
 				Tasks/DocumentTask.swift,
 				Tasks/DocumentTaskRepository.swift,
 				Tasks/TaskNotificationsManager.swift,
+				VellixTests/AccountTests.swift,
+				VellixTests/AttachmentBridgeTests.swift,
+				VellixTests/AttachmentTests.swift,
 				VellixTests/CalendarTests.swift,
 				VellixTests/CollectionTests.swift,
 				VellixTests/DocumentLaunchTests.swift,
 				VellixTests/DocumentPreviewTests.swift,
+				VellixTests/DocumentTagTests.swift,
 				VellixTests/DocumentTaskTests.swift,
 				VellixTests/FolderLibraryTests.swift,
+				VellixTests/LibraryOwnershipTests.swift,
+				VellixTests/LibrarySyncTests.swift,
+				VellixTests/LibraryWorkspaceTests.swift,
+				VellixTests/PadWorkspaceTests.swift,
 				VellixTests/PageCardTests.swift,
+				VellixTests/SpaceEnvironmentTests.swift,
+				VellixTests/SpaceTests.swift,
+				VellixTests/SupabaseAuthTests.swift,
+				VellixTests/TagBridgeTests.swift,
 				VellixTests/VellixTests.swift,
 				VellixUITests/VellixUITests.swift,
 				VellixUITests/VellixUITestsLaunchTests.swift,
@@ -87,13 +103,25 @@
 		CFA16DA6301AC3D4007825F0 /* Exceptions for "Vellix" folder in "VellixTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				VellixTests/AccountTests.swift,
+				VellixTests/AttachmentBridgeTests.swift,
+				VellixTests/AttachmentTests.swift,
 				VellixTests/CalendarTests.swift,
 				VellixTests/CollectionTests.swift,
 				VellixTests/DocumentLaunchTests.swift,
 				VellixTests/DocumentPreviewTests.swift,
+				VellixTests/DocumentTagTests.swift,
 				VellixTests/DocumentTaskTests.swift,
 				VellixTests/FolderLibraryTests.swift,
+				VellixTests/LibraryOwnershipTests.swift,
+				VellixTests/LibrarySyncTests.swift,
+				VellixTests/LibraryWorkspaceTests.swift,
+				VellixTests/PadWorkspaceTests.swift,
 				VellixTests/PageCardTests.swift,
+				VellixTests/SpaceEnvironmentTests.swift,
+				VellixTests/SpaceTests.swift,
+				VellixTests/SupabaseAuthTests.swift,
+				VellixTests/TagBridgeTests.swift,
 				VellixTests/VellixTests.swift,
 			);
 			target = CFA16D73301AC183007825F0 /* VellixTests */;
@@ -109,6 +137,11 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		CF8C0EA8308548190058BF74 /* PennedMac */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PennedMac;
+			sourceTree = "<group>";
+		};
 		CFA16D69301AC182007825F0 /* Vellix */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -122,11 +155,19 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		CF8C0EA4308548190058BF74 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		CFA16D64301AC182007825F0 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				CFA16E13301AD193007825F0 /* GRDB in Frameworks */,
+				CFB7D10330E0100000A17001 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -147,13 +188,23 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		CF8C0953308486D30058BF74 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				CFB7D20130E0200000A17001 /* Vellix/Configuration/Supabase.xcconfig */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
 		CFA16D5E301AC182007825F0 = {
 			isa = PBXGroup;
 			children = (
+				CF8C0EA8308548190058BF74 /* PennedMac */,
 				CFA16D68301AC182007825F0 /* Products */,
 				CFA16D69301AC182007825F0 /* Vellix */,
 				CFB7A22030D0A10000A17A01 /* Task Sources */,
 				CFB7C22030D0A10000A17A01 /* Calendar Sources */,
+				CF8C0953308486D30058BF74 /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -163,6 +214,7 @@
 				CFA16D67301AC182007825F0 /* Vellix.app */,
 				CFA16D74301AC183007825F0 /* VellixTests.xctest */,
 				CFA16D7E301AC183007825F0 /* VellixUITests.xctest */,
+				CF8C0EA7308548190058BF74 /* PennedMac.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -197,6 +249,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		CF8C0EA6308548190058BF74 /* PennedMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CF8C0EB13085481B0058BF74 /* Build configuration list for PBXNativeTarget "PennedMac" */;
+			buildPhases = (
+				CF8C0EA3308548190058BF74 /* Sources */,
+				CF8C0EA4308548190058BF74 /* Frameworks */,
+				CF8C0EA5308548190058BF74 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				CF8C0EA8308548190058BF74 /* PennedMac */,
+			);
+			name = PennedMac;
+			packageProductDependencies = (
+			);
+			productName = PennedMac;
+			productReference = CF8C0EA7308548190058BF74 /* PennedMac.app */;
+			productType = "com.apple.product-type.application";
+		};
 		CFA16D66301AC182007825F0 /* Vellix */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = CFA16D88301AC183007825F0 /* Build configuration list for PBXNativeTarget "Vellix" */;
@@ -215,6 +289,7 @@
 			name = Vellix;
 			packageProductDependencies = (
 				CFA16E12301AD193007825F0 /* GRDB */,
+				CFB7D10230E0100000A17001 /* Supabase */,
 			);
 			productName = Vellix;
 			productReference = CFA16D67301AC182007825F0 /* Vellix.app */;
@@ -267,9 +342,12 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2660;
+				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
+					CF8C0EA6308548190058BF74 = {
+						CreatedOnToolsVersion = 27.0;
+					};
 					CFA16D66301AC182007825F0 = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -293,6 +371,7 @@
 			mainGroup = CFA16D5E301AC182007825F0;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				CFB7D10130E0100000A17001 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 				CFA16E11301AD193007825F0 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -303,11 +382,19 @@
 				CFA16D66301AC182007825F0 /* Vellix */,
 				CFA16D73301AC183007825F0 /* VellixTests */,
 				CFA16D7D301AC183007825F0 /* VellixUITests */,
+				CF8C0EA6308548190058BF74 /* PennedMac */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		CF8C0EA5308548190058BF74 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		CFA16D65301AC182007825F0 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -332,6 +419,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		CF8C0EA3308548190058BF74 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		CFA16D63301AC182007825F0 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -380,6 +474,102 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		CF8C0EAF3085481B0058BF74 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTOMATION_APPLE_EVENTS = YES;
+				CODE_SIGN_ENTITLEMENTS = PennedMac/PennedMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PLRRW8XCVU;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = im.lystaria.PennedMac;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		CF8C0EB03085481B0058BF74 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTOMATION_APPLE_EVENTS = YES;
+				CODE_SIGN_ENTITLEMENTS = PennedMac/PennedMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PLRRW8XCVU;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
+				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = im.lystaria.PennedMac;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 		CFA16D86301AC183007825F0 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -498,9 +688,12 @@
 		};
 		CFA16D89301AC183007825F0 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = CFB7D20130E0200000A17001 /* Vellix/Configuration/Supabase.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTOMATION_APPLE_EVENTS = NO;
+				CODE_SIGN_ENTITLEMENTS = Vellix/Vellix.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = PLRRW8XCVU;
@@ -515,6 +708,7 @@
 				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
 				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = YES;
 				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
@@ -522,6 +716,7 @@
 				INFOPLIST_FILE = Vellix/Resources/LaunchInfo.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Penned;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Penned displays your Apple Calendar events alongside document tasks and links your event notes. Penned does not modify your Apple Calendar events.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Penned displays your calendar events and links event notes.";
 				"INFOPLIST_KEY_NSCalendarsUsageDescription[sdk=macosx*]" = "Penned displays your calendar events and links event notes.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -533,6 +728,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
@@ -541,6 +737,12 @@
 				PRODUCT_BUNDLE_IDENTIFIER = im.lystaria.Vellix;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
@@ -557,9 +759,12 @@
 		};
 		CFA16D8A301AC183007825F0 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = CFB7D20130E0200000A17001 /* Vellix/Configuration/Supabase.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTOMATION_APPLE_EVENTS = NO;
+				CODE_SIGN_ENTITLEMENTS = Vellix/Vellix.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = PLRRW8XCVU;
@@ -574,6 +779,7 @@
 				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
 				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = YES;
 				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
@@ -581,6 +787,7 @@
 				INFOPLIST_FILE = Vellix/Resources/LaunchInfo.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Penned;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Penned displays your Apple Calendar events alongside document tasks and links your event notes. Penned does not modify your Apple Calendar events.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Penned displays your calendar events and links event notes.";
 				"INFOPLIST_KEY_NSCalendarsUsageDescription[sdk=macosx*]" = "Penned displays your calendar events and links event notes.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -592,6 +799,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
@@ -600,6 +808,12 @@
 				PRODUCT_BUNDLE_IDENTIFIER = im.lystaria.Vellix;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
@@ -719,6 +933,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		CF8C0EB13085481B0058BF74 /* Build configuration list for PBXNativeTarget "PennedMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CF8C0EAF3085481B0058BF74 /* Debug */,
+				CF8C0EB03085481B0058BF74 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		CFA16D62301AC182007825F0 /* Build configuration list for PBXProject "Vellix" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -766,6 +989,14 @@
 				minimumVersion = 7.11.1;
 			};
 		};
+		CFB7D10130E0100000A17001 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift.git";
+			requirement = {
+				kind = exactVersion;
+				version = 2.55.4;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -773,6 +1004,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = CFA16E11301AD193007825F0 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
+		};
+		CFB7D10230E0100000A17001 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CFB7D10130E0100000A17001 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

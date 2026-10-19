@@ -12,16 +12,9 @@ nonisolated enum CollectionViewKind: String, Codable, CaseIterable, Identifiable
     var title: String { rawValue.capitalized }
     var icon: String {
         switch self {
-        case .table: return "blackcal"
-        case .gallery: return "linedpages"
-        case .kanban: return "sf:\(systemIcon)"
-        }
-    }
-    var systemIcon: String {
-        switch self {
-        case .table: return "tablecells"
-        case .gallery: return "square.grid.2x2"
-        case .kanban: return "rectangle.split.3x1"
+        case .table: return "table"
+        case .gallery: return "layoutgal"
+        case .kanban: return "gridboard"
         }
     }
 }

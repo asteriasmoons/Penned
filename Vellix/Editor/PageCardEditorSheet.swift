@@ -21,33 +21,23 @@ struct PageCardEditorSheet: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            HStack {
-                Button("Cancel") { dismiss() }.foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    isSaving = true
-                    Task {
-                        do {
-                            try await save(style, style.backdrop == .photo && style.remotePhoto == nil ? pendingImage : nil)
-                            dismiss()
-                        } catch { errorMessage = error.localizedDescription; isSaving = false }
-                    }
-                } label: {
-                    Group { if isSaving { ProgressView().tint(.black) } else { Text("Done").fontWeight(.semibold) } }
-                        .frame(width: 64, height: 34)
-                        .foregroundStyle(.black)
-                        .background(.white, in: Capsule())
-                }
-            }
-            .padding(.horizontal, 22).frame(height: 48)
-            .disabled(isSaving)
             carousel
             stylePanel
                 .padding(.horizontal, 12).padding(.bottom, 12)
         }
         .padding(.top, 8)
-        .background(VellixSurface.paperLifted)
         .buttonStyle(.plain)
+        .pennedSheet(title: "Card", closeDisabled: isSaving, close: { dismiss() }) {
+            Button(isSaving ? "Saving..." : "Done") {
+                isSaving = true
+                Task {
+                    do {
+                        try await save(style, style.backdrop == .photo && style.remotePhoto == nil ? pendingImage : nil)
+                        dismiss()
+                    } catch { errorMessage = error.localizedDescription; isSaving = false }
+                }
+            }.disabled(isSaving)
+        }
         .interactiveDismissDisabled(isSaving)
         .sheet(isPresented: $showBackdrop) {
             CardBackdropSheet(style: $style) { data in pendingImage = data }
@@ -124,7 +114,7 @@ struct PageCardEditorSheet: View {
     private var stylePanel: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Card Style").font(.system(size: 18, weight: .semibold))
-            Divider().overlay(Color.white.opacity(0.08))
+            PennedSheetFieldDivider()
             Text("PREVIEWS").font(.caption.weight(.medium)).foregroundStyle(.secondary)
             HStack(spacing: 12) {
                 previewOption(pages: true)
@@ -141,7 +131,7 @@ struct PageCardEditorSheet: View {
                     }
                     .frame(width: 48, height: 40).clipShape(RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.1), lineWidth: 1))
-                }.foregroundStyle(.primary).frame(minHeight: 44)
+                }.foregroundStyle(.primary).padding(.horizontal, 12).frame(minHeight: 44).pennedSheetField()
             }.buttonStyle(.plain)
             if style.backdrop == .photo, let photo = style.remotePhoto { CardPhotoCredit(photo: photo) }
             Spacer(minLength: 12)
@@ -165,7 +155,7 @@ struct PageCardEditorSheet: View {
                 else { Image("eyeslash").renderingMode(.template).resizable().scaledToFit().frame(width: 24, height: 24).foregroundStyle(.secondary) }
             }
             .frame(width: 92, height: 66)
-            .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+            .pennedSheetField()
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(pages == style.showsPages ? Color(vellixHex: "#2EC5F4") : Color.white.opacity(0.12), lineWidth: pages == style.showsPages ? 2 : 1))
         }.buttonStyle(.plain).accessibilityLabel(pages ? "Page Sheets" : "No Page Sheets")
     }

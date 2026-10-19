@@ -125,6 +125,7 @@ nonisolated enum DocumentTaskIndex {
     static func texts(in json: String) -> [String: String] {
         func contentText(_ node: [String: Any]) -> String {
             if node["type"] as? String == "taskList" { return "" }
+            if node["type"] as? String == "inlineTag", let name = (node["attrs"] as? [String: Any])?["name"] as? String { return "#" + name }
             if let text = node["text"] as? String { return text }
             return (node["content"] as? [[String: Any]] ?? []).map(contentText).joined(separator: " ")
         }
@@ -162,11 +163,12 @@ nonisolated enum DocumentTaskIndex {
 
 final class DocumentTaskRepository: @unchecked Sendable {
     private let database: AppDatabase
+    var spaceID: String?
     init(database: AppDatabase) { self.database = database }
 
     func all(includeTemplates: Bool = false, includeInactive: Bool = false) throws -> [DocumentTaskRecord] {
         try database.read { db in
-            let documents = try DocumentRecord.fetchAll(db)
+            let documents = try DocumentRecord.fetchAll(db, sql: "SELECT d.* FROM documents d JOIN spaces s ON s.id=d.spaceID WHERE \(LibraryAccess.spaces("d.spaceID")) AND s.isArchived=0 AND (? IS NULL OR d.spaceID=?)", arguments: [spaceID, spaceID])
             let byID = Dictionary(uniqueKeysWithValues: documents.map { ($0.id, $0) })
             var textCache: [String: [String: String]] = [:]
             return try Row.fetchAll(db, sql: "SELECT * FROM documentTasks ORDER BY scheduledAt IS NULL, scheduledAt, id").compactMap { row in
@@ -196,9 +198,10 @@ final class DocumentTaskRepository: @unchecked Sendable {
     }
 
     func tasks(documentID: String, includingNestedPages: Bool = false) throws -> [DocumentTaskRecord] {
+        _ = try database.read { try SpaceOwnership.document(documentID, scope: spaceID, in: $0) }
         var ids: Set<String> = [documentID]
         if includingNestedPages {
-            let docs = try database.read { try DocumentRecord.fetchAll($0) }
+            let docs = try database.read { try DocumentRecord.fetchAll($0, sql: "SELECT * FROM documents WHERE \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID=?)", arguments: [spaceID, spaceID]) }
             var count = 0
             while count != ids.count {
                 count = ids.count
@@ -221,10 +224,12 @@ final class DocumentTaskRepository: @unchecked Sendable {
 
     func completedOccurrences(taskID: String? = nil) throws -> [DocumentTaskOccurrence] {
         try database.read { db in
-            let arguments = StatementArguments(taskID.map { [$0] } ?? [])
+            var values: [DatabaseValueConvertible?] = [spaceID, spaceID]
+            if let taskID { values.append(taskID) }
+            let arguments = StatementArguments(values)
             let rows = try Row.fetchAll(db, sql: taskID == nil
-                ? "SELECT taskCompletions.*, documentID, blockID FROM taskCompletions JOIN documentTasks ON taskID = documentTasks.id ORDER BY completedAt DESC"
-                : "SELECT taskCompletions.*, documentID, blockID FROM taskCompletions JOIN documentTasks ON taskID = documentTasks.id WHERE taskID = ? ORDER BY completedAt DESC",
+                ? "SELECT taskCompletions.*, documentTasks.documentID, blockID FROM taskCompletions JOIN documentTasks ON taskID=documentTasks.id JOIN documents d ON d.id=documentTasks.documentID WHERE \(LibraryAccess.spaces("d.spaceID")) AND (? IS NULL OR d.spaceID=?) ORDER BY completedAt DESC"
+                : "SELECT taskCompletions.*, documentTasks.documentID, blockID FROM taskCompletions JOIN documentTasks ON taskID=documentTasks.id JOIN documents d ON d.id=documentTasks.documentID WHERE \(LibraryAccess.spaces("d.spaceID")) AND (? IS NULL OR d.spaceID=?) AND taskID=? ORDER BY completedAt DESC",
                 arguments: arguments)
             return rows.map { DocumentTaskOccurrence(taskID: $0["taskID"], documentID: $0["documentID"], blockID: $0["blockID"],
                 occurrence: TaskCompletedOccurrence(id: $0["id"], scheduledAt: $0["scheduledAt"], completedAt: $0["completedAt"])) }
@@ -236,6 +241,7 @@ final class DocumentTaskRepository: @unchecked Sendable {
         try database.write { db in
             guard let row = try Row.fetchOne(db, sql: "SELECT * FROM documentTasks WHERE id = ?", arguments: [taskID]),
                   var document = try DocumentRecord.fetchOne(db, key: row["documentID"] as String) else { throw DocumentTaskError.missingTask }
+            _ = try SpaceOwnership.document(document.id, scope: spaceID, in: db)
             let metadata = try JSONDecoder().decode(DocumentTaskMetadata.self, from: Data((row["metadataJSON"] as String).utf8))
             guard metadata.occurrenceID == occurrenceID else { throw DocumentTaskError.staleOccurrence }
             let result = try metadata.completing(completed)

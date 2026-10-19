@@ -228,6 +228,25 @@ struct VellixTests {
         #expect(reopened.plainText.contains("A colored quote"))
     }
 
+    @Test func plainCalloutColorPickerBridgeUsesItsOwnColorOnlyRequest() throws {
+        let event = try TipTapEditorEvent(kind: "calloutColorPickerRequest",
+            payload: ["blockId": "plain", "currentColor": "#FF5EAB"])
+        #expect(event == .requestCalloutColorPicker(blockID: "plain", color: "#FF5EAB"))
+        let defaultEvent = try TipTapEditorEvent(kind: "calloutColorPickerRequest", payload: ["blockId": "plain"])
+        #expect(defaultEvent == .requestCalloutColorPicker(blockID: "plain", color: "#ffffff"))
+        let command = TipTapEditorCommand.updateCalloutColor(blockID: "plain", color: "#8FE9FF")
+        #expect(command.name == "updateCalloutColor")
+        #expect(command.args["blockId"] as? String == "plain")
+        #expect(command.args["color"] as? String == "#8FE9FF")
+    }
+
+    @Test func blockRemovalBridgeRequiresARequestToken() throws {
+        #expect(try TipTapEditorEvent(kind: "blockActionsRequest", payload: ["token": "held-block"]) ==
+            .requestBlockDeletion(token: "held-block"))
+        #expect(try TipTapEditorEvent(kind: "blockActionsRequest", payload: [:]) == .unknown("blockActionsRequest"))
+        #expect(try TipTapEditorEvent(kind: "blockActionsRequest", payload: ["token": "   "]) == .unknown("blockActionsRequest"))
+    }
+
     @Test func blockquoteColorPickerBridgeUsesWhiteDefaultAndTargetedCommand() throws {
         let event = try TipTapEditorEvent(
             kind: "blockquoteColorPickerRequest",
@@ -290,6 +309,34 @@ struct VellixTests {
         #expect(throws: VellixError.self) {
             _ = try TipTapContentAnalyzer.analyze("{bad json")
         }
+    }
+
+    @Test func plainCalloutsPersistColorWithoutChangingExistingIconCallouts() throws {
+        let environment = try makeEnvironment()
+        let content: [[String: Any]] = [
+            ["type": "callout", "attrs": ["id": "original", "icon": "heartwavy", "color": "#FF5EAB"], "content": [
+                ["type": "paragraph", "attrs": ["id": "original-text"], "content": [["type": "text", "text": "Existing callout"]]]
+            ]],
+            ["type": "plainCallout", "attrs": ["id": "plain", "color": "#8FE9FF"], "content": [
+                ["type": "text", "text": "Colored no-icon callout", "marks": [["type": "bold"]]]
+            ]]
+        ]
+        let json = try TipTapContentAnalyzer.makeDocumentJSON(content: content)
+        let document = try environment.documents.create(DocumentDraft(title: "Callouts", tipTapJSON: json))
+        let reopened = try environment.documents.requireDocument(id: document.id)
+        let nodes = try #require(TipTapContentAnalyzer.documentObject(from: reopened.tipTapJSON)["content"] as? [[String: Any]])
+        #expect(nodes.map { $0["type"] as? String } == ["callout", "plainCallout"])
+        let original = try #require(nodes[0]["attrs"] as? [String: Any])
+        #expect(original["icon"] as? String == "heartwavy" && original["color"] as? String == "#FF5EAB")
+        let plain = try #require(nodes[1]["attrs"] as? [String: Any])
+        #expect(plain["color"] as? String == "#8FE9FF" && plain["icon"] == nil)
+        let paragraphs = try #require(nodes[1]["content"] as? [[String: Any]])
+        #expect(paragraphs[0]["type"] as? String == "paragraph")
+        #expect(reopened.plainText.contains("Colored no-icon callout"))
+        #expect(TipTapContentAnalyzer.hasCallouts(in: reopened.tipTapJSON))
+        #expect(reopened.tipTapJSON == json)
+        let layout = DocumentThumbnailLayout(json: json, title: "Callouts")
+        #expect(layout.marks.filter { $0.blockType == "plainCallout" }.count == 1)
     }
 
     @Test func retiredColumnsPreserveContentAsNormalBlocks() throws {
@@ -821,6 +868,55 @@ struct VellixTests {
         #expect(try environment.documents.requireDocument(id: first.id).templateOriginID == nil)
         #expect(try environment.documents.requireDocument(id: firstChild.id).plainText == "Actual answer")
         #expect(try environment.documents.requireDocument(id: source.id).folderID == folder.id)
+    }
+
+    @Test func templateThumbnailMetadataIncludesSavedCoverBeforeItsEditorHasOpened() throws {
+        let database = try AppDatabase.makeInMemory()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = AttachmentStore(rootURL: directory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let app = AppEnvironment(database: database, attachmentStore: store)
+        try app.bootstrap()
+        let root = try app.templates.create(title: "Daily Check In")
+        let templateID = try #require(root.templateID)
+        let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+        let cover = try app.documentStyles.importImage(png, documentID: root.id)
+        var appearance = DocumentAppearance.defaultForTheme(.neonCode)
+        appearance.showsCover = true
+        _ = try app.documents.updateAppearance(id: root.id, cover: cover.relativePath, appearance: appearance)
+        let saved = try app.documents.saveEditorJSON(id: root.id,
+            canonicalJSON: TipTapContentAnalyzer.starterDocument(title: "", lines: ["My saved template content"]))
+
+        let reopened = AppEnvironment(database: database, attachmentStore: store)
+        try reopened.bootstrap()
+        let preview = try #require(reopened.overview.templateDocuments[templateID])
+        #expect(reopened.editorCache.model(for: root.id) == nil)
+        #expect(reopened.overview.all.isEmpty)
+        #expect(preview.id == root.id && preview.tipTapJSON == saved.tipTapJSON)
+        #expect(preview.previewText == saved.previewText)
+        #expect(preview.cover == cover.relativePath && preview.appearance == appearance)
+        #expect(CardImageLoader.image(path: preview.cover, store: store) != nil)
+        #expect(DocumentThumbnailLayout(json: preview.tipTapJSON, title: preview.title,
+            monospaced: false, showsCover: preview.appearance.displaysCover).coverRect != nil)
+    }
+
+    @Test func templateThumbnailMetadataRefreshesAfterSavingAndDeleting() throws {
+        let app = try makeEnvironment()
+        let root = try app.templates.create(title: "Template")
+        let templateID = try #require(root.templateID)
+        app.refresh()
+        let model = app.editorCache.prepare(root)
+        model.rename(title: "Updated Template")
+        #expect(app.overview.templateDocuments[templateID]?.title == "Updated Template")
+        var appearance = DocumentAppearance.defaultForTheme(.lunarClouds)
+        appearance.showsCover = true
+        model.updateAppearance(cover: "saved-cover.png", appearance: appearance)
+        try model.saveCurrentContent()
+        #expect(app.overview.templateDocuments[templateID]?.cover == "saved-cover.png")
+        #expect(app.overview.templateDocuments[templateID]?.appearance == appearance)
+        try app.templates.delete(id: templateID, attachmentStore: app.attachmentStore)
+        app.refresh()
+        #expect(app.overview.templateDocuments[templateID] == nil)
     }
 
     @Test func authoringProjectionNeverReachesSavedTextOrSearch() throws {

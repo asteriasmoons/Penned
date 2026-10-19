@@ -1,0 +1,9 @@
+// Penned public Supabase configuration, shared by Debug and Release.
+// Replace YOUR_SUPABASE_PROJECT_REF with your project's reference (or replace
+// the hostname with your custom Supabase domain). Keep https:/$()/ intact:
+// Xcode expands $() to nothing, producing https:// without starting a comment.
+SUPABASE_URL = https:/$()/rfujrtehopxvybsjlwus.supabase.co
+
+// Replace this placeholder with your project's sb_publishable_... key.
+// Never put a secret, service-role key, or database password in this file.
+SUPABASE_PUBLISHABLE_KEY = sb_publishable_0yFJASWVWevuW0gyDMfMfw_ItotDoVK

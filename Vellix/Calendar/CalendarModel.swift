@@ -7,11 +7,14 @@ final class CalendarModel: ObservableObject {
     @Published var mode: CalendarAgendaMode = .week
     @Published private(set) var selectedDate = Calendar.current.startOfDay(for: Date())
     @Published private(set) var selectionRevision = 0
+    private(set) var scrollTargetDate: Date?
+    private var appliedSelectionRevision = 0
     @Published private(set) var expandedDays: Set<Date> = [Calendar.current.startOfDay(for: Date())]
     @Published private(set) var events: [CalendarEvent] = []
     @Published private(set) var tasks: [CalendarTaskEntry] = []
     @Published private(set) var documents: [String: DocumentRecord] = [:]
     @Published private(set) var eventNotes: [String: DocumentRecord] = [:]
+    @Published private(set) var dailyNotes: [String: DocumentRecord] = [:]
     @Published private(set) var access: CalendarAccess = .notRequested
     @Published private(set) var isLoading = false
     @Published private(set) var isRequestingAccess = false
@@ -22,6 +25,7 @@ final class CalendarModel: ObservableObject {
     private let taskRepository: DocumentTaskRepository
     private let documentRepository: DocumentRepository
     private let noteRepository: CalendarEventNoteRepository
+    private let dailyNoteRepository: DailyNoteRepository
     private let enabled: Bool
     private var observers: [NSObjectProtocol] = []
     private var loading: Task<Void, Never>?
@@ -29,10 +33,11 @@ final class CalendarModel: ObservableObject {
     private var isVisible = false
     var completeTask: ((String, String, Bool) async throws -> Void)?
 
-    init(tasks: DocumentTaskRepository, documents: DocumentRepository, notes: CalendarEventNoteRepository, database: AppDatabase) {
+    init(tasks: DocumentTaskRepository, documents: DocumentRepository, notes: CalendarEventNoteRepository, database: AppDatabase, dailyNotes: DailyNoteRepository? = nil) {
         taskRepository = tasks
         documentRepository = documents
         noteRepository = notes
+        dailyNoteRepository = dailyNotes ?? DailyNoteRepository(database: database, templates: TemplateRepository(database: database))
         enabled = !database.isInMemory
         for name in [Notification.Name.vellixTasksChanged, .pennedCalendarNotesChanged, .EKEventStoreChanged,
                      .NSCalendarDayChanged, .NSSystemTimeZoneDidChange, NSLocale.currentLocaleDidChangeNotification] {
@@ -53,16 +58,31 @@ final class CalendarModel: ObservableObject {
     var days: [Date] { CalendarAgenda.days(in: week, calendar: calendar) }
     var unscheduledTasks: [CalendarTaskEntry] { tasks.filter { $0.kind == .current && $0.scheduledDate == nil } }
 
+    func initialScrollDate(now: Date = Date()) -> Date {
+        // A date opened from a Daily Note takes precedence over the normal opening position.
+        if selectionRevision > appliedSelectionRevision, let scrollTargetDate { return scrollTargetDate }
+        return CalendarAgenda.initialVisibleDay(in: week, now: now, calendar: calendar)
+    }
+
+    func acknowledgeScrollRequest() { appliedSelectionRevision = selectionRevision }
+
     func select(_ date: Date) {
+        updateSelection(date, scrollToWeekStart: false)
+    }
+
+    private func updateSelection(_ date: Date, scrollToWeekStart: Bool) {
         let oldWeek = week
         selectedDate = calendar.startOfDay(for: date)
         expandedDays.insert(selectedDate)
+        scrollTargetDate = scrollToWeekStart ? week.start : selectedDate
         selectionRevision += 1
         if week != oldWeek { refresh() }
     }
 
     func navigate(_ direction: Int) {
-        if let date = calendar.date(byAdding: .day, value: direction * (mode == .week ? 7 : 1), to: selectedDate) { select(date) }
+        if let date = calendar.date(byAdding: .day, value: direction * (mode == .week ? 7 : 1), to: selectedDate) {
+            updateSelection(date, scrollToWeekStart: mode == .week)
+        }
     }
 
     func today() { select(Date()) }
@@ -73,6 +93,13 @@ final class CalendarModel: ObservableObject {
         loading?.cancel()
         loading = nil
         isLoading = false
+    }
+    func spaceDidChange() {
+        generation += 1
+        loading?.cancel(); loading = nil
+        tasks = []; documents = [:]; eventNotes = [:]; dailyNotes = [:]; selectedEvent = nil
+        completingTasks = []; errorMessage = nil; isLoading = false
+        refresh()
     }
     func toggleDay(_ date: Date) {
         if expandedDays.contains(date) { expandedDays.remove(date) } else { expandedDays.insert(date) }
@@ -89,6 +116,8 @@ final class CalendarModel: ObservableObject {
         tasks.filter { $0.agendaDate.map { calendar.isDate($0, inSameDayAs: date) } == true }
     }
 
+    func dailyNote(on date: Date) -> DocumentRecord? { dailyNotes[DailyNoteDay(date: date).key] }
+
     func refresh() {
         guard isVisible else { return }
         generation += 1
@@ -102,6 +131,7 @@ final class CalendarModel: ObservableObject {
             do {
                 let access = self.enabled ? await self.apple.access() : .unavailable
                 let events = access == .allowed ? await self.apple.events(in: range) : []
+                guard !Task.isCancelled, self.generation == expected else { return }
                 // The existing repositories are main-actor isolated by project convention.
                 // EventKit's synchronous fetch runs separately in AppleCalendarService.
                 let entries = try CalendarAgenda.taskEntries(taskRepository.all(), in: range)
@@ -109,12 +139,14 @@ final class CalendarModel: ObservableObject {
                 var documents: [String: DocumentRecord] = [:]
                 for id in ids { if let document = try documentRepository.document(id: id) { documents[id] = document } }
                 let notes = try noteRepository.notes(for: events)
+                let dailyNotes = try dailyNoteRepository.notes(from: DailyNoteDay(date: range.start), through: DailyNoteDay(date: self.days.last ?? range.start))
                 guard !Task.isCancelled, self.generation == expected else { return }
                 self.access = access
                 self.events = events
                 self.tasks = entries
                 self.documents = documents
                 self.eventNotes = notes
+                self.dailyNotes = dailyNotes
                 if access != .allowed { self.selectedEvent = nil }
                 else if let selected = self.selectedEvent,
                    let updated = events.first(where: { $0.id == selected.id || $0.identity.localID == selected.identity.localID && $0.identity.occurrenceKey == selected.identity.occurrenceKey }) {

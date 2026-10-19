@@ -30,6 +30,7 @@ private enum DocumentStyleColor: String, Identifiable {
 }
 
 struct DocumentStyleSheet: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var environment: AppEnvironment
     let documentID: String
     let onChange: (DocumentStyleDefinition) -> Void
@@ -62,7 +63,7 @@ struct DocumentStyleSheet: View {
         self._panel = State(initialValue: startWithCover ? .cover : .overview)
     }
 
-    private let accent = Color(vellixHex: "#8FE9FF")
+    private let accent = PennedSheetStyle.accent
     private let solids = ["#FFD6A8", "#FFC700", "#559EFA", "#2545B6", "#07BBA8", "#075442",
                           "#007994", "#FF7300", "#C00016", "#FFC6C7", "#C6B0F7"]
     private let gradients = [
@@ -78,11 +79,11 @@ struct DocumentStyleSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if panel != .overview { header.padding(.bottom, 16) }
             switch panel {
             case .overview:
-                overview
-                styleFooter
+                ScrollView {
+                    overview.frame(height: 3 * 116 + 2 * 8)
+                }.scrollIndicators(.hidden).scrollBounceBehavior(.basedOnSize)
             case .font: fontOptions
             case .cover: imageOptions
             case .backdrop: backdropOptions
@@ -91,12 +92,17 @@ struct DocumentStyleSheet: View {
         }
         .padding(16)
         .frame(maxWidth: 620, maxHeight: .infinity, alignment: .top)
-        .background(.ultraThinMaterial)
         .foregroundStyle(.white)
-        .preferredColorScheme(.dark)
+        .pennedSheet(title: panel == .font ? nil : panel.title, close: { dismiss() }) {
+            if panel != .overview {
+                Button("Back") { panel = .overview }
+                if panel != .styles { Button("Reset") { resetPanel() } }
+            } else if currentMatch == nil {
+                Button("Save") { styleName = ""; saving = true }.disabled(importing)
+            }
+        }
         .presentationDetents(detents)
         .presentationDragIndicator(.visible)
-        .presentationCornerRadius(24)
         .onChange(of: definition) { _, value in onChange(value) }
         .onAppear { reloadStyles() }
         .onDisappear { cancelImport(); photoRequest = UUID() }
@@ -192,24 +198,6 @@ struct DocumentStyleSheet: View {
         }
     }
 
-    private var header: some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 10) {
-                Text(panel.title).font(.system(size: 20, weight: .bold, design: .rounded))
-                Spacer()
-                if panel != .styles {
-                    Button { resetPanel() } label: { LibraryIcon(name: "undo", size: 21) }
-                        .foregroundStyle(.secondary).accessibilityLabel("Reset \(panel.title)")
-                }
-                Button { panel = .overview } label: {
-                    LibraryIcon(name: "xmarkwavy", size: 22)
-                        .foregroundStyle(.secondary).frame(width: 30, height: 30)
-                }.accessibilityLabel("Close \(panel.title)")
-            }.buttonStyle(.plain)
-            Divider().overlay(.white.opacity(0.08))
-        }
-    }
-
     private var overview: some View {
         GeometryReader { geometry in
             let unit = max(70, (geometry.size.width - 16) / 3)
@@ -271,8 +259,8 @@ struct DocumentStyleSheet: View {
         @ViewBuilder content: () -> Content, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             content().frame(width: width, height: 116)
-                .background(.black.opacity(0.22))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                .pennedSheetField()
                 .contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel(title)
     }
@@ -289,7 +277,8 @@ struct DocumentStyleSheet: View {
                     .frame(maxWidth: selected ? .infinity : nil)
                     .frame(minWidth: 48, minHeight: 48)
                     .foregroundStyle(selected ? accent : .white.opacity(0.8))
-                    .background(selected ? accent.opacity(0.09) : .white.opacity(0.045), in: Capsule())
+                    .background(selected ? accent.opacity(0.09) : .clear, in: Capsule())
+                    .pennedSheetField(cornerRadius: 24)
                 }.buttonStyle(.plain).accessibilityLabel(font.title)
                     .accessibilityAddTraits(selected ? .isSelected : [])
             }
@@ -319,7 +308,7 @@ struct DocumentStyleSheet: View {
                                 Text(direction.title).tag(direction)
                             }
                         }.labelsHidden().pickerStyle(.menu).tint(.white)
-                    }
+                    }.padding(12).pennedSheetField()
                 case .image:
                     photoGrid
                     imageCommands
@@ -328,7 +317,7 @@ struct DocumentStyleSheet: View {
                     Toggle("Blur Image", isOn: Binding(
                         get: { definition.appearance.editorBackground.blurImage ?? false },
                         set: { customizeBackdrop(); definition.appearance.editorBackground.blurImage = $0 }
-                    )).tint(accent)
+                    )).tint(accent).padding(12).pennedSheetField()
                 }
                 if definition.appearance.editorBackground.kind != .none {
                     if definition.appearance.editorBackground.kind != .image {
@@ -340,7 +329,8 @@ struct DocumentStyleSheet: View {
                             Button { customizeBackdrop(); definition.appearance.editorBackground.effect = effect } label: {
                                 Text(effect.title).font(.headline).frame(maxWidth: .infinity).frame(height: 44)
                                     .foregroundStyle(selected ? accent : .white.opacity(0.7))
-                                    .background(selected ? accent.opacity(0.10) : .white.opacity(0.06), in: Capsule())
+                                    .background(selected ? accent.opacity(0.10) : .clear, in: Capsule())
+                                    .pennedSheetField(cornerRadius: 22)
                             }.buttonStyle(.plain)
                         }
                     }
@@ -366,7 +356,7 @@ struct DocumentStyleSheet: View {
                 }.buttonStyle(.plain).accessibilityLabel(kind.title)
                     .accessibilityAddTraits(selected ? .isSelected : [])
             }
-        }.padding(3).background(.white.opacity(0.08), in: Capsule())
+        }.padding(3).pennedSheetField(cornerRadius: 24)
     }
 
     private func modeIcon(_ kind: DocumentBackgroundKind) -> String {
@@ -430,7 +420,7 @@ struct DocumentStyleSheet: View {
             Button { colorTarget = target } label: {
                 RoundedRectangle(cornerRadius: 8).fill(Color(vellixHex: hex)).frame(width: 50, height: 42)
             }.buttonStyle(.plain).accessibilityLabel(title)
-        }
+        }.padding(.horizontal, 12).pennedSheetField()
     }
 
     private var imageOptions: some View {
@@ -449,7 +439,7 @@ struct DocumentStyleSheet: View {
                         LibraryIcon(name: "xmarkwavy")
                         Text("Remove")
                         Spacer()
-                    }.padding(12).background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                    }.padding(12).pennedSheetField()
                 }.buttonStyle(.plain).disabled(!definition.appearance.displaysCover)
             }
         }.scrollIndicators(.hidden)
@@ -469,7 +459,7 @@ struct DocumentStyleSheet: View {
                 Button("Files") { showFileImporter = true }.font(.caption).buttonStyle(.plain)
             }
             .frame(maxWidth: .infinity).frame(height: 88)
-            .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+            .pennedSheetField()
         }.disabled(importing)
     }
 
@@ -479,7 +469,7 @@ struct DocumentStyleSheet: View {
                 LibraryIcon(name: icon, size: 26)
                 Text(title).font(.subheadline)
             }.frame(maxWidth: .infinity).frame(height: 88)
-                .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+                .pennedSheetField()
         }.buttonStyle(.plain)
     }
 
@@ -555,7 +545,7 @@ struct DocumentStyleSheet: View {
             HStack(spacing: 10) {
                 LibraryIcon(name: "searchwavy").foregroundStyle(.secondary)
                 TextField("Search", text: $search).textFieldStyle(.plain)
-            }.padding(12).background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 8))
+            }.padding(12).pennedSheetField()
                 .padding(.bottom, 16)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -569,31 +559,6 @@ struct DocumentStyleSheet: View {
                     }
                 }.padding(.bottom, 12)
             }.scrollIndicators(.hidden)
-            styleFooter
-        }
-    }
-
-    private var styleFooter: some View {
-        let match = currentMatch
-        return VStack(spacing: 0) {
-            Divider().overlay(.white.opacity(0.07))
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(match?.title ?? "Custom Style").font(.headline)
-                    Text(match?.isBuiltIn == true ? "Vellix" : "Created by you")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if match == nil {
-                    Button {
-                        styleName = ""
-                        saving = true
-                    } label: {
-                        Text("Save").font(.headline).foregroundStyle(.black)
-                            .padding(.horizontal, 20).frame(height: 40).background(.white, in: Capsule())
-                    }.buttonStyle(.plain).disabled(importing)
-                }
-            }.padding(.top, 12)
         }
     }
 

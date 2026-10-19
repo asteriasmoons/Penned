@@ -43,6 +43,7 @@ struct FolderContextMenu: View {
         Button("New Child Folder") { environment.requestFolderCreation(parentFolderID: folder.id) }
         Button("Edit Name and Icon") { environment.editFolder(folder) }
         Button("Move Folder") { environment.requestMove(folderIDs: [folder.id]) }
+        SpaceTransferActions(item: .folder(folder.id))
     }
 }
 
@@ -73,7 +74,7 @@ struct FolderEditorSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Folder name", text: $name)
+                    TextField("Folder name", text: $name).pennedSheetRows(showsSeparator: true)
                     Button { picker = .icon } label: {
                         HStack {
                             Text("Icon")
@@ -81,7 +82,7 @@ struct FolderEditorSheet: View {
                             LibraryIcon(name: icon, size: 26).foregroundStyle(color)
                             LibraryIcon(name: "chevright", size: 12).foregroundStyle(.secondary)
                         }
-                    }
+                    }.pennedSheetRows(showsSeparator: true)
                     Button { picker = .color } label: {
                         HStack {
                             Text("Icon Color")
@@ -90,29 +91,26 @@ struct FolderEditorSheet: View {
                             LibraryIcon(name: "chevright", size: 12).foregroundStyle(.secondary)
                         }
                     }
-                }
+                }.pennedSheetRows()
                 if let parent = environment.overview.folders.first(where: { $0.id == request.parentFolderID }) {
                     Section("Parent Folder") {
                         HStack(spacing: 10) {
                             LibraryFolderIcon(folder: parent, size: 20)
                             Text(parent.title)
                         }
-                    }
+                    }.pennedSheetRows()
                 }
             }
             .navigationTitle(request.folder == nil ? "New Folder" : "Edit Folder")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        do {
-                            try environment.saveFolder(request, title: name, icon: icon,
-                                colorHex: color.vellixHexString(fallback: "#909090"))
-                            dismiss()
-                        } catch { errorMessage = error.localizedDescription }
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .pennedSheet(title: request.folder == nil ? "New Folder" : "Edit Folder", close: { dismiss() }) {
+                Button("Save") {
+                    do {
+                        try environment.saveFolder(request, title: name, icon: icon,
+                            colorHex: color.vellixHexString(fallback: "#909090"))
+                        dismiss()
+                    } catch { errorMessage = error.localizedDescription }
                 }
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .sheet(item: $picker) { selection in
@@ -124,15 +122,7 @@ struct FolderEditorSheet: View {
                 }
                 .presentationDetents([.medium, .large])
             case .color:
-                #if os(iOS)
-                FolderIconColorPicker(selection: $color) { picker = nil }
-                #else
-                NavigationStack {
-                    Form { ColorPicker("Icon Color", selection: $color, supportsOpacity: false) }
-                        .navigationTitle("Icon Color")
-                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { picker = nil } } }
-                }
-                #endif
+                CardThreeModeColorPicker(selection: $color, title: "Icon Color")
             }
         }
         .alert("Folder Could Not Be Saved", isPresented: Binding(
@@ -159,21 +149,20 @@ struct FolderDestinationPicker: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                destinationRow(title: request.folderIDs.isEmpty ? "Unsorted" : "Home", folder: nil)
-                ForEach(destinations) { folder in destinationRow(title: path(for: folder), folder: folder) }
+            VStack(spacing: 12) {
+                PennedSheetSearchField(text: $query, prompt: "Search folders").padding(.horizontal, 20)
+                List {
+                    destinationRow(title: request.folderIDs.isEmpty ? "Unsorted" : "Home", folder: nil)
+                    ForEach(destinations) { folder in destinationRow(title: path(for: folder), folder: folder) }
+                }
             }
-            .searchable(text: $query, prompt: "Search folders")
             .navigationTitle("Move To")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Move") {
-                        do {
-                            try environment.moveLibraryItems(request, to: destinationID)
-                            dismiss()
-                        } catch { errorMessage = error.localizedDescription }
-                    }
+            .pennedSheet(title: "Move To", close: { dismiss() }) {
+                Button("Move") {
+                    do {
+                        try environment.moveLibraryItems(request, to: destinationID)
+                        dismiss()
+                    } catch { errorMessage = error.localizedDescription }
                 }
             }
         }
@@ -198,38 +187,6 @@ struct FolderDestinationPicker: View {
             .frame(minHeight: 36).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pennedSheetRows(showsSeparator: folder == nil ? !destinations.isEmpty : folder?.id != destinations.last?.id)
     }
 }
-
-#if os(iOS)
-private struct FolderIconColorPicker: UIViewControllerRepresentable {
-    @Binding var selection: Color
-    var onFinish: () -> Void
-
-    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
-
-    func makeUIViewController(context: Context) -> UIColorPickerViewController {
-        let controller = UIColorPickerViewController()
-        controller.title = "Icon Color"
-        controller.supportsAlpha = false
-        controller.selectedColor = UIColor(selection)
-        controller.delegate = context.coordinator
-        return controller
-    }
-
-    func updateUIViewController(_ controller: UIColorPickerViewController, context: Context) {
-        context.coordinator.parent = self
-        let selected = UIColor(selection)
-        if controller.selectedColor != selected { controller.selectedColor = selected }
-    }
-
-    final class Coordinator: NSObject, UIColorPickerViewControllerDelegate {
-        var parent: FolderIconColorPicker
-        init(parent: FolderIconColorPicker) { self.parent = parent }
-        func colorPickerViewController(_ viewController: UIColorPickerViewController, didSelect color: UIColor, continuously: Bool) {
-            parent.selection = Color(uiColor: color)
-        }
-        func colorPickerViewControllerDidFinish(_ viewController: UIColorPickerViewController) { parent.onFinish() }
-    }
-}
-#endif

@@ -6,28 +6,13 @@ import AppKit
 #endif
 
 struct LibraryBrandMark: View {
+    @EnvironmentObject private var environment: AppEnvironment
     var body: some View {
-        Group {
-            #if os(iOS)
-            if let image = Self.appIcon {
-                Image(uiImage: image).resizable().scaledToFit()
-            } else { Image("moonzs").resizable().scaledToFit() }
-            #elseif os(macOS)
-            Image(nsImage: NSApplication.shared.applicationIconImage).resizable().scaledToFit()
-            #endif
-        }
-        .frame(width: 28, height: 28).clipShape(RoundedRectangle(cornerRadius: 6))
-        .accessibilityLabel("Vellix")
+        Button { environment.isSettingsPresented = true } label: {
+            SpaceImage(space: environment.activeSpace, size: 28)
+                .frame(width: 40, height: 40)
+        }.buttonStyle(.plain).accessibilityLabel("Settings for \(environment.activeSpace?.title ?? "Space")")
     }
-
-    #if os(iOS)
-    private static let appIcon: UIImage? = {
-        let icons = Bundle.main.infoDictionary?["CFBundleIcons"] as? [String: Any]
-        let primary = icons?["CFBundlePrimaryIcon"] as? [String: Any]
-        let names = primary?["CFBundleIconFiles"] as? [String] ?? []
-        return names.reversed().compactMap { UIImage(named: $0) }.first
-    }()
-    #endif
 }
 
 struct LibraryIcon: View {

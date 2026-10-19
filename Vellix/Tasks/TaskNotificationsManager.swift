@@ -6,11 +6,13 @@ import UserNotifications
 final class TaskNotificationsManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     @Published private(set) var statusMessage: String?
     private let repository: DocumentTaskRepository
-    private let center: UNUserNotificationCenter
+    private let providedCenter: UNUserNotificationCenter?
+    private lazy var center: UNUserNotificationCenter = providedCenter ?? .current()
     private let enabled: Bool
     private var observer: NSObjectProtocol?
     private var synchronization: Task<Void, Never>?
     private var needsSynchronization = false
+    private var active = true
     private struct ScheduleSignature: Equatable {
         var documentID: String
         var title: String
@@ -20,12 +22,12 @@ final class TaskNotificationsManager: NSObject, ObservableObject, UNUserNotifica
     private var knownSchedules: [String: ScheduleSignature] = [:]
     var openDocument: ((String) -> Void)?
 
-    init(repository: DocumentTaskRepository, database: AppDatabase, center: UNUserNotificationCenter = .current()) {
+    init(repository: DocumentTaskRepository, database: AppDatabase, center: UNUserNotificationCenter? = nil) {
         self.repository = repository
-        self.center = center
+        self.providedCenter = center
         self.enabled = !database.isInMemory
         super.init()
-        if enabled { center.delegate = self }
+        if enabled { self.center.delegate = self }
         observer = NotificationCenter.default.addObserver(forName: .vellixTasksChanged, object: database, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
         }
@@ -52,15 +54,17 @@ final class TaskNotificationsManager: NSObject, ObservableObject, UNUserNotifica
 
     // Serialize reconciliation. A write arriving during an awaited system call gets another pass.
     func refresh() {
-        guard enabled else { return }
+        guard enabled, active else { return }
         if let tasks = try? repository.all() {
             let current = Dictionary(uniqueKeysWithValues: tasks.filter { !$0.checked && $0.metadata.reminderEnabled }.map {
                 ($0.metadata.notificationID, ScheduleSignature(documentID: $0.documentID, title: $0.documentTitle,
                                                                 text: $0.text, date: $0.metadata.scheduledAt))
             })
             let obsolete = knownSchedules.keys.filter { knownSchedules[$0] != current[$0] }
-            center.removePendingNotificationRequests(withIdentifiers: Array(obsolete))
-            center.removeDeliveredNotifications(withIdentifiers: Array(obsolete))
+            if !obsolete.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: Array(obsolete))
+                center.removeDeliveredNotifications(withIdentifiers: Array(obsolete))
+            }
             knownSchedules = current
         }
         needsSynchronization = true
@@ -80,15 +84,29 @@ final class TaskNotificationsManager: NSObject, ObservableObject, UNUserNotifica
         while let synchronization { await synchronization.value }
     }
 
+    func closeLibrary() async {
+        active = false
+        needsSynchronization = false
+        synchronization?.cancel()
+        await synchronization?.value
+        guard enabled else { return }
+        let pending = await center.pendingNotificationRequests()
+        center.removePendingNotificationRequests(withIdentifiers: pending.filter { $0.identifier.hasPrefix("vellix.task.") }.map(\.identifier))
+        let delivered = await center.deliveredNotifications()
+        center.removeDeliveredNotifications(withIdentifiers: delivered.filter { $0.request.identifier.hasPrefix("vellix.task.") }.map { $0.request.identifier })
+    }
+
     private func synchronize() async {
         do {
             let settings = await center.notificationSettings()
+            try Task.checkCancellation()
             let permitted = Self.permitted(settings.authorizationStatus)
             let tasks = try repository.all().filter {
                 !$0.checked && $0.metadata.reminderEnabled && ($0.metadata.scheduledDate.map { $0 > Date() } ?? false)
             }.sorted { ($0.metadata.scheduledAt ?? 0) < ($1.metadata.scheduledAt ?? 0) }
             // Keep room for non-task notifications within iOS's pending-request limit.
             let pending = await center.pendingNotificationRequests()
+            try Task.checkCancellation()
             let otherCount = pending.filter { !$0.identifier.hasPrefix("vellix.task.") }.count
             let capacity = min(60, max(0, 64 - otherCount))
             let selected = permitted ? Array(tasks.prefix(capacity)) : []
@@ -98,11 +116,13 @@ final class TaskNotificationsManager: NSObject, ObservableObject, UNUserNotifica
                 $0.identifier.hasPrefix("vellix.task.") && !desired.contains($0.identifier)
             }.map(\.identifier))
             let delivered = await center.deliveredNotifications()
+            try Task.checkCancellation()
             let active = Set(try repository.all().filter { !$0.checked && $0.metadata.reminderEnabled }.map { $0.metadata.notificationID })
             center.removeDeliveredNotifications(withIdentifiers: delivered.filter {
                 $0.request.identifier.hasPrefix("vellix.task.") && !active.contains($0.request.identifier)
             }.map { $0.request.identifier })
             for task in selected {
+                try Task.checkCancellation()
                 guard let date = task.metadata.scheduledDate else { continue }
                 let content = UNMutableNotificationContent()
                 content.title = task.documentTitle

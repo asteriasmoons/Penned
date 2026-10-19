@@ -120,6 +120,10 @@ struct CalendarDayAgenda: View {
         let events = model.events(on: day)
         let tasks = model.tasks(on: day)
         LazyVStack(alignment: .leading, spacing: 0) {
+            if let note = model.dailyNote(on: day) {
+                CalendarDocumentPreview(document: note) { environment.openCalendarDocument(note) }
+                Divider()
+            }
             ForEach(events) { event in
                 CalendarEventRow(event: event, day: day) { model.selectedEvent = event }
                 if let note = model.eventNotes[event.id], !note.isTrashed {
@@ -136,7 +140,7 @@ struct CalendarDayAgenda: View {
                     Divider().overlay(Color.white.opacity(0.04))
                 }
             }
-            if events.isEmpty && tasks.isEmpty {
+            if events.isEmpty && tasks.isEmpty && model.dailyNote(on: day) == nil {
                 Text(model.isLoading ? "Loading..." : "Nothing scheduled")
                     .font(.subheadline).foregroundStyle(.secondary).padding(.vertical, 20)
             }

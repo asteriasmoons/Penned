@@ -144,15 +144,12 @@ struct CollectionTests {
             == DocumentPreviewContent.cacheKey(f.owner, children: [], collections: restored.reversed()))
     }
 
-    @Test func collectionViewMenuSymbolsExistOnTheCurrentPlatform() {
-        let symbols = CollectionViewKind.allCases.map(\.systemIcon) + ["plus.square.on.square"]
-        #expect(CollectionViewKind.kanban.icon == "sf:rectangle.split.3x1")
-        for symbol in symbols {
-            #if canImport(UIKit)
-            #expect(UIImage(systemName: symbol) != nil, "Missing collection menu symbol: \(symbol)")
-            #elseif canImport(AppKit)
-            #expect(NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil, "Missing collection menu symbol: \(symbol)")
-            #endif
+    @Test func collectionViewKindsUseLibraryAssets() {
+        #expect(CollectionViewKind.gallery.icon == "layoutgal")
+        #expect(CollectionViewKind.table.icon == "table")
+        #expect(CollectionViewKind.kanban.icon == "gridboard")
+        for kind in CollectionViewKind.allCases {
+            #expect(VellixAssetIcon(name: kind.icon).systemName == nil)
         }
     }
 
@@ -605,7 +602,7 @@ struct CollectionTests {
         var custom = parentStyle; custom.fontStyle = .serif
         let independentlyStyled = DocumentRecord(title: "Custom", appearanceJSON: custom.encodedJSON(), parentDocumentID: parent.id)
         try queue.write { db in
-            try parent.insert(db); try entry.insert(db); try independentlyStyled.insert(db)
+            try parent.insertBeforeDailyNotes(db); try entry.insertBeforeDailyNotes(db); try independentlyStyled.insertBeforeDailyNotes(db)
             try CollectionRecord(id: "style-collection", documentID: parent.id, name: "Styles", activeViewID: "main").insert(db)
             try CollectionViewRecord(id: "main", collectionID: "style-collection", name: "Main", kind: .gallery).insert(db)
             for id in [entry.id, independentlyStyled.id] { try db.execute(sql: "INSERT INTO collectionEntries VALUES (?, 'style-collection', 0)", arguments: [id]) }
@@ -706,7 +703,7 @@ struct CollectionTests {
         let regularChild = DocumentRecord(title: "Keep this child", parentDocumentID: authored.id)
         let nested = DocumentRecord(id: "nested", title: "Nested", tipTapJSON: try CollectionRepository.blockJSON(collectionID: "nested-collection", documentID: "nested"), parentDocumentID: authored.id)
         try queue.write { db in
-            try owner.insert(db); try wrapper.insert(db); try authored.insert(db); try entry.insert(db); try regularChild.insert(db); try nested.insert(db)
+            try owner.insertBeforeDailyNotes(db); try wrapper.insertBeforeDailyNotes(db); try authored.insertBeforeDailyNotes(db); try entry.insertBeforeDailyNotes(db); try regularChild.insertBeforeDailyNotes(db); try nested.insertBeforeDailyNotes(db)
             for (id, doc) in [("legacy", wrapper.id), ("authored-collection", authored.id), ("nested-collection", nested.id)] {
                 try db.execute(sql: "INSERT INTO collections VALUES (?, ?, ?, ?)", arguments: [id, doc, id + "-view", Date()])
                 try CollectionViewRecord(id: id + "-view", collectionID: id, name: "Main", kind: .gallery).insert(db)

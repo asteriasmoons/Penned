@@ -16,13 +16,16 @@ nonisolated enum StructuredTemplateContent {
         }
     }
 
-    static func independent(_ json: String, pages: [String: String], paths: [String: String] = [:]) throws -> String {
+    static func independent(_ json: String, pages: [String: String], paths: [String: String] = [:], resetsComponentResponses: Bool = false) throws -> String {
         try transform(canonical(json)) { node in
             var result = node
             if node["type"] as? String != "text", node["type"] as? String != "doc" {
                 var attrs = node["attrs"] as? [String: Any] ?? [:]
                 attrs["id"] = UUID().uuidString
                 attrs.removeValue(forKey: "placeholderProjection")
+                if resetsComponentResponses, node["type"] as? String == "templateComponent" {
+                    attrs["response"] = NSNull()
+                }
                 if let task = DocumentTaskMetadata.decode(attrs["trackedTask"]) {
                     attrs["trackedTask"] = task.independent().object
                 }

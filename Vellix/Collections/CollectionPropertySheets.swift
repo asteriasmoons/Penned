@@ -18,7 +18,7 @@ struct CollectionValueInput: View {
         case .date:
             Toggle("Set Date", isOn: Binding(get: { !value.text.isEmpty }, set: { enabled in
                 if enabled { setDate(Date()) } else { value.text = "" }
-            }))
+            })).collectionFormRows(showsSeparator: !value.text.isEmpty)
             if !value.text.isEmpty {
                 DatePicker(field.name, selection: Binding(get: { value.applying(to: field.configuration).civilDate ?? Date() }, set: setDate),
                     displayedComponents: field.configuration.includeTime ? [.date, .hourAndMinute] : [.date])
@@ -36,6 +36,7 @@ struct CollectionValueInput: View {
                         if value.optionIDs.contains(option.id) { LibraryIcon(name: "checkwavy", size: 20) }
                     }
                 }.foregroundStyle(VellixSurface.violet)
+                    .collectionFormRows(showsSeparator: option.id != field.configuration.options.last?.id)
             }
         }
     }
@@ -64,21 +65,18 @@ struct CollectionValueSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section(field.name) { CollectionValueInput(field: field, value: $value) }
-                Section { Button("Clear Value") { value = CollectionValue() } }
-                if let error { Text(error).foregroundStyle(.red) }
+                Section(field.name) { CollectionValueInput(field: field, value: $value) }.collectionFormRows()
+                Section { Button("Clear Value") { value = CollectionValue() } }.collectionFormRows()
+                if let error { Text(error).foregroundStyle(.red).collectionFormRows() }
             }
             .collectionForm()
             .navigationTitle(field.name)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        do {
-                            try store.repository.saveValue(collectionID: collectionID, documentID: documentID, fieldID: field.id, value: value)
-                            store.refresh(); dismiss()
-                        } catch { self.error = error.localizedDescription }
-                    }
+            .pennedSheet(title: field.name, close: { dismiss() }) {
+                Button("Save") {
+                    do {
+                        try store.repository.saveValue(collectionID: collectionID, documentID: documentID, fieldID: field.id, value: value)
+                        store.refresh(); dismiss()
+                    } catch { self.error = error.localizedDescription }
                 }
             }
         }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.medium, .large])
@@ -111,17 +109,17 @@ struct CollectionFieldEditorSheet: View {
                         Button { focused = false; showIconPicker = true } label: { LibraryIcon(name: field.resolvedIcon, size: 26).frame(width: 44, height: 44) }
                             .buttonStyle(.plain).accessibilityLabel("Choose field icon")
                         TextField("Field name", text: $field.name).focused($focused)
-                    }
+                    }.collectionFormRows(showsSeparator: true)
                     Picker("Type", selection: $field.kind) {
                         ForEach(CollectionFieldKind.allCases) { Text($0.title).tag($0) }
                     }
-                }
+                }.collectionFormRows()
                 if field.kind == .select || field.kind == .multiSelect {
                     Section("Options") {
                         ForEach(configuration.options) { option in
                             Button { optionID = option.id } label: {
                                 HStack { CollectionOptionChip(option: option); Spacer(); LibraryIcon(name: "chevright", size: 16) }
-                            }
+                            }.collectionFormRows(showsSeparator: true)
                         }
                         .onMove { configuration.options.move(fromOffsets: $0, toOffset: $1) }
                         .onDelete { configuration.options.remove(atOffsets: $0) }
@@ -129,31 +127,30 @@ struct CollectionFieldEditorSheet: View {
                             var option = InlinePropertyOption(); option.name = ""
                             configuration.options.append(option); optionID = option.id
                         } label: { Label { Text("Add Option") } icon: { LibraryIcon(name: "addwavy", size: 18) } }
-                    }
+                    }.collectionFormRows()
                 }
                 if field.kind == .number {
                     Section("Number Format") {
-                        TextField("Prefix", text: $configuration.prefix)
-                        TextField("Suffix", text: $configuration.suffix)
-                        TextField("Minimum", text: $configuration.minimum).collectionKeyboard(.number)
-                        TextField("Maximum", text: $configuration.maximum).collectionKeyboard(.number)
+                        TextField("Prefix", text: $configuration.prefix).collectionFormRows(showsSeparator: true)
+                        TextField("Suffix", text: $configuration.suffix).collectionFormRows(showsSeparator: true)
+                        TextField("Minimum", text: $configuration.minimum).collectionKeyboard(.number).collectionFormRows(showsSeparator: true)
+                        TextField("Maximum", text: $configuration.maximum).collectionKeyboard(.number).collectionFormRows(showsSeparator: true)
                         TextField("Step", text: $configuration.step).collectionKeyboard(.number)
-                    }
+                    }.collectionFormRows()
                 }
-                if field.kind == .date { Section { Toggle("Include Time", isOn: $configuration.includeTime) } }
-                Section { TextField("Placeholder", text: $configuration.placeholder) }
-                if let error { Text(error).foregroundStyle(.red) }
-                if existing { Section { Button("Delete Field", role: .destructive) { confirmDelete = true } } }
+                if field.kind == .date { Section { Toggle("Include Time", isOn: $configuration.includeTime) }.collectionFormRows() }
+                Section { TextField("Placeholder", text: $configuration.placeholder) }.collectionFormRows()
+                if let error { Text(error).foregroundStyle(.red).collectionFormRows() }
+                if existing { Section { Button("Delete Field", role: .destructive) { confirmDelete = true } }.collectionFormRows() }
             }
             .collectionForm()
             .navigationTitle(existing ? "Edit Field" : "Add Field")
             .sheet(isPresented: $showIconPicker) {
                 VellixIconLibraryPicker(title: "Field Icon", selectedIcon: field.resolvedIcon) { icon in field.icon = icon.name; showIconPicker = false }
             }
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(field.name.trimmedNonEmpty == nil) }
-                ToolbarItem(placement: .automatic) { EditButton() }
+            .pennedSheet(title: existing ? "Edit Field" : "Add Field", close: { dismiss() }) {
+                EditButton()
+                Button("Save") { save() }.disabled(field.name.trimmedNonEmpty == nil)
             }
             .navigationDestination(item: $optionID) { id in
                 if let option = configuration.options.first(where: { $0.id == id }) {
@@ -174,7 +171,8 @@ struct CollectionFieldEditorSheet: View {
                 }
             } message: { Text("This removes the field and its values from every view. Documents are not deleted.") }
             .onAppear { focused = field.name.isEmpty }
-        }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.large])
+        }.environment(\.pennedSheetDismiss, { dismiss() })
+            .tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.large])
     }
     private func save(allowClear: Bool = false) {
         var proposed = field
@@ -240,8 +238,23 @@ struct CollectionChipLayout: Layout {
 }
 
 extension View {
-    func collectionForm() -> some View {
-        scrollContentBackground(.hidden).background(VellixSurface.sidebar)
+    @ViewBuilder func collectionForm(compact: Bool = false) -> some View {
+        if compact {
+            scrollContentBackground(.hidden)
+                .environment(\.pennedSheetCompactRows, true)
+                .environment(\.defaultMinListRowHeight, 0)
+                .environment(\.defaultMinListHeaderHeight, 0)
+                .listSectionSpacing(VellixSpacing.md)
+                .contentMargins(.top, 0, for: .scrollContent)
+                .buttonStyle(.borderless)
+                .textFieldStyle(.plain)
+                .fontDesign(.rounded).fontWeight(.black)
+        } else {
+            scrollContentBackground(.hidden)
+        }
+    }
+    func collectionFormRows(showsSeparator: Bool = false) -> some View {
+        pennedSheetRows(showsSeparator: showsSeparator)
     }
     @ViewBuilder func collectionKeyboard(_ kind: CollectionFieldKind) -> some View {
         #if os(iOS)

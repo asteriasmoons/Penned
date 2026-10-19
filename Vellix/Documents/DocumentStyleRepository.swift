@@ -32,6 +32,7 @@ struct SavedDocumentStyle: Codable, FetchableRecord, PersistableRecord, Identifi
     var fingerprint: String
     var createdAt: Date
     var updatedAt: Date
+    var libraryID: String = LibraryRecord.localID
 
     var isBuiltIn: Bool { id.hasPrefix("theme-") }
     func definition() throws -> DocumentStyleDefinition {
@@ -53,7 +54,7 @@ final class DocumentStyleRepository {
 
     func all() throws -> [SavedDocumentStyle] {
         let saved = try database.read { db in
-            try SavedDocumentStyle.fetchAll(db, sql: "SELECT * FROM documentStyles ORDER BY createdAt DESC, id")
+            try SavedDocumentStyle.fetchAll(db, sql: "SELECT * FROM documentStyles WHERE libraryID=penned_library() ORDER BY createdAt DESC, id")
         }
         let builtIn = try [DocumentThemeID.lunarClouds, .neonCode].map { theme in
             let definition = DocumentStyleDefinition(appearance: .defaultForTheme(theme))
@@ -109,7 +110,7 @@ final class DocumentStyleRepository {
         do {
             let now = Date()
             let record = SavedDocumentStyle(id: id, title: name, styleJSON: try encode(owned),
-                fingerprint: signature, createdAt: now, updatedAt: now)
+                fingerprint: signature, createdAt: now, updatedAt: now, libraryID: database.libraryID)
             try database.write { db in try record.insert(db) }
             return record
         } catch {
@@ -129,20 +130,21 @@ final class DocumentStyleRepository {
 
     func delete(_ style: SavedDocumentStyle) throws {
         guard !style.isBuiltIn else { return }
+        guard style.libraryID == database.libraryID else { throw LibraryError.wrongOwner }
         let paths = try style.definition().imagePaths
         try database.write { db in
+            for path in paths { try db.execute(sql: "INSERT OR IGNORE INTO attachmentCleanup(relativePath) VALUES (?)", arguments: [path]) }
             try db.execute(sql: "DELETE FROM documentStyles WHERE id = ?", arguments: [style.id])
         }
-        for path in paths { try store.removeFile(relativePath: path) }
+        try SpaceRepository(database: database).drainAttachmentCleanup(store: store)
     }
 
     func apply(_ style: SavedDocumentStyle, to documentID: String) throws -> DocumentStyleDefinition {
+        guard style.isBuiltIn || style.libraryID == database.libraryID else { throw LibraryError.wrongOwner }
         let (definition, files) = try copyImages(style.definition(), ownerID: documentID)
         do {
             try database.write { db in
-                guard try DocumentRecord.fetchOne(db, key: documentID) != nil else {
-                    throw VellixError.documentNotFound(documentID)
-                }
+                _ = try SpaceOwnership.document(documentID, scope: nil, in: db)
                 for file in files { try file.insert(db) }
             }
             return definition

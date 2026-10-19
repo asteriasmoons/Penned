@@ -14,6 +14,7 @@ enum VellixError: LocalizedError, Equatable {
     case attachmentImport(String)
     case snapshotRestore(String)
     case search(String)
+    case tagging(String)
     case impossibleMove(String)
 
     var errorDescription: String? {
@@ -32,6 +33,7 @@ enum VellixError: LocalizedError, Equatable {
             return "Snapshot restore failed: \(message)"
         case .search(let message):
             return "Search failed: \(message)"
+        case .tagging(let message): return message
         case .impossibleMove(let message):
             return "Move is not allowed: \(message)"
         }
@@ -41,12 +43,39 @@ enum VellixError: LocalizedError, Equatable {
 final class AppDatabase: @unchecked Sendable {
     private let writer: any DatabaseWriter
     let isInMemory: Bool
+    let libraryID: String
+    private let lease = LibraryLease()
 
     init(_ writer: any DatabaseWriter, isInMemory: Bool = false) throws {
         self.writer = writer
         self.isInMemory = isInMemory
+        self.libraryID = LibraryRecord.localID
+        try writer.writeWithoutTransaction { LibraryAccess.configure($0, libraryID: "*") }
+        let wasEmpty = try writer.read { db in
+            for table in ["spaces", "documents", "folders", "templates"] where try db.tableExists(table) {
+                if try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM \(table) LIMIT 1)") == true { return false }
+            }
+            return true
+        }
         try DatabaseMigrator.vellixMigrator.migrate(writer)
+        // Only a known-empty install can identify migration-created scaffolding.
+        // Never classify an existing user's Spaces by title or apparent emptiness.
+        if wasEmpty {
+            try writer.write { db in
+                try db.execute(sql: "INSERT OR IGNORE INTO bootstrapSpaces SELECT id FROM spaces WHERE libraryID='local'")
+            }
+        }
     }
+
+    nonisolated private init(sharing database: AppDatabase, libraryID: String) {
+        writer = database.writer
+        isInMemory = database.isInMemory
+        self.libraryID = libraryID
+    }
+
+    nonisolated func scoped(to libraryID: String) -> AppDatabase { AppDatabase(sharing: self, libraryID: libraryID) }
+    nonisolated func invalidate() { lease.invalidate() }
+    nonisolated var isAccessible: Bool { lease.isValid }
 
     static func makeShared() throws -> AppDatabase {
         var configuration = Configuration()
@@ -90,18 +119,35 @@ final class AppDatabase: @unchecked Sendable {
         )
     }
 
-    func read<T>(_ value: (Database) throws -> T) throws -> T {
-        try writer.read(value)
+    nonisolated func read<T>(_ value: (Database) throws -> T) throws -> T {
+        try writer.read { db in
+            try lease.check()
+            LibraryAccess.configure(db, libraryID: libraryID)
+            return try value(db)
+        }
     }
 
-    func write<T>(_ updates: (Database) throws -> T) throws -> T {
+    nonisolated func writeMetadata<T>(_ updates: (Database) throws -> T) throws -> T {
+        try writer.write { db in
+            try lease.check()
+            LibraryAccess.configure(db, libraryID: libraryID)
+            return try updates(db)
+        }
+    }
+
+    nonisolated func write<T>(_ updates: (Database) throws -> T) throws -> T {
         var tasksChanged = false
+        var tagsChanged = false
         let value = try writer.write { db in
+            try lease.check()
+            LibraryAccess.configure(db, libraryID: libraryID)
             let value = try updates(db)
             tasksChanged = try DocumentTaskIndex.reconcile(in: db)
+            tagsChanged = try DocumentTagIndex.reconcile(in: db)
             return value
         }
         if tasksChanged { NotificationCenter.default.post(name: .vellixTasksChanged, object: self) }
+        if tagsChanged { NotificationCenter.default.post(name: .pennedTagsChanged, object: self) }
         NotificationCenter.default.post(name: .pennedCollectionsChanged, object: self)
         return value
     }
@@ -321,6 +367,37 @@ extension DatabaseMigrator {
         let plainAppearanceJSON = DocumentAppearance.plain.encodedJSON()!
         migrator.registerMigration("v15_independent_collection_entry_styles") { db in
             try CollectionMigration.removeInheritedEntryStyles(db, defaultAppearanceJSON: plainAppearanceJSON)
+        }
+
+        migrator.registerMigration("v16_independent_spaces") { db in
+            try SpaceOwnership.install(in: db)
+        }
+
+        migrator.registerMigration("v17_space_images") { db in
+            try db.alter(table: "spaces") { table in
+                table.add(column: "iconImageData", .blob)
+            }
+        }
+
+        migrator.registerMigration("v18_daily_notes") { db in
+            try DailyNoteMigration.install(in: db)
+        }
+
+        migrator.registerMigration("v19_document_tags") { db in
+            try DocumentTagIndex.install(in: db)
+        }
+
+        migrator.registerMigration("v20_account_library_ownership") { db in
+            try LibraryOwnership.install(in: db)
+        }
+        migrator.registerMigration("v21_library_access_guards") { db in
+            try LibraryAccess.install(in: db)
+        }
+        migrator.registerMigration("v22_cloudkit_record_journal") { db in
+            try LibrarySyncSchema.install(in: db)
+        }
+        migrator.registerMigration("v23_bootstrap_space_provenance") { db in
+            try SpaceOwnership.installBootstrapTracking(in: db)
         }
 
         return migrator

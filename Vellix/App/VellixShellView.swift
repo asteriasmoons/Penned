@@ -14,16 +14,36 @@ struct VellixShellView: View {
         ZStack {
             VellixBackground()
 
+            #if os(iOS)
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                PadWorkspaceView(environment: environment)
+            } else if horizontalSizeClass == .compact {
+                compactWorkspace
+            } else {
+                regularWorkspace
+            }
+            #else
             if horizontalSizeClass == .compact {
                 compactWorkspace
             } else {
                 regularWorkspace
             }
+            #endif
+        }
+        .disabled(environment.isSwitchingSpace)
+        .onChange(of: environment.selectedDocumentID) { _, id in
+            if id != nil { environment.isSettingsPresented = false }
         }
         .sheet(item: $environment.librarySheet) { sheet in
             switch sheet {
             case .folder(let request): FolderEditorSheet(request: request)
             case .move(let request): FolderDestinationPicker(request: request)
+            }
+        }
+        .sheet(item: $environment.spaceSheet) { sheet in
+            switch sheet {
+            case .edit(let space): SpaceEditorSheet(space: space)
+            case .transfer(let item, let copy): SpaceTransferSheet(item: item, copy: copy)
             }
         }
         .alert("Vellix", isPresented: Binding(
@@ -72,10 +92,10 @@ struct VellixShellView: View {
                     compactEditorDeck
                 }
                 .overlay(alignment: .bottom) {
-                    if environment.selectedDocumentID == nil { LibraryBottomBar() }
+                    if environment.selectedDocumentID == nil && !environment.isSettingsPresented { LibraryBottomBar() }
                 }
                 #if os(iOS)
-                .navigationBarTitleDisplayMode(environment.selectedDocumentID == nil && environment.selectedDestination != .templates ? .large : .inline)
+                .navigationBarTitleDisplayMode(environment.selectedDocumentID == nil && environment.selectedDestination != .templates && environment.selectedDestination != .tags ? .large : .inline)
                 .toolbar(environment.selectedDocumentID == nil ? .visible : .hidden, for: .navigationBar)
                 #endif
         }
@@ -162,15 +182,13 @@ struct VellixShellView: View {
                             SidebarRow(
                                 title: destination.title,
                                 systemImage: destination.fallbackSymbol,
+                                assetImage: destination == .tags ? "hashtagwavy" : nil,
                                 count: count(for: destination),
                                 isSelected: environment.selectedDestination == destination,
                                 tint: destination == .calendar ? CalendarStyle.accent : VellixSurface.accent
                             ) {
                                 environment.selectedDestination = destination
                                 environment.selectedFolderID = nil
-                                if destination != .spaces {
-                                    environment.selectedSpaceID = nil
-                                }
                             }
                         }
                     }
@@ -178,15 +196,16 @@ struct VellixShellView: View {
                     if !environment.overview.spaces.isEmpty {
                         SidebarSection(title: "Spaces") {
                             ForEach(environment.overview.spaces) { space in
-                                SidebarRow(
-                                    title: space.title,
-                                    systemImage: space.icon ?? "rectangle.stack",
-                                    count: documentsInSpaceCount(space.id),
-                                    isSelected: environment.selectedDestination == .spaces && environment.selectedSpaceID == space.id
-                                ) {
-                                    environment.selectedDestination = .spaces
-                                    environment.selectedSpaceID = space.id
-                                }
+                                Button {
+                                    Task { do { try await environment.switchSpace(to: space.id) } catch { environment.report(error) } }
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        SpaceImage(space: space, size: 26)
+                                        Text(space.title).lineLimit(1)
+                                        Spacer()
+                                        if environment.selectedSpaceID == space.id { LibraryIcon(name: "checkwavy", size: 16) }
+                                    }.padding(10).contentShape(Rectangle())
+                                }.buttonStyle(.plain)
                             }
                         }
                     }
@@ -215,13 +234,10 @@ struct VellixShellView: View {
     private var sidebarHeader: some View {
         VStack(alignment: .leading, spacing: VellixSpacing.md) {
             HStack(spacing: VellixSpacing.sm) {
-                IconTile(systemName: "sparkle", size: 38, tint: VellixSurface.violet)
+                LibraryBrandMark()
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Vellix")
+                    Text("Penned")
                         .font(.system(.title3, design: .rounded).weight(.bold))
-                    Text("Personal space")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button {
@@ -296,6 +312,12 @@ struct VellixShellView: View {
 
     @ViewBuilder
     private var destinationContent: some View {
+        destinationScreen
+            .navigationDestination(isPresented: $environment.isSettingsPresented) { PennedSettingsView() }
+    }
+
+    @ViewBuilder
+    private var destinationScreen: some View {
         switch environment.selectedDestination {
         case .home:
             HomeView(environment: environment)
@@ -319,6 +341,8 @@ struct VellixShellView: View {
             SpacesView()
         case .templates:
             TemplatesView()
+        case .tags:
+            TagBrowserView()
         case .trash:
             TrashView()
         }
@@ -342,13 +366,14 @@ struct VellixShellView: View {
             return environment.overview.spaces.count
         case .templates:
             return environment.overview.templates.count
+        case .tags: return nil
         case .trash:
             return environment.overview.trashed.count
         }
     }
 
     private func documentsInSpaceCount(_ spaceID: String) -> Int {
-        ((try? environment.documents.documents(inSpace: spaceID)) ?? []).count
+        (try? environment.spaces.contentCount(id: spaceID)) ?? 0
     }
 }
 
@@ -372,6 +397,7 @@ private struct SidebarSection<Content: View>: View {
 private struct SidebarRow: View {
     var title: String
     var systemImage: String
+    var assetImage: String? = nil
     var count: Int?
     var isSelected: Bool
     var tint: Color = VellixSurface.accent
@@ -380,8 +406,10 @@ private struct SidebarRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 15, weight: .semibold))
+                Group {
+                    if let assetImage { LibraryIcon(name: assetImage, size: 15) }
+                    else { Image(systemName: systemImage).font(.system(size: 15, weight: .semibold)) }
+                }
                     .foregroundStyle(isSelected ? tint : .secondary)
                     .frame(width: 22)
                 Text(title)
@@ -413,53 +441,7 @@ private struct SidebarRow: View {
 }
 
 struct SpacesView: View {
-    @EnvironmentObject private var environment: AppEnvironment
-
-    private let columns = [GridItem(.adaptive(minimum: 230), spacing: VellixSpacing.md)]
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: VellixSpacing.xl) {
-                VellixSectionHeader(
-                    title: "Spaces",
-                    subtitle: "Separate desks for different parts of your life.",
-                    actionTitle: "New Space"
-                ) {
-                    environment.createSpace()
-                }
-
-                LazyVGrid(columns: columns, spacing: VellixSpacing.md) {
-                    ForEach(environment.overview.spaces) { space in
-                        Button {
-                            environment.selectedSpaceID = space.id
-                        } label: {
-                            SpaceCard(
-                                space: space,
-                                count: documentsInSpaceCount(space.id),
-                                isSelected: environment.selectedSpaceID == space.id
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                if let selectedSpaceID = environment.selectedSpaceID {
-                    DocumentBrowserView(
-                        mode: .space(selectedSpaceID),
-                        documents: (try? environment.documents.documents(inSpace: selectedSpaceID)) ?? []
-                    )
-                    .frame(minHeight: 360)
-                }
-            }
-            .padding(VellixSpacing.xl)
-        }
-        .background(VellixBackground())
-        .navigationTitle("Spaces")
-    }
-
-    private func documentsInSpaceCount(_ spaceID: String) -> Int {
-        ((try? environment.documents.documents(inSpace: spaceID)) ?? []).count
-    }
+    var body: some View { SpaceManagementView() }
 }
 
 struct SpaceCard: View {
@@ -470,7 +452,7 @@ struct SpaceCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: VellixSpacing.md) {
             HStack {
-                IconTile(systemName: space.icon, tint: VellixSurface.teal)
+                SpaceImage(space: space, size: 38)
                 Spacer()
                 Text("\(count)")
                     .font(.caption.weight(.bold))
@@ -518,7 +500,7 @@ struct TemplatesView: View {
                     ForEach(environment.overview.templates) { template in
                         HStack(spacing: VellixSpacing.md) {
                             TemplateCard(template: template,
-                                document: environment.editorCache.model(for: template.rootDocumentID)?.document) {
+                                document: environment.overview.templateDocuments[template.id]) {
                                 if template.isBuiltIn { _ = environment.createDocument(title: template.title, from: template) }
                                 else { environment.editTemplate(template) }
                             }
@@ -588,6 +570,8 @@ struct TemplatesView: View {
     @ViewBuilder
     private func templateActions(_ template: TemplateRecord) -> some View {
         Button("Use Template") { _ = environment.createDocument(title: template.title, from: template) }
+            .disabled(environment.dailyNoteOnlyTemplateIDs.contains(template.id))
+        SpaceTransferActions(item: .template(template.id))
         Button("Duplicate Template") {
             do {
                 _ = try environment.templates.duplicate(id: template.id, attachmentStore: environment.attachmentStore)

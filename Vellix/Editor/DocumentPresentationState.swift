@@ -12,7 +12,12 @@ nonisolated struct DocumentPresentationState {
         isContentReady && confirmedFrameGeneration == generation
     }
     var isContentReady: Bool {
-        documentID != nil && webPrepared && expectedNativeViews.allSatisfy { nativeLayouts[$0.key] == $0.value }
+        // The content is ready once the web layout frame is prepared. We intentionally do
+        // NOT wait for every native collection region to report its layout here: those
+        // native overlays only lay out once the editor is on-screen, but the editor is only
+        // shown once it is ready — a deadlock for collection docs warming hidden in the deck.
+        // They position themselves as they render, exactly like the thumbnail/preview path.
+        documentID != nil && webPrepared
     }
     mutating func begin(documentID: String?) {
         generation += 1; self.documentID = documentID
@@ -27,6 +32,15 @@ nonisolated struct DocumentPresentationState {
     mutating func nativeDidLayout(blockID: String, viewID: String) { nativeLayouts[blockID] = viewID }
     mutating func framePresented(generation: Int) {
         guard generation == self.generation, isContentReady else { return }
+        confirmedFrameGeneration = generation
+    }
+    // Escape hatch: the content is laid out (webPrepared) but a native region never
+    // reported its layout (it was off-screen / hidden while warming). Treat every
+    // expected native view as satisfied and confirm the frame so presentation can
+    // proceed instead of hanging; the native regions position themselves once visible.
+    mutating func forceReady(generation: Int) {
+        guard generation == self.generation, documentID != nil, webPrepared else { return }
+        nativeLayouts = expectedNativeViews
         confirmedFrameGeneration = generation
     }
 }

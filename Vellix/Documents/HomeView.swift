@@ -7,6 +7,7 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var environment: AppEnvironment
+    @Environment(\.pennedWorkspaceTabActive) private var workspaceTabActive
     @ObservedObject private var searchModel: SearchModel
     @FocusState private var isSearchFocused: Bool
     @State private var searchScope = LibrarySearchScope.keyword
@@ -16,8 +17,8 @@ struct HomeView: View {
     @AppStorage("library.showStarred") private var showStarred = true
     @AppStorage("library.showFolders") private var showFolders = true
 
-    init(environment: AppEnvironment) {
-        _searchModel = ObservedObject(wrappedValue: environment.librarySearch)
+    init(environment: AppEnvironment, search: SearchModel? = nil) {
+        _searchModel = ObservedObject(wrappedValue: search ?? environment.librarySearch)
     }
 
     var body: some View {
@@ -46,7 +47,7 @@ struct HomeView: View {
             .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 100)
         }
         .background(Color.black)
-        .navigationTitle("Home")
+        .navigationTitle("")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { LibraryBrandMark() }
             ToolbarItem(placement: .primaryAction) {
@@ -62,16 +63,12 @@ struct HomeView: View {
         .sheet(isPresented: $customizeHome) {
             NavigationStack {
                 Form {
-                    Toggle("Document previews", isOn: $showPreviewStrip)
-                    Toggle("Starred", isOn: $showStarred)
-                    Toggle("Folders", isOn: $showFolders)
+                    Toggle("Document previews", isOn: $showPreviewStrip).pennedSheetRows(showsSeparator: true)
+                    Toggle("Starred", isOn: $showStarred).pennedSheetRows(showsSeparator: true)
+                    Toggle("Folders", isOn: $showFolders).pennedSheetRows()
                 }
                 .navigationTitle("Customize Home")
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { customizeHome = false }
-                    }
-                }
+                .pennedSheet(title: "Customize Home", close: { customizeHome = false })
             }
             .presentationDetents([.medium])
         }
@@ -140,6 +137,7 @@ struct HomeView: View {
                             isSearchFocused = false
                             _ = environment.createDocument(title: template.title, from: template)
                         }
+                        .disabled(environment.dailyNoteOnlyTemplateIDs.contains(template.id))
                     }
                 }
             }
@@ -159,7 +157,7 @@ struct HomeView: View {
     }
 
     private func focusRequestedSearch() {
-        guard environment.isLibrarySearchRequested else { return }
+        guard workspaceTabActive, environment.isLibrarySearchRequested else { return }
         isSearchFocused = true
         environment.isLibrarySearchRequested = false
     }
@@ -192,6 +190,7 @@ struct HomeView: View {
             libraryRow("All Docs", icon: "linedpages") { open(.allDocuments) }
             libraryRow("Spaces", icon: "spaces") { open(.spaces) }
             libraryRow("Templates", icon: "copy") { open(.templates) }
+            libraryRow("All Tags", icon: "hashtagwavy") { open(.tags) }
         }
     }
 

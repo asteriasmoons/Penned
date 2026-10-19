@@ -114,17 +114,17 @@ struct FolderLibraryTests {
         #expect(try documents.requireDocument(id: nested.id).parentDocumentID == page.id)
     }
 
-    @Test func aChildAlwaysInheritsItsParentsWorkspaceIncludingNil() throws {
+    @Test func aChildAlwaysInheritsItsParentsWorkspaceIncludingTheDefault() throws {
         let db = try AppDatabase.makeInMemory()
         let folders = FolderRepository(database: db)
         let space = try SpaceRepository(database: db).create(title: "Other Workspace")
         let parent = try folders.create(title: "Parent")
         let child = try folders.create(title: "Child", spaceID: space.id, parentFolderID: parent.id)
-        #expect(child.spaceID == nil)
+        #expect(child.spaceID == parent.spaceID)
         let documents = DocumentRepository(database: db)
         let page = try documents.create(DocumentDraft(title: "Page", spaceID: space.id))
         try folders.move(documentIDs: [page.id], folderIDs: [], to: parent.id)
-        #expect(try documents.requireDocument(id: page.id).spaceID == nil)
+        #expect(try documents.requireDocument(id: page.id).spaceID == parent.spaceID)
     }
 
     @Test func starsPersistAndCanBeRemoved() throws {
@@ -146,8 +146,8 @@ struct FolderLibraryTests {
         let other = try folders.create(title: "Other")
         _ = try DocumentRepository(database: db).create(DocumentDraft(title: "Budget", folderID: child.id))
         let search = DocumentSearchService(database: db)
-        #expect(try search.search("Budget").first?.locationPath == "Parent / Child")
+        #expect(try search.search("Budget").first?.locationPath.hasSuffix("Parent / Child") == true)
         try folders.move(documentIDs: [], folderIDs: [child.id], to: other.id)
-        #expect(try search.search("Budget").first?.locationPath == "Other / Child")
+        #expect(try search.search("Budget").first?.locationPath.hasSuffix("Other / Child") == true)
     }
 }

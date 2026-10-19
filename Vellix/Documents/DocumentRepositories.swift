@@ -47,6 +47,7 @@ struct DocumentDraft {
 
 final class DocumentRepository: @unchecked Sendable {
     private let database: AppDatabase
+    var spaceID: String?
 
     init(database: AppDatabase) {
         self.database = database
@@ -58,9 +59,20 @@ final class DocumentRepository: @unchecked Sendable {
 
     // Shared by document creation and atomic event-note/document association writes.
     func create(_ draft: DocumentDraft, in db: Database) throws -> DocumentRecord {
+        let parent = try draft.parentDocumentID.map { try SpaceOwnership.document($0, scope: spaceID, in: db) }
+        let folder = try draft.folderID.map { id -> FolderRecord in
+            guard let record = try FolderRecord.fetchOne(db, key: id), spaceID == nil || record.spaceID == spaceID else {
+                throw VellixError.impossibleMove("This folder is outside the current Space.")
+            }
+            return record
+        }
+        let owner = try parent?.spaceID ?? folder?.spaceID ?? draft.spaceID ?? spaceID ?? SpaceOwnership.defaultSpace(in: db)
+        try SpaceOwnership.requireSpace(owner, in: db)
+        guard (spaceID == nil || owner == spaceID), folder == nil || folder?.spaceID == owner else {
+            throw VellixError.impossibleMove("Pages and their parent folder must share a Space.")
+        }
         if let parentID = draft.parentDocumentID {
-            let parent = try DocumentRecord.fetchOne(db, key: parentID)
-                ?? { throw VellixError.documentNotFound(parentID) }()
+            let parent = try SpaceOwnership.document(parentID, scope: self.spaceID, in: db)
             guard !parent.isTrashed && !parent.isArchived else {
                 throw VellixError.impossibleMove("Restore the parent page before adding nested pages.")
             }
@@ -76,8 +88,8 @@ final class DocumentRepository: @unchecked Sendable {
             tipTapJSON: analysis.canonicalJSON,
             plainText: analysis.plainText,
             previewText: analysis.previewText,
-            spaceID: draft.spaceID,
-            folderID: draft.folderID,
+            spaceID: owner,
+            folderID: draft.folderID ?? parent?.folderID,
             parentDocumentID: draft.parentDocumentID,
             lastOpenedAt: Date(),
             wordCount: analysis.wordCount,
@@ -98,8 +110,7 @@ final class DocumentRepository: @unchecked Sendable {
         appearance: DocumentAppearance
     ) throws -> DocumentRecord {
         try database.write { db in
-            var record = try DocumentRecord.fetchOne(db, key: id)
-                ?? { throw VellixError.documentNotFound(id) }()
+            var record = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
             record.cover = cover
             record.appearanceJSON = appearance.encodedJSON()
             record.updatedAt = Date()
@@ -114,8 +125,7 @@ final class DocumentRepository: @unchecked Sendable {
         var importedPath: String?
         do {
             return try database.write { db in
-                let parent = try DocumentRecord.fetchOne(db, key: parentID)
-                    ?? { throw VellixError.documentNotFound(parentID) }()
+                let parent = try SpaceOwnership.document(parentID, scope: self.spaceID, in: db)
                 guard !parent.isTrashed && !parent.isArchived else {
                     throw VellixError.impossibleMove("Restore the parent page before editing cards.")
                 }
@@ -160,8 +170,7 @@ final class DocumentRepository: @unchecked Sendable {
 
     func updateIcon(id: String, icon: String?) throws -> DocumentRecord {
         try database.write { db in
-            var record = try DocumentRecord.fetchOne(db, key: id)
-                ?? { throw VellixError.documentNotFound(id) }()
+            var record = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
             record.icon = icon?.trimmedNonEmpty
             record.updatedAt = Date()
             try record.update(db)
@@ -173,22 +182,22 @@ final class DocumentRepository: @unchecked Sendable {
     func allDocuments(includeTrashed: Bool = false) throws -> [DocumentRecord] {
         try database.read { db in
             let sql = includeTrashed
-                ? "SELECT * FROM documents WHERE parentDocumentID IS NULL AND templateID IS NULL ORDER BY updatedAt DESC"
-                : "SELECT * FROM documents WHERE parentDocumentID IS NULL AND templateID IS NULL AND isTrashed = 0 AND isArchived = 0 ORDER BY updatedAt DESC"
-            return try DocumentRecord.fetchAll(db, sql: sql)
+                ? "SELECT * FROM documents WHERE \(LibraryAccess.spaces()) AND parentDocumentID IS NULL AND templateID IS NULL AND (? IS NULL OR spaceID = ?) ORDER BY updatedAt DESC"
+                : "SELECT * FROM documents WHERE \(LibraryAccess.spaces()) AND parentDocumentID IS NULL AND templateID IS NULL AND isTrashed = 0 AND isArchived = 0 AND (? IS NULL OR spaceID = ?) ORDER BY updatedAt DESC"
+            return try DocumentRecord.fetchAll(db, sql: sql, arguments: [spaceID, spaceID])
         }
     }
 
     // Editor ownership includes nested pages even though library lists do not.
     func editorDocuments(excludingCollectionEntries: Bool = false) throws -> [DocumentRecord] {
         try database.read { db in
-            let condition = excludingCollectionEntries ? " WHERE id NOT IN (SELECT documentID FROM collectionEntries)" : ""
-            return try DocumentRecord.fetchAll(db, sql: "SELECT * FROM documents\(condition) ORDER BY createdAt ASC")
+            let condition = excludingCollectionEntries ? " AND id NOT IN (SELECT documentID FROM collectionEntries)" : ""
+            return try DocumentRecord.fetchAll(db, sql: "SELECT * FROM documents WHERE \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID = ?)\(condition) ORDER BY createdAt ASC", arguments: [spaceID, spaceID])
         }
     }
 
     func existingDocumentIDs() throws -> Set<String> {
-        try database.read { Set(try String.fetchAll($0, sql: "SELECT id FROM documents")) }
+        try database.read { Set(try String.fetchAll($0, sql: "SELECT id FROM documents WHERE \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID = ?)", arguments: [spaceID, spaceID])) }
     }
 
     func effectiveAppearance(for document: DocumentRecord) throws -> DocumentAppearance {
@@ -197,7 +206,7 @@ final class DocumentRepository: @unchecked Sendable {
 
     func document(id: String) throws -> DocumentRecord? {
         try database.read { db in
-            try DocumentRecord.fetchOne(db, key: id)
+            try DocumentRecord.fetchOne(db, sql: "SELECT * FROM documents WHERE \(LibraryAccess.spaces()) AND id = ? AND (? IS NULL OR spaceID = ?)", arguments: [id, spaceID, spaceID])
         }
     }
 
@@ -216,10 +225,11 @@ final class DocumentRepository: @unchecked Sendable {
                 sql: """
                     SELECT * FROM documents
                     WHERE parentDocumentID IS NULL AND templateID IS NULL AND isTrashed = 0 AND isArchived = 0
+                      AND \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID = ?)
                     ORDER BY COALESCE(lastOpenedAt, updatedAt) DESC, updatedAt DESC, rowid DESC
                     LIMIT ?
                     """,
-                arguments: [limit]
+                arguments: [spaceID, spaceID, limit]
             )
         }
     }
@@ -231,8 +241,9 @@ final class DocumentRepository: @unchecked Sendable {
                 sql: """
                     SELECT * FROM documents
                     WHERE parentDocumentID IS NULL AND templateID IS NULL AND isFavorite = 1 AND isTrashed = 0 AND isArchived = 0
+                      AND \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID = ?)
                     ORDER BY updatedAt DESC
-                    """
+                    """, arguments: [spaceID, spaceID]
             )
         }
     }
@@ -246,34 +257,38 @@ final class DocumentRepository: @unchecked Sendable {
                     WHERE d.templateID IS NULL AND d.isTrashed = 1 AND NOT EXISTS (
                         SELECT 1 FROM documents p WHERE p.id = d.parentDocumentID AND p.isTrashed = 1
                     )
+                    AND \(LibraryAccess.spaces("d.spaceID")) AND (? IS NULL OR d.spaceID = ?)
                     ORDER BY d.trashedAt DESC
-                    """
+                    """, arguments: [spaceID, spaceID]
             )
         }
     }
 
     func children(of documentID: String, includingCollectionEntries: Bool = true) throws -> [DocumentRecord] {
         try database.read { db in
+            let owner = try SpaceOwnership.document(documentID, scope: spaceID, in: db)
             let condition = includingCollectionEntries ? "" : " AND id NOT IN (SELECT documentID FROM collectionEntries)"
             return try DocumentRecord.fetchAll(
                 db,
                 sql: """
                     SELECT * FROM documents
                     WHERE parentDocumentID = ? AND isTrashed = 0 AND isArchived = 0\(condition)
+                      AND spaceID = ?
                     ORDER BY sortOrder ASC, createdAt ASC, id ASC
                     """,
-                arguments: [documentID]
+                arguments: [documentID, owner.spaceID]
             )
         }
     }
 
     func documents(inSpace spaceID: String) throws -> [DocumentRecord] {
-        try database.read { db in
+        guard self.spaceID == nil || self.spaceID == spaceID else { return [] }
+        return try database.read { db in
             try DocumentRecord.fetchAll(
                 db,
                 sql: """
                     SELECT * FROM documents
-                    WHERE parentDocumentID IS NULL AND templateID IS NULL AND spaceID = ? AND isTrashed = 0 AND isArchived = 0
+                    WHERE \(LibraryAccess.spaces()) AND parentDocumentID IS NULL AND templateID IS NULL AND spaceID = ? AND isTrashed = 0 AND isArchived = 0
                     ORDER BY sortOrder ASC, updatedAt DESC
                     """,
                 arguments: [spaceID]
@@ -288,18 +303,20 @@ final class DocumentRepository: @unchecked Sendable {
                 sql: """
                     SELECT * FROM documents
                     WHERE parentDocumentID IS NULL AND templateID IS NULL AND folderID = ? AND isTrashed = 0 AND isArchived = 0
+                      AND \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID = ?)
                     ORDER BY sortOrder ASC, updatedAt DESC
                     """,
-                arguments: [folderID]
+                arguments: [folderID, spaceID, spaceID]
             )
         }
     }
 
     func updateTitle(id: String, title: String) throws -> DocumentRecord {
         try database.write { db in
-            var record = try DocumentRecord.fetchOne(db, key: id)
-                ?? { throw VellixError.documentNotFound(id) }()
-            record.title = title.trimmedNonEmpty ?? "Untitled"
+            var record = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
+            if let day = record.dailyNoteDate.flatMap(DailyNoteDay.init(key:)) {
+                record.title = day.title(adding: day.suffix(from: title))
+            } else { record.title = title.trimmedNonEmpty ?? "Untitled" }
             record.updatedAt = Date()
             try record.update(db)
             try Self.upsertSearchIndex(record, in: db)
@@ -309,6 +326,7 @@ final class DocumentRepository: @unchecked Sendable {
 
     func markOpened(id: String) throws {
         try database.write { db in
+            _ = try SpaceOwnership.document(id, scope: spaceID, in: db)
             try db.execute(
                 sql: "UPDATE documents SET lastOpenedAt = ? WHERE id = ?",
                 arguments: [Date().addingTimeInterval(0.001), id]
@@ -318,8 +336,7 @@ final class DocumentRepository: @unchecked Sendable {
 
     func saveEditorJSON(id: String, canonicalJSON: String) throws -> DocumentRecord {
         try database.write { db in
-            var record = try DocumentRecord.fetchOne(db, key: id)
-                ?? { throw VellixError.documentNotFound(id) }()
+            var record = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
             let analysis = try TipTapContentAnalyzer.analyze(canonicalJSON)
 
             guard analysis.canonicalJSON != record.tipTapJSON else {
@@ -343,8 +360,7 @@ final class DocumentRepository: @unchecked Sendable {
 
     func setFavorite(id: String, isFavorite: Bool) throws -> DocumentRecord {
         try database.write { db in
-            var record = try DocumentRecord.fetchOne(db, key: id)
-                ?? { throw VellixError.documentNotFound(id) }()
+            var record = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
             record.isFavorite = isFavorite
             record.updatedAt = Date()
             try record.update(db)
@@ -353,33 +369,37 @@ final class DocumentRepository: @unchecked Sendable {
         }
     }
 
+    func attachmentRepository(store: AttachmentStore) -> AttachmentRepository {
+        let repository = AttachmentRepository(database: database, store: store)
+        repository.spaceID = spaceID
+        return repository
+    }
+
+    func editorAttachments(documentID: String, json: String, store: AttachmentStore) throws -> [EditorAttachment] {
+        let paths = EditorAttachment.paths(in: json).sorted()
+        let records = try database.read { db in
+            let owner = try SpaceOwnership.document(documentID, scope: spaceID, in: db)
+            var records = try AttachmentRecord.fetchAll(db, sql: "SELECT * FROM attachments WHERE documentID=?", arguments: [documentID])
+            for start in stride(from: 0, to: paths.count, by: 400) {
+                let chunk = Array(paths[start..<min(start + 400, paths.count)])
+                let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+                records += try AttachmentRecord.fetchAll(db, sql: "SELECT a.* FROM attachments a JOIN documents d ON d.id=a.documentID WHERE d.spaceID=? AND a.relativePath IN (\(marks))", arguments: StatementArguments([owner.spaceID ?? ""] + chunk))
+            }
+            return Array(Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }).values)
+        }
+        return records.compactMap { record in
+            guard let url = try? store.validatedFileURL(relativePath: record.relativePath), FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return EditorAttachment(record: record, media: AttachmentMedia.inspect(url: url, mimeType: record.mimeType))
+        }
+    }
+
     func duplicate(id: String, attachmentStore: AttachmentStore? = nil) throws -> DocumentRecord {
         var copiedPaths: [String] = []
         do { return try database.write { db in
-            let source = try DocumentRecord.fetchOne(db, key: id)
-                ?? { throw VellixError.documentNotFound(id) }()
-            var duplicate = source
-            duplicate.id = UUID().uuidString
-            duplicate.title = "\(source.title) Copy"
-            duplicate.isFavorite = false
-            duplicate.isTrashed = false
-            duplicate.trashedAt = nil
-            duplicate.trashBatchID = nil
-            duplicate.createdAt = Date()
-            duplicate.updatedAt = Date()
-            duplicate.lastOpenedAt = Date()
-            duplicate.revision = 1
-            try duplicate.insert(db)
-            try Self.copyCardBackground(from: source, to: &duplicate, store: attachmentStore, paths: &copiedPaths, in: db)
-            try Self.copyCover(from: source, to: &duplicate, store: attachmentStore, paths: &copiedPaths, in: db)
-            try Self.upsertSearchIndex(duplicate, in: db)
-            var allIDs = [source.id: duplicate.id]
-            let pageIDs = try Self.duplicateChildren(of: source.id, under: duplicate.id, store: attachmentStore, paths: &copiedPaths, documentIDs: &allIDs, in: db)
-            duplicate.tipTapJSON = try StructuredTemplateContent.independentTasks(
-                TipTapContentAnalyzer.remappingPageReferences(in: duplicate.tipTapJSON, documentIDs: pageIDs))
-            try duplicate.update(db)
-            try CollectionRepository.copyCollections(documentIDs: allIDs, in: db)
-            return try DocumentRecord.fetchOne(db, key: duplicate.id)!
+            let source = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
+            return try TemplateRepository(database: database).cloneTree(sourceID: source.id, title: source.title + " Copy",
+                templateID: source.templateID, originID: source.templateOriginID, spaceID: source.spaceID,
+                folderID: source.folderID, parentID: source.parentDocumentID, store: attachmentStore, paths: &copiedPaths, in: db)
         } } catch {
             for path in copiedPaths { try? attachmentStore?.removeFile(relativePath: path) }
             throw error
@@ -397,13 +417,17 @@ final class DocumentRepository: @unchecked Sendable {
                 try Self.validateParent(parentID: parentDocumentID, childID: id, in: db)
             }
 
-            var record = try DocumentRecord.fetchOne(db, key: id)
-                ?? { throw VellixError.documentNotFound(id) }()
+            var record = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
+            _ = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
+            let target = try parentDocumentID.map { try SpaceOwnership.document($0, scope: record.spaceID, in: db) }
+            guard spaceID == nil || spaceID == record.spaceID, target == nil || target?.spaceID == record.spaceID else {
+                throw VellixError.impossibleMove("Use Move to Space to transfer a complete page hierarchy.")
+            }
             if record.parentDocumentID != parentDocumentID,
                try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM collectionEntries WHERE documentID = ?)", arguments: [id]) == true {
                 throw VellixError.impossibleMove("Collection entries stay inside their collection. Use entry actions to reorder or delete them.")
             }
-            record.spaceID = spaceID
+            record.spaceID = target?.spaceID ?? record.spaceID
             record.folderID = folderID
             record.parentDocumentID = parentDocumentID
             record.updatedAt = Date()
@@ -415,8 +439,7 @@ final class DocumentRepository: @unchecked Sendable {
 
     func trash(id: String) throws -> DocumentRecord {
         try database.write { db in
-            let record = try DocumentRecord.fetchOne(db, key: id)
-                ?? { throw VellixError.documentNotFound(id) }()
+            let record = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
             let timestamp = Date()
             let trashBatchID = UUID().uuidString
             for var descendant in try Self.subtree(id: id, in: db) where !descendant.isTrashed {
@@ -433,11 +456,15 @@ final class DocumentRepository: @unchecked Sendable {
 
     func restore(id: String) throws -> DocumentRecord {
         try database.write { db in
-            let record = try DocumentRecord.fetchOne(db, key: id)
-                ?? { throw VellixError.documentNotFound(id) }()
+            let record = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
             if let parentID = record.parentDocumentID,
                try DocumentRecord.fetchOne(db, key: parentID)?.isTrashed == true {
                 throw VellixError.impossibleMove("Restore this page's parent first.")
+            }
+            for descendant in try Self.subtree(id: id, in: db) where descendant.isTrashed && descendant.dailyNoteDate != nil {
+                if try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM documents WHERE spaceID=? AND dailyNoteDate=? AND isTrashed=0 AND id<>?)", arguments: [descendant.spaceID, descendant.dailyNoteDate, descendant.id]) == true {
+                    throw DailyNoteError.duplicateDate
+                }
             }
             for var descendant in try Self.subtree(id: id, in: db)
                 where descendant.id == id || (descendant.isTrashed && record.trashBatchID != nil && descendant.trashBatchID == record.trashBatchID) {
@@ -454,21 +481,16 @@ final class DocumentRepository: @unchecked Sendable {
 
     func permanentlyDelete(id: String, attachmentStore: AttachmentStore? = nil) throws {
         try database.write { db in
+            _ = try SpaceOwnership.document(id, scope: spaceID, in: db)
             // Resolve ownership before deletion; never promote nested pages into All Pages.
             let descendants = try Self.subtree(id: id, in: db)
+            try AttachmentRepository.prepareDocumentDeletion(Set(descendants.map(\.id)), in: db)
             for descendant in descendants {
-                let attachments = try AttachmentRecord.fetchAll(
-                    db,
-                    sql: "SELECT * FROM attachments WHERE documentID = ?",
-                    arguments: [descendant.id]
-                )
-                for attachment in attachments {
-                    try attachmentStore?.removeFile(relativePath: attachment.relativePath)
-                }
                 try Self.deleteSearchIndex(id: descendant.id, in: db)
                 try db.execute(sql: "DELETE FROM documents WHERE id = ?", arguments: [descendant.id])
             }
         }
+        if let attachmentStore { try? SpaceRepository(database: database).drainAttachmentCleanup(store: attachmentStore) }
     }
 
     private static func subtree(id: String, in db: Database) throws -> [DocumentRecord] {
@@ -536,6 +558,7 @@ final class DocumentRepository: @unchecked Sendable {
 
     func breadcrumbParents(for id: String) throws -> [DocumentRecord] {
         try database.read { db in
+            _ = try SpaceOwnership.document(id, scope: spaceID, in: db)
             var result: [DocumentRecord] = []
             var seen: Set<String> = [id]
             var current = try DocumentRecord.fetchOne(db, key: id)
@@ -558,8 +581,7 @@ final class DocumentRepository: @unchecked Sendable {
             throw VellixError.impossibleMove("A document cannot be moved under itself.")
         }
 
-        let parent = try DocumentRecord.fetchOne(db, key: parentID)
-            ?? { throw VellixError.documentNotFound(parentID) }()
+        let parent = try SpaceOwnership.document(parentID, scope: nil, in: db)
         guard !parent.isTrashed && !parent.isArchived else {
             throw VellixError.impossibleMove("Restore the parent page before moving pages into it.")
         }
@@ -610,7 +632,7 @@ final class DocumentRepository: @unchecked Sendable {
 }
 
 final class SpaceRepository: @unchecked Sendable {
-    private let database: AppDatabase
+    let database: AppDatabase
 
     init(database: AppDatabase) {
         self.database = database
@@ -620,18 +642,20 @@ final class SpaceRepository: @unchecked Sendable {
         try database.read { db in
             try SpaceRecord.fetchAll(
                 db,
-                sql: "SELECT * FROM spaces WHERE isArchived = 0 ORDER BY sortOrder ASC, updatedAt DESC"
+                sql: "SELECT * FROM spaces WHERE (libraryID=penned_library() OR penned_library()='*') AND isArchived = 0 ORDER BY sortOrder ASC, updatedAt DESC"
             )
         }
     }
 
     func create(title: String, description: String? = nil) throws -> SpaceRecord {
         try database.write { db in
-            let record = SpaceRecord(
+            var record = SpaceRecord(
                 title: title.trimmedNonEmpty ?? "New Space",
                 spaceDescription: description,
-                icon: "rectangle.stack"
+                icon: "spaces",
+                sortOrder: (try Double.fetchOne(db, sql: "SELECT MAX(sortOrder) FROM spaces") ?? -1) + 1
             )
+            record.libraryID = database.libraryID
             try record.insert(db)
             return record
         }
@@ -658,6 +682,7 @@ final class SpaceRepository: @unchecked Sendable {
 
 final class FolderRepository: @unchecked Sendable {
     private let database: AppDatabase
+    var spaceID: String?
 
     init(database: AppDatabase) {
         self.database = database
@@ -667,7 +692,7 @@ final class FolderRepository: @unchecked Sendable {
         try database.read { db in
             try FolderRecord.fetchAll(
                 db,
-                sql: "SELECT * FROM folders ORDER BY sortOrder ASC, updatedAt DESC"
+                sql: "SELECT * FROM folders WHERE \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID = ?) ORDER BY sortOrder ASC, updatedAt DESC", arguments: [spaceID, spaceID]
             )
         }
     }
@@ -676,8 +701,11 @@ final class FolderRepository: @unchecked Sendable {
                 icon: String = "linesfolderfill", iconColorHex: String? = nil) throws -> FolderRecord {
         try database.write { db in
             let parent = try parentFolderID.map { try Self.requireFolder($0, in: db) }
+            let owner = try parent?.spaceID ?? spaceID ?? self.spaceID ?? SpaceOwnership.defaultSpace(in: db)
+            try SpaceOwnership.requireSpace(owner, in: db)
+            guard self.spaceID == nil || self.spaceID == owner else { throw VellixError.impossibleMove("This folder is outside the current Space.") }
             let record = FolderRecord(
-                spaceID: parent == nil ? spaceID : parent?.spaceID,
+                spaceID: owner,
                 parentFolderID: parentFolderID,
                 title: title.trimmedNonEmpty ?? "New Folder",
                 icon: icon,
@@ -690,6 +718,8 @@ final class FolderRepository: @unchecked Sendable {
 
     func rename(id: String, title: String) throws {
         try database.write { db in
+            let folder = try Self.requireFolder(id, in: db)
+            guard spaceID == nil || folder.spaceID == spaceID else { throw VellixError.impossibleMove("This folder belongs to another Space.") }
             try db.execute(
                 sql: "UPDATE folders SET title = ?, updatedAt = ? WHERE id = ?",
                 arguments: [title.trimmedNonEmpty ?? "Folder", Date(), id]
@@ -700,6 +730,7 @@ final class FolderRepository: @unchecked Sendable {
     func update(id: String, title: String, icon: String, iconColorHex: String?) throws -> FolderRecord {
         try database.write { db in
             var record = try Self.requireFolder(id, in: db)
+            guard spaceID == nil || record.spaceID == spaceID else { throw VellixError.impossibleMove("This folder belongs to another Space.") }
             record.title = title.trimmedNonEmpty ?? "Folder"
             record.icon = icon
             record.iconColorHex = iconColorHex
@@ -712,7 +743,13 @@ final class FolderRepository: @unchecked Sendable {
     // Folders and pages move together in one transaction; page ownership is never detached.
     func move(documentIDs: Set<String>, folderIDs: Set<String>, to destinationID: String?) throws {
         try database.write { db in
+            try SpaceOwnership.changingOwnership(in: db) {
             let destination = try destinationID.map { try Self.requireFolder($0, in: db) }
+            if let spaceID {
+                guard destination == nil || destination?.spaceID == spaceID else { throw VellixError.impossibleMove("Use Move to Space for another workspace.") }
+                for id in folderIDs { guard try Self.requireFolder(id, in: db).spaceID == spaceID else { throw VellixError.impossibleMove("This folder belongs to another Space.") } }
+                for id in documentIDs { _ = try SpaceOwnership.document(id, scope: spaceID, in: db) }
+            }
             let all = try FolderRecord.fetchAll(db)
             let hierarchy = FolderHierarchy(folders: all)
             let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
@@ -769,6 +806,7 @@ final class FolderRepository: @unchecked Sendable {
                     WHERE id IN (SELECT id FROM subtree)
                     """, arguments: [page.id, destinationID, targetSpace, now])
             }
+            }
         }
     }
 
@@ -776,12 +814,14 @@ final class FolderRepository: @unchecked Sendable {
         guard let folder = try FolderRecord.fetchOne(db, key: id) else {
             throw VellixError.impossibleMove("This folder no longer exists.")
         }
+        try LibraryAccess.requireSpace(folder.spaceID, in: db)
         return folder
     }
 }
 
 final class TemplateRepository: @unchecked Sendable {
     private let database: AppDatabase
+    var spaceID: String?
 
     init(database: AppDatabase) {
         self.database = database
@@ -791,17 +831,32 @@ final class TemplateRepository: @unchecked Sendable {
         try database.read { db in
             try TemplateRecord.fetchAll(
                 db,
-                sql: "SELECT * FROM templates ORDER BY category ASC, title ASC"
+                sql: "SELECT * FROM templates WHERE \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID = ?) ORDER BY category ASC, title ASC", arguments: [spaceID, spaceID]
             )
+        }
+    }
+
+    func previewDocuments() throws -> [String: DocumentRecord] {
+        try database.read { db in
+            let documents = try DocumentRecord.fetchAll(db, sql: """
+                SELECT d.* FROM templates t
+                JOIN documents d ON d.id = t.rootDocumentID AND d.templateID = t.id
+                    AND d.spaceID IS t.spaceID
+                WHERE d.parentDocumentID IS NULL AND d.isTrashed = 0 AND d.isArchived = 0
+                    AND \(LibraryAccess.spaces("t.spaceID")) AND (? IS NULL OR t.spaceID = ?)
+                """, arguments: [spaceID, spaceID])
+            return Dictionary(uniqueKeysWithValues: documents.compactMap { document in
+                document.templateID.map { ($0, document) }
+            })
         }
     }
 
     func create(title: String = "Untitled Template") throws -> DocumentRecord {
         try database.write { db in
             var template = TemplateRecord(title: title, templateDescription: "", tipTapJSON: TipTapContentAnalyzer.emptyDocumentJSON,
-                category: "Mine", isBuiltIn: false)
+                category: "Mine", isBuiltIn: false, spaceID: try spaceID ?? SpaceOwnership.defaultSpace(in: db))
             try template.insert(db)
-            let document = DocumentRecord(title: title, templateID: template.id)
+            let document = DocumentRecord(title: title, spaceID: template.spaceID, templateID: template.id)
             try document.insert(db)
             template.rootDocumentID = document.id
             try template.update(db)
@@ -814,10 +869,12 @@ final class TemplateRepository: @unchecked Sendable {
         do {
             return try database.write { db in
                 var template = TemplateRecord(title: title.trimmedNonEmpty ?? document.title, templateDescription: "",
-                    icon: document.icon, tipTapJSON: document.tipTapJSON, category: "Mine", isBuiltIn: false)
+                    icon: document.icon, tipTapJSON: document.tipTapJSON, category: "Mine", isBuiltIn: false, spaceID: document.spaceID)
+                _ = try SpaceOwnership.document(document.id, scope: spaceID, in: db)
                 try template.insert(db)
                 let root = try cloneTree(sourceID: document.id, title: template.title, templateID: template.id,
-                    originID: nil, spaceID: nil, folderID: nil, parentID: nil, store: attachmentStore, paths: &copiedPaths, in: db)
+                    originID: nil, spaceID: template.spaceID, folderID: nil, parentID: nil, store: attachmentStore, paths: &copiedPaths, in: db,
+                    resetsComponentResponses: true)
                 template.rootDocumentID = root.id
                 template.tipTapJSON = root.tipTapJSON
                 try template.update(db)
@@ -850,6 +907,11 @@ final class TemplateRepository: @unchecked Sendable {
             return try database.write { db in
                 let template = try requireTemplate(id, in: db)
                 let root = try materialize(template, store: attachmentStore, paths: &copiedPaths, in: db)
+                guard try !hasInteractiveComponents(requireTemplate(template.id, in: db), in: db) else {
+                    throw VellixError.impossibleMove("This template contains Daily Note components. Choose it in Daily Notes settings and create a note from Calendar.")
+                }
+                let owner = spaceID ?? self.spaceID ?? template.spaceID
+                guard owner == template.spaceID else { throw VellixError.impossibleMove("Copy the template to this Space before using it.") }
                 if let parentID {
                     guard let parent = try DocumentRecord.fetchOne(db, key: parentID), !parent.isTrashed,
                           !parent.isArchived, parent.templateID == nil else {
@@ -857,7 +919,7 @@ final class TemplateRepository: @unchecked Sendable {
                     }
                 }
                 return try cloneTree(sourceID: root.id, title: title, templateID: nil, originID: id,
-                    spaceID: spaceID, folderID: folderID, parentID: parentID,
+                    spaceID: owner, folderID: folderID, parentID: parentID,
                     store: attachmentStore, paths: &copiedPaths, in: db)
             }
         } catch {
@@ -896,38 +958,65 @@ final class TemplateRepository: @unchecked Sendable {
     }
 
     func delete(id: String, attachmentStore: AttachmentStore? = nil) throws {
-        let paths: [String] = try database.write { db in
-            guard !(try requireTemplate(id, in: db)).isBuiltIn else { return [] }
-            let paths = try String.fetchAll(db, sql: "SELECT relativePath FROM attachments WHERE documentID IN (SELECT id FROM documents WHERE templateID = ?)", arguments: [id])
+        try database.write { db in
+            guard !(try requireTemplate(id, in: db)).isBuiltIn else { return }
+            let ids = Set(try String.fetchAll(db, sql: "SELECT id FROM documents WHERE templateID=?", arguments: [id]))
+            try AttachmentRepository.prepareDocumentDeletion(ids, in: db)
             try db.execute(sql: "UPDATE documents SET templateOriginID = NULL WHERE templateOriginID = ?", arguments: [id])
             try db.execute(sql: "DELETE FROM documentSearch WHERE documentID IN (SELECT id FROM documents WHERE templateID = ?)", arguments: [id])
             try db.execute(sql: "DELETE FROM documents WHERE templateID = ?", arguments: [id])
             try db.execute(sql: "DELETE FROM templates WHERE id = ? AND isBuiltIn = 0", arguments: [id])
-            return paths
         }
-        for path in paths { try? attachmentStore?.removeFile(relativePath: path) }
+        if let attachmentStore { try? SpaceRepository(database: database).drainAttachmentCleanup(store: attachmentStore) }
     }
 
     private func requireTemplate(_ id: String, in db: Database) throws -> TemplateRecord {
         guard let record = try TemplateRecord.fetchOne(db, key: id) else {
             throw VellixError.impossibleMove("This template no longer exists.")
         }
+        guard spaceID == nil || record.spaceID == spaceID else { throw VellixError.impossibleMove("This template belongs to another Space.") }
+        try LibraryAccess.requireSpace(record.spaceID, in: db)
         return record
     }
 
-    private func materialize(_ template: TemplateRecord, store: AttachmentStore?, paths: inout [String], in db: Database) throws -> DocumentRecord {
+    func dailyNoteOnlyTemplateIDs() throws -> Set<String> {
+        try database.read { db in
+            let records = try TemplateRecord.fetchAll(db, sql: "SELECT * FROM templates WHERE \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID=?)", arguments: [spaceID, spaceID])
+            return Set(try records.filter { try hasInteractiveComponents($0, in: db) }.map(\.id))
+        }
+    }
+
+    func hasInteractiveComponents(id: String) throws -> Bool {
+        try database.read { db in try hasInteractiveComponents(requireTemplate(id, in: db), in: db) }
+    }
+
+    private func hasInteractiveComponents(_ template: TemplateRecord, in db: Database) throws -> Bool {
+        if template.rootDocumentID == nil && TemplateComponentDefinition.contains(in: template.tipTapJSON) { return true }
+        let roots = template.rootDocumentID.map { Set([$0]) } ?? TipTapContentAnalyzer.pageReferenceIDs(in: template.tipTapJSON)
+        for root in roots {
+            let json = try String.fetchAll(db, sql: """
+                WITH RECURSIVE owned(id) AS (SELECT id FROM documents WHERE id=? AND spaceID IS ? AND isTrashed=0
+                    UNION SELECT d.id FROM documents d JOIN owned p ON d.parentDocumentID=p.id WHERE d.isTrashed=0 AND d.spaceID IS ?)
+                SELECT tipTapJSON FROM documents WHERE id IN (SELECT id FROM owned)
+                """, arguments: [root, template.spaceID, template.spaceID])
+            if json.contains(where: TemplateComponentDefinition.contains(in:)) { return true }
+        }
+        return false
+    }
+
+    func materialize(_ template: TemplateRecord, store: AttachmentStore?, paths: inout [String], in db: Database) throws -> DocumentRecord {
         if let id = template.rootDocumentID, let document = try DocumentRecord.fetchOne(db, key: id) { return document }
         let analysis = try TipTapContentAnalyzer.analyze(StructuredTemplateContent.independentTasks(template.tipTapJSON))
         var root = DocumentRecord(title: template.title, icon: template.icon, tipTapJSON: analysis.canonicalJSON,
-            plainText: analysis.plainText, previewText: analysis.previewText, templateID: template.id)
+            plainText: analysis.plainText, previewText: analysis.previewText, spaceID: template.spaceID, templateID: template.id)
         try root.insert(db)
         var pageIDs: [String: String] = [:]
         for pageID in TipTapContentAnalyzer.pageReferenceIDs(in: root.tipTapJSON) {
-            guard let source = try DocumentRecord.fetchOne(db, key: pageID) else {
+            guard let source = try DocumentRecord.fetchOne(db, key: pageID), source.spaceID == template.spaceID else {
                 throw VellixError.impossibleMove("A nested page used by this legacy template is missing.")
             }
             let child = try cloneTree(sourceID: source.id, title: source.title, templateID: template.id,
-                originID: nil, spaceID: nil, folderID: nil, parentID: root.id, store: store, paths: &paths, in: db)
+                originID: nil, spaceID: template.spaceID, folderID: nil, parentID: root.id, store: store, paths: &paths, in: db)
             pageIDs[pageID] = child.id
         }
         root.tipTapJSON = try TipTapContentAnalyzer.remappingPageReferences(in: root.tipTapJSON, documentIDs: pageIDs)
@@ -936,18 +1025,23 @@ final class TemplateRepository: @unchecked Sendable {
         return root
     }
 
-    private func cloneTree(sourceID: String, title: String, templateID: String?, originID: String?,
+    func cloneTree(sourceID: String, title: String, templateID: String?, originID: String?,
                            spaceID: String?, folderID: String?, parentID: String?, store: AttachmentStore?,
-                           paths: inout [String], in db: Database) throws -> DocumentRecord {
+                           paths: inout [String], in db: Database, includeInactive: Bool = false,
+                           identities: [String: String] = [:], folderIdentities: [String: String] = [:],
+                           collectionsCopied: (([String: String]) -> Void)? = nil,
+                           attachmentsCopied: (([String: String]) -> Void)? = nil,
+                           resetsComponentResponses: Bool = false) throws -> DocumentRecord {
         let sources = try DocumentRecord.fetchAll(db, sql: """
             WITH RECURSIVE owned(id) AS (
                 SELECT id FROM documents WHERE id = ?
                 UNION SELECT d.id FROM documents d JOIN owned p ON d.parentDocumentID = p.id
-                    WHERE d.isTrashed = 0 AND d.isArchived = 0
+                    WHERE (\(includeInactive ? 1 : 0) OR (d.isTrashed = 0 AND d.isArchived = 0))
             ) SELECT d.* FROM documents d JOIN owned ON d.id = owned.id
             """, arguments: [sourceID])
         guard sources.contains(where: { $0.id == sourceID }) else { throw VellixError.documentNotFound(sourceID) }
-        let ids = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, UUID().uuidString) })
+        let ids = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, identities[$0.id] ?? UUID().uuidString) })
+        let batches = Dictionary(uniqueKeysWithValues: Set(sources.compactMap(\.trashBatchID)).map { ($0, UUID().uuidString) })
         var copies: [String: DocumentRecord] = [:]
         // Insert parents before children so every write also works with immediate FK checks.
         var remaining = sources
@@ -958,17 +1052,18 @@ final class TemplateRepository: @unchecked Sendable {
             let source = remaining.remove(at: index)
             var copy = source
             copy.id = ids[source.id]!
+            copy.dailyNoteDate = includeInactive && templateID == nil && spaceID != source.spaceID ? source.dailyNoteDate : nil
             copy.parentDocumentID = source.id == sourceID ? parentID : ids[source.parentDocumentID ?? ""]
             copy.title = source.id == sourceID ? (title.trimmedNonEmpty ?? source.title) : source.title
             copy.spaceID = spaceID
-            copy.folderID = folderID
+            copy.folderID = source.folderID.flatMap { folderIdentities[$0] } ?? folderID
             copy.templateID = templateID
             copy.templateOriginID = originID
             copy.isFavorite = false
-            copy.isArchived = false
-            copy.isTrashed = false
-            copy.trashedAt = nil
-            copy.trashBatchID = nil
+            copy.isArchived = includeInactive ? source.isArchived : false
+            copy.isTrashed = includeInactive ? source.isTrashed : false
+            copy.trashedAt = includeInactive ? source.trashedAt : nil
+            copy.trashBatchID = includeInactive ? source.trashBatchID.flatMap { batches[$0] } : nil
             copy.createdAt = Date()
             copy.updatedAt = Date()
             copy.lastOpenedAt = nil
@@ -976,22 +1071,42 @@ final class TemplateRepository: @unchecked Sendable {
             try copy.insert(db)
             copies[source.id] = copy
         }
+        // Build the whole asset map before rewriting any child that may use a
+        // cover/background owned by another page in this same copied tree.
+        var fileMap: [String: String] = [:]
         for source in sources {
-            var copy = copies[source.id]!
-            var fileMap: [String: String] = [:]
+            let copy = copies[source.id]!
             let assets = try AttachmentRecord.fetchAll(db, sql: "SELECT * FROM attachments WHERE documentID = ?", arguments: [source.id])
             if !assets.isEmpty, store == nil { throw VellixError.impossibleMove("The template attachment store is unavailable.") }
             for asset in assets {
                 guard let store else { continue }
-                let assetCopy = try store.importFile(at: store.fileURL(relativePath: asset.relativePath), documentID: copy.id)
-                paths.append(assetCopy.relativePath)
+                let assetCopy = try store.copy(asset, documentID: copy.id)
+                paths.append(contentsOf: assetCopy.storedPaths)
                 try assetCopy.insert(db)
                 fileMap[asset.relativePath] = assetCopy.relativePath
+                fileMap[asset.id] = assetCopy.id
+                if let old = asset.thumbnailRelativePath, let new = assetCopy.thumbnailRelativePath { fileMap[old] = new }
             }
+        }
+        // A pasted file may be owned by a different page in this Space. Give the
+        // copied tree its own file rather than retaining a dependency on that page.
+        for source in sources {
+            for path in EditorAttachment.paths(in: source.tipTapJSON).sorted() where fileMap[path] == nil {
+                guard let asset = try AttachmentRecord.fetchOne(db, sql: "SELECT a.* FROM attachments a JOIN documents d ON d.id=a.documentID WHERE a.relativePath=? AND d.spaceID IS ?", arguments: [path, source.spaceID]) else { continue }
+                guard let store else { throw VellixError.attachmentImport("The attachment store is unavailable.") }
+                let assetCopy = try store.copy(asset, documentID: copies[source.id]!.id)
+                paths.append(contentsOf: assetCopy.storedPaths); try assetCopy.insert(db)
+                fileMap[path] = assetCopy.relativePath; fileMap[asset.id] = assetCopy.id
+                if let old = asset.thumbnailRelativePath, let new = assetCopy.thumbnailRelativePath { fileMap[old] = new }
+            }
+        }
+        for source in sources {
+            var copy = copies[source.id]!
             copy.cover = copy.cover.map { fileMap[$0] ?? $0 }
             copy.appearanceJSON = try StructuredTemplateContent.replacingPaths(copy.appearanceJSON, paths: fileMap)
             copy.cardStyleJSON = try StructuredTemplateContent.replacingPaths(copy.cardStyleJSON, paths: fileMap)
-            let analysis = try TipTapContentAnalyzer.analyze(StructuredTemplateContent.independent(source.tipTapJSON, pages: ids, paths: fileMap))
+            let mappings = identities.merging(ids) { _, new in new }
+            let analysis = try TipTapContentAnalyzer.analyze(StructuredTemplateContent.independent(source.tipTapJSON, pages: mappings, paths: fileMap, resetsComponentResponses: resetsComponentResponses))
             copy.tipTapJSON = analysis.canonicalJSON
             copy.plainText = analysis.plainText
             copy.previewText = analysis.previewText
@@ -1000,15 +1115,25 @@ final class TemplateRepository: @unchecked Sendable {
             copy.estimatedReadingMinutes = analysis.estimatedReadingMinutes
             try copy.update(db)
             try DocumentRepository.upsertSearchIndex(copy, in: db)
+            if includeInactive {
+                for var snapshot in try DocumentSnapshotRecord.fetchAll(db, sql: "SELECT * FROM documentSnapshots WHERE documentID=?", arguments: [source.id]) {
+                    snapshot.id = UUID().uuidString; snapshot.documentID = copy.id
+                    snapshot.tipTapJSON = try StructuredTemplateContent.independent(snapshot.tipTapJSON, pages: mappings, paths: fileMap)
+                    try snapshot.insert(db)
+                }
+            }
             copies[source.id] = copy
         }
-        try CollectionRepository.copyCollections(documentIDs: ids, in: db)
+        let collectionIDs = try CollectionRepository.copyCollections(documentIDs: ids, in: db)
+        collectionsCopied?(collectionIDs)
+        attachmentsCopied?(fileMap)
         return try DocumentRecord.fetchOne(db, key: copies[sourceID]!.id)!
     }
 }
 
 final class SnapshotRepository: @unchecked Sendable {
     private let database: AppDatabase
+    var spaceID: String?
     private let automaticLimit: Int
 
     init(database: AppDatabase, automaticLimit: Int = 20) {
@@ -1018,6 +1143,7 @@ final class SnapshotRepository: @unchecked Sendable {
 
     func create(document: DocumentRecord, reason: SnapshotReason) throws -> DocumentSnapshotRecord {
         try database.write { db in
+            _ = try SpaceOwnership.document(document.id, scope: spaceID, in: db)
             let snapshot = DocumentSnapshotRecord(
                 documentID: document.id,
                 tipTapJSON: document.tipTapJSON,
@@ -1035,7 +1161,8 @@ final class SnapshotRepository: @unchecked Sendable {
 
     func history(documentID: String) throws -> [DocumentSnapshotRecord] {
         try database.read { db in
-            try DocumentSnapshotRecord.fetchAll(
+            _ = try SpaceOwnership.document(documentID, scope: spaceID, in: db)
+            return try DocumentSnapshotRecord.fetchAll(
                 db,
                 sql: """
                     SELECT * FROM documentSnapshots
@@ -1053,6 +1180,7 @@ final class SnapshotRepository: @unchecked Sendable {
                 ?? { throw VellixError.snapshotRestore("Snapshot was not found.") }()
             var document = try DocumentRecord.fetchOne(db, key: snapshot.documentID)
                 ?? { throw VellixError.documentNotFound(snapshot.documentID) }()
+            _ = try SpaceOwnership.document(document.id, scope: spaceID, in: db)
             let analysis = try TipTapContentAnalyzer.analyze(snapshot.tipTapJSON)
 
             let currentSnapshot = DocumentSnapshotRecord(
@@ -1080,6 +1208,7 @@ final class SnapshotRepository: @unchecked Sendable {
 
     func delete(snapshotID: String) throws {
         try database.write { db in
+            if let snapshot = try DocumentSnapshotRecord.fetchOne(db, key: snapshotID) { _ = try SpaceOwnership.document(snapshot.documentID, scope: spaceID, in: db) }
             try db.execute(sql: "DELETE FROM documentSnapshots WHERE id = ?", arguments: [snapshotID])
         }
     }

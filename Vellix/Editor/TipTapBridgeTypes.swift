@@ -7,12 +7,19 @@ import Foundation
 import CoreGraphics
 
 enum TipTapEditorEvent: Equatable {
+    case tagRequest(InlineTagRequest)
     case requestCollection(CollectionEditorRequest)
+    case requestTemplateComponent(TemplateComponentRequest)
+    case requestAttachment(AttachmentEditorRequest)
+    case requestAttachmentActions(AttachmentEditorRequest)
+    case importAttachments(token: String, files: [AttachmentImportData])
+    case attachmentClipboard(token: String, html: String, text: String)
     case editorReady(blockCount: Int)
     case documentChanged(String)
     case documentSnapshot(String)
     case editorError(String)
     case focusChanged(Bool)
+    case formattingStateChanged(TipTapFormattingState)
     case statisticsChanged(wordCount: Int, characterCount: Int)
     case contentHeightChanged(height: CGFloat, visualContentBottom: CGFloat)
     case caretChanged(TipTapCaretUpdate)
@@ -21,6 +28,7 @@ enum TipTapEditorEvent: Equatable {
     case blockSelectionChanged(Int)
     case selectionModeChanged(String)
     case requestCalloutIconPicker(blockID: String, icon: String, color: String)
+    case requestCalloutColorPicker(blockID: String, color: String)
     case requestBlockquoteColorPicker(blockID: String, color: String)
     case requestInlinePropertyEditor(blockID: String, property: InlinePropertyDefinition)
     case requestPropertyURL(String)
@@ -28,6 +36,7 @@ enum TipTapEditorEvent: Equatable {
     case requestPageCard(blockID: String)
     case requestOpenPage(documentID: String)
     case requestPageActions(documentID: String)
+    case requestBlockDeletion(token: String)
     case slashMenuChanged(TipTapSlashMenuState?)
     case selectedBlocksForSubpage(title: String, canonicalJSON: String)
     case requestHaptic(style: String)
@@ -46,6 +55,41 @@ enum TipTapEditorEvent: Equatable {
 
     init(kind: String, payload: [String: Any]) throws {
         switch kind {
+        case "tagRequest":
+            self = InlineTagRequest.decode(payload).map(Self.tagRequest) ?? .unknown(kind)
+        case "attachmentClipboard":
+            guard let token = payload["token"] as? String, let html = payload["html"] as? String,
+                  html.utf8.count <= 4 * 1024 * 1024 else { self = .editorError("The selected blocks are too large to copy together."); return }
+            self = .attachmentClipboard(token: token, html: html, text: payload["text"] as? String ?? "")
+        case "attachmentMenu", "attachmentActions":
+            guard let id = payload["blockID"] as? String, !id.isEmpty,
+                  let path = payload["relativePath"] as? String else { self = .unknown(kind); return }
+            let request = AttachmentEditorRequest(blockID: id, relativePath: path,
+                mode: payload["mode"] as? String ?? "card", width: payload["width"] as? Double,
+                alignment: payload["alignment"] as? String ?? "left")
+            self = kind == "attachmentActions" ? .requestAttachmentActions(request) : .requestAttachment(request)
+        case "attachmentImport":
+            guard let token = payload["token"] as? String, let raw = payload["files"] as? [[String: Any]], raw.count <= 20 else {
+                self = .editorError("The pasted files could not be imported."); return
+            }
+            var files: [AttachmentImportData] = []
+            var total = 0
+            for file in raw {
+                guard let text = file["base64"] as? String, text.count <= 45 * 1024 * 1024,
+                      let data = Data(base64Encoded: text), data.count <= 32 * 1024 * 1024 else {
+                    self = .editorError("Use Add > File to import this file."); return
+                }
+                total += data.count
+                guard total <= 64 * 1024 * 1024 else { self = .editorError("Import these files separately using Add > File."); return }
+                files.append(AttachmentImportData(name: file["name"] as? String ?? "Attachment", mimeType: file["mimeType"] as? String, data: data))
+            }
+            self = .importAttachments(token: token, files: files)
+        case "templateComponentConfigure":
+            guard let id = payload["blockID"] as? String, !id.isEmpty,
+                  let definition = TemplateComponentDefinition.decode(payload["definition"]) else {
+                self = .editorError("The component configuration could not be read."); return
+            }
+            self = .requestTemplateComponent(TemplateComponentRequest(blockID: id, definition: definition))
         case "collectionRequest":
             guard let action = payload["action"] as? String else { self = .unknown(kind); return }
             self = .requestCollection(CollectionEditorRequest(action: action,
@@ -88,6 +132,9 @@ enum TipTapEditorEvent: Equatable {
         case "focus":
             let focused = payload["focused"] as? Bool ?? false
             self = .focusChanged(focused)
+
+        case "formattingState":
+            self = .formattingStateChanged(TipTapFormattingState.decode(payload))
 
         case "statistics":
             let words = payload["wordCount"] as? Int
@@ -152,6 +199,11 @@ enum TipTapEditorEvent: Equatable {
             let color = payload["currentColor"] as? String ?? "#ffffff"
             self = .requestBlockquoteColorPicker(blockID: blockID, color: color)
 
+        case "calloutColorPickerRequest":
+            let blockID = payload["blockId"] as? String ?? ""
+            let color = payload["currentColor"] as? String ?? "#ffffff"
+            self = .requestCalloutColorPicker(blockID: blockID, color: color)
+
         case "propertyEditorRequest":
             guard let blockID = payload["blockId"] as? String, !blockID.isEmpty,
                   let property = InlinePropertyDefinition.decode(payload["property"]) else {
@@ -183,6 +235,13 @@ enum TipTapEditorEvent: Equatable {
 
         case "pageActionsRequest":
             self = .requestPageActions(documentID: payload["documentId"] as? String ?? "")
+
+        case "blockActionsRequest":
+            guard let token = payload["token"] as? String, !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                self = .unknown(kind)
+                return
+            }
+            self = .requestBlockDeletion(token: token)
 
         case "selectedBlocksForSubpage":
             let title = payload["title"] as? String ?? "New Sub Page"
@@ -255,6 +314,31 @@ enum TipTapEditorEvent: Equatable {
             }
             return TipTapPageBreakRegion(y: y, height: height)
         }
+    }
+}
+
+nonisolated struct TipTapFormattingState: Equatable {
+    var bold = false
+    var italic = false
+    var underline = false
+    var strike = false
+    var code = false
+    var alignment: String?
+    var checklist = false
+    var bulletList = false
+    var numberList = false
+
+    static func decode(_ payload: [String: Any]) -> Self {
+        let alignment = payload["alignment"] as? String
+        return Self(bold: payload["bold"] as? Bool ?? false,
+            italic: payload["italic"] as? Bool ?? false,
+            underline: payload["underline"] as? Bool ?? false,
+            strike: payload["strike"] as? Bool ?? false,
+            code: payload["code"] as? Bool ?? false,
+            alignment: alignment.flatMap { ["left", "center", "right", "justify"].contains($0) ? $0 : nil },
+            checklist: payload["checklist"] as? Bool ?? false,
+            bulletList: payload["bulletList"] as? Bool ?? false,
+            numberList: payload["numberList"] as? Bool ?? false)
     }
 }
 

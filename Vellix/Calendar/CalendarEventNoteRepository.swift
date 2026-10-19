@@ -60,9 +60,9 @@ final class CalendarEventNoteRepository: @unchecked Sendable {
             let identity = event.identity
             try db.execute(sql: """
                 INSERT INTO calendarEventNotes
-                (id, eventKey, documentID, calendarID, sourceID, localID, externalID, occurrenceKey, createdAt)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, arguments: [UUID().uuidString, identity.key, document.id, identity.calendarID,
+                (id, eventKey, documentID, spaceID, calendarID, sourceID, localID, externalID, occurrenceKey, createdAt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [UUID().uuidString, identity.key, document.id, document.spaceID, identity.calendarID,
                     identity.sourceID, identity.localID, identity.externalID, identity.occurrenceKey, Date()])
             return document
         }
@@ -71,16 +71,18 @@ final class CalendarEventNoteRepository: @unchecked Sendable {
     }
 
     private func matchingLink(_ identity: CalendarEventIdentity, in db: Database) throws -> Row? {
-        if let exact = try Row.fetchOne(db, sql: "SELECT * FROM calendarEventNotes WHERE eventKey = ?", arguments: [identity.key]) { return exact }
+        let scope = try documents.spaceID ?? SpaceOwnership.defaultSpace(in: db)
+        try LibraryAccess.requireSpace(scope, in: db)
+        if let exact = try Row.fetchOne(db, sql: "SELECT * FROM calendarEventNotes WHERE spaceID=? AND eventKey = ?", arguments: [scope, identity.key]) { return exact }
         // Local IDs survive calendar moves. Require a unique match; never merge two notes.
-        let local = try Row.fetchAll(db, sql: "SELECT * FROM calendarEventNotes WHERE localID = ? AND occurrenceKey = ?",
-                                    arguments: [identity.localID, identity.occurrenceKey])
+        let local = try Row.fetchAll(db, sql: "SELECT * FROM calendarEventNotes WHERE spaceID=? AND localID = ? AND occurrenceKey = ?",
+                                    arguments: [scope, identity.localID, identity.occurrenceKey])
         if local.count == 1 { return local[0] }
         guard let externalID = identity.externalID else { return nil }
         let external = try Row.fetchAll(db, sql: """
-            SELECT * FROM calendarEventNotes WHERE externalID = ? AND calendarID = ?
+            SELECT * FROM calendarEventNotes WHERE spaceID=? AND externalID = ? AND calendarID = ?
             AND sourceID = ? AND occurrenceKey = ?
-            """, arguments: [externalID, identity.calendarID, identity.sourceID, identity.occurrenceKey])
+            """, arguments: [scope, externalID, identity.calendarID, identity.sourceID, identity.occurrenceKey])
         return external.count == 1 ? external[0] : nil
     }
 

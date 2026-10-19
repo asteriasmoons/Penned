@@ -65,6 +65,8 @@ enum DocumentBrowserMode: Equatable {
 
 struct DocumentBrowserView: View {
     @EnvironmentObject private var environment: AppEnvironment
+    @Environment(\.pennedWorkspace) private var workspace
+    @Environment(\.pennedGalleryColumns) private var preferredColumns
     var mode: DocumentBrowserMode
     var documents: [DocumentRecord]
     var displayTitle: String?
@@ -75,11 +77,29 @@ struct DocumentBrowserView: View {
     @State private var selectedIDs: Set<String> = []
     @State private var selectedFolderIDs: Set<String> = []
     @State private var confirmTrash = false
+    @State private var confirmEmptyTrash = false
+    @State private var availableWidth: CGFloat = 0
+    @State private var scrollPosition = ScrollPosition(edge: .top)
+
+    private var columnCount: Int {
+        workspace == nil ? 2 : (availableWidth > 0
+            ? PadWorkspaceMetrics.galleryColumns(width: max(0, availableWidth - 32), preferred: preferredColumns)
+            : preferredColumns)
+    }
+    private let gallerySpacing: CGFloat = 10
+    private var cardWidth: CGFloat? {
+        workspace != nil && availableWidth > 0
+            ? PadWorkspaceMetrics.galleryCardWidth(available: availableWidth, columns: columnCount) : nil
+    }
+    private var galleryWidth: CGFloat? {
+        workspace != nil && availableWidth > 0
+            ? PadWorkspaceMetrics.galleryWidth(available: availableWidth, columns: columnCount) : nil
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                LibrarySearchField(query: $query, scope: $searchScope)
+                if workspace == nil || !query.isEmpty { LibrarySearchField(query: $query, scope: $searchScope) }
 
                 if documents.isEmpty && childFolders.isEmpty {
                     VellixEmptyState(
@@ -98,27 +118,33 @@ struct DocumentBrowserView: View {
                 } else {
                     VStack(spacing: 10) {
                         if !filteredFolders.isEmpty {
-                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: columnCount), spacing: 10) {
                                 ForEach(filteredFolders) { folder in folderTile(folder) }
                             }
                         }
                         if !filteredDocuments.isEmpty {
-                            HStack(alignment: .top, spacing: 10) {
-                                ForEach(0..<2, id: \.self) { column in
-                                    LazyVStack(spacing: 10) {
+                            HStack(alignment: .top, spacing: gallerySpacing) {
+                                ForEach(0..<columnCount, id: \.self) { column in
+                                    LazyVStack(spacing: gallerySpacing) {
                                         ForEach(documentColumns[column]) { document in
                                             preview(document)
                                         }
                                     }
-                                    .frame(maxWidth: .infinity)
+                                    .frame(width: cardWidth)
+                                    .frame(maxWidth: workspace == nil ? .infinity : nil)
                                 }
                             }
                         }
                     }
                 }
             }
-            .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 100)
+            .frame(width: galleryWidth, alignment: .leading)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, alignment: workspace == nil ? .center : .leading)
+            .padding(.top, 12).padding(.bottom, workspace == nil ? 100 : 24)
         }
+        .scrollPosition($scrollPosition)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { availableWidth = $0 }
         .background(Color.black)
         .navigationTitle(displayTitle ?? mode.title)
         .toolbar {
@@ -139,43 +165,7 @@ struct DocumentBrowserView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    Picker("Sort", selection: $sort) {
-                        ForEach(LibraryDocumentSort.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    if isSelecting {
-                        Button("Select All") {
-                            selectedIDs = Set(filteredDocuments.map(\.id))
-                            selectedFolderIDs = Set(filteredFolders.map(\.id))
-                        }
-                        if mode != .trash {
-                            if parentID == nil {
-                                Button("Move Selected") {
-                                    environment.requestMove(documentIDs: selectedIDs, folderIDs: selectedFolderIDs)
-                                }.disabled(selectedIDs.isEmpty && selectedFolderIDs.isEmpty)
-                            }
-                            Button("Star Selected") { starSelection() }.disabled(selectedIDs.isEmpty)
-                            Button("Remove Stars") { environment.starDocuments(selectedIDs, isFavorite: false) }
-                                .disabled(selectedIDs.isEmpty)
-                            Button("Move Selected to Trash", role: .destructive) { confirmTrash = true }
-                                .disabled(selectedIDs.isEmpty)
-                        } else {
-                            Button("Restore Selected") {
-                                for document in documents where selectedIDs.contains(document.id) { environment.restore(document) }
-                                selectedIDs.removeAll()
-                            }.disabled(selectedIDs.isEmpty)
-                        }
-                    } else if mode != .trash {
-                        if parentID == nil {
-                            Button("New Folder") { environment.requestFolderCreation(parentFolderID: folderID) }
-                            if let folder = environment.overview.folders.first(where: { $0.id == folderID }) {
-                                Button("Edit Folder") { environment.editFolder(folder) }
-                                Button("Move Folder") { environment.requestMove(folderIDs: [folder.id]) }
-                            }
-                        }
-                        Button("New Page") {
-                            _ = environment.createDocument(folderID: folderID, parentDocumentID: parentID)
-                        }
-                    }
+                    browserOptions
                 } label: { LibraryIcon(name: "dotswavy") }
                 .accessibilityLabel("Document options")
             }
@@ -185,6 +175,12 @@ struct DocumentBrowserView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Their nested pages will also move to Trash. You can restore them later.")
+        }
+        .confirmationDialog("Permanently delete all trashed documents?", isPresented: $confirmEmptyTrash, titleVisibility: .visible) {
+            Button("Empty Trash", role: .destructive) { environment.emptyTrash() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This also removes their nested pages, snapshots and attachments. This cannot be undone.")
         }
         .onChange(of: documents.map(\.id)) { _, ids in
             selectedIDs.formIntersection(Set(ids))
@@ -197,6 +193,41 @@ struct DocumentBrowserView: View {
             selectedIDs.removeAll()
             selectedFolderIDs.removeAll()
             isSelecting = false
+        }
+    }
+
+    @ViewBuilder private var browserOptions: some View {
+        if workspace != nil && mode == .trash && !documents.isEmpty {
+            Button("Empty Trash", role: .destructive) { confirmEmptyTrash = true }
+        }
+        if workspace == nil {
+            Picker("Sort", selection: $sort) { ForEach(LibraryDocumentSort.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
+        }
+        if isSelecting {
+            Button("Select All") { selectedIDs = Set(filteredDocuments.map(\.id)); selectedFolderIDs = Set(filteredFolders.map(\.id)) }
+            if mode != .trash {
+                if parentID == nil {
+                    Button("Move Selected") { environment.requestMove(documentIDs: selectedIDs, folderIDs: selectedFolderIDs) }
+                        .disabled(selectedIDs.isEmpty && selectedFolderIDs.isEmpty)
+                }
+                Button("Star Selected") { starSelection() }.disabled(selectedIDs.isEmpty)
+                Button("Remove Stars") { environment.starDocuments(selectedIDs, isFavorite: false) }.disabled(selectedIDs.isEmpty)
+                Button("Move Selected to Trash", role: .destructive) { confirmTrash = true }.disabled(selectedIDs.isEmpty)
+            } else {
+                Button("Restore Selected") {
+                    for document in documents where selectedIDs.contains(document.id) { environment.restore(document) }
+                    selectedIDs.removeAll()
+                }.disabled(selectedIDs.isEmpty)
+            }
+        } else if mode != .trash {
+            if parentID == nil {
+                Button("New Folder") { environment.requestFolderCreation(parentFolderID: folderID) }
+                if let folder = environment.overview.folders.first(where: { $0.id == folderID }) {
+                    Button("Edit Folder") { environment.editFolder(folder) }
+                    Button("Move Folder") { environment.requestMove(folderIDs: [folder.id]) }
+                }
+            }
+            Button("New Page") { _ = environment.createDocument(folderID: folderID, parentDocumentID: parentID) }
         }
     }
 
@@ -242,9 +273,11 @@ struct DocumentBrowserView: View {
             if isSelecting {
                 if selectedIDs.contains(document.id) { selectedIDs.remove(document.id) }
                 else { selectedIDs.insert(document.id) }
+            } else if let workspace {
+                Task { do { try await workspace.openDocument(document) } catch { environment.report(error) } }
             } else { environment.select(document) }
         } label: {
-            LibraryDocumentPreview(document: document)
+            LibraryDocumentPreview(document: document, visibleHeightFraction: workspace == nil ? 1 : PadWorkspaceMetrics.galleryPreviewHeightFraction)
                 .overlay(alignment: .bottomTrailing) {
                     if isSelecting {
                         LibraryIcon(name: selectedIDs.contains(document.id) ? "checkwavy" : "selectsparkle", size: 20)
@@ -279,8 +312,8 @@ struct DocumentBrowserView: View {
 
     // Stable reading order down each column; each cached image keeps its own height.
     private var documentColumns: [[DocumentRecord]] {
-        var result: [[DocumentRecord]] = [[], []]
-        for (index, document) in filteredDocuments.enumerated() { result[index % 2].append(document) }
+        var result = Array(repeating: [DocumentRecord](), count: columnCount)
+        for (index, document) in filteredDocuments.enumerated() { result[index % columnCount].append(document) }
         return result
     }
 
@@ -423,6 +456,7 @@ struct DocumentCard: View {
 
 struct DocumentContextMenu: View {
     @EnvironmentObject private var environment: AppEnvironment
+    @Environment(\.pennedWorkspace) private var workspace
     var document: DocumentRecord
     var trashAction: (() -> Void)? = nil
 
@@ -439,6 +473,11 @@ struct DocumentContextMenu: View {
                 Label("Delete Permanently", systemImage: "trash.slash")
             }
         } else {
+            if let workspace {
+                Button {
+                    Task { do { try await workspace.openDocument(document, newTab: true) } catch { environment.report(error) } }
+                } label: { Label { Text("Open in New Tab") } icon: { LibraryIcon(name: "addwavy", size: 18) } }
+            }
             Button {
                 environment.select(document)
             } label: {
@@ -448,6 +487,7 @@ struct DocumentContextMenu: View {
                 Button { environment.requestMove(documentIDs: [document.id]) } label: {
                     Label { Text("Move To Folder") } icon: { LibraryIcon(name: "openedfolder", size: 18) }
                 }
+                SpaceTransferActions(item: .document(document.id))
             }
             Button {
                 do {

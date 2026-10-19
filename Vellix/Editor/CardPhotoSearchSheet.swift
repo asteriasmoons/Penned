@@ -17,7 +17,7 @@ struct CardPhotoSearchSheet: View {
                 HStack(spacing: 10) {
                     Image("searchwavy").renderingMode(.template).resizable().scaledToFit().frame(width: 18, height: 18).foregroundStyle(.secondary)
                     TextField("Search Unsplash", text: $query).textFieldStyle(.plain)
-                }.padding(12).background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8)).padding(.horizontal)
+                }.padding(12).pennedSheetField().padding(.horizontal)
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 10)], spacing: 14) {
                         ForEach(photos) { photo in
@@ -36,8 +36,8 @@ struct CardPhotoSearchSheet: View {
                     if hasMore && !loading { Button("Load More") { Task { await load(next: true) } }.padding() }
                 }
             }
-            .navigationTitle("Unsplash").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
-            .background(VellixSurface.appBackground)
+            .navigationTitle("Unsplash")
+            .pennedSheet(title: "Unsplash", close: { dismiss() })
             .task(id: query) {
                 requestID = UUID()
                 hasMore = false

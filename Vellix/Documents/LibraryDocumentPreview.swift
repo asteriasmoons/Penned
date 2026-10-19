@@ -7,6 +7,7 @@ struct LibraryDocumentPreview: View {
     var fixedAspectRatio: CGFloat?
     var showsStar = true
     var cornerRadius: CGFloat = 14
+    var visibleHeightFraction: CGFloat = 1
     @State private var presentation = DocumentPreviewPresentation()
     @State private var latestDocument: DocumentRecord?
     @State private var childRevision = ""
@@ -41,7 +42,8 @@ struct LibraryDocumentPreview: View {
                     .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             }
         }
-        .aspectRatio(fixedAspectRatio ?? (availableSnapshot.map { CGFloat($0.width) / CGFloat($0.height) } ?? 0.66), contentMode: .fit)
+        .aspectRatio((fixedAspectRatio ?? (availableSnapshot.map { CGFloat($0.width) / CGFloat($0.height) } ?? 0.66))
+            / min(1, max(0.01, visibleHeightFraction)), contentMode: .fit)
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay(alignment: .topTrailing) {

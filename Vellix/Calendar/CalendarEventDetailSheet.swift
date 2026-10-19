@@ -21,7 +21,7 @@ struct CalendarEventDetailSheet: View {
                 VStack(spacing: 0) {
                 if dynamicTypeSize.isAccessibilitySize { header; Divider().padding(.horizontal, 20) }
                 VStack(alignment: .leading, spacing: 20) {
-                    details
+                    details.padding(16).pennedSheetField()
                     if !isAvailable {
                         Text("This event is no longer available in the visible calendar range.")
                             .font(.subheadline).foregroundStyle(.secondary)
@@ -83,8 +83,7 @@ struct CalendarEventDetailSheet: View {
             }
         }
         .foregroundStyle(.primary)
-        .background(.ultraThinMaterial)
-        .presentationCornerRadius(24)
+        .pennedSheet(close: { dismiss() })
         .presentationDragIndicator(.visible)
         .presentationDetents([.medium, .large])
         .preferredColorScheme(.dark)
@@ -103,9 +102,6 @@ struct CalendarEventDetailSheet: View {
                 }.padding(.horizontal, 10).padding(.vertical, 6)
                     .background(current.calendarColor.opacity(0.16), in: Capsule())
             }.frame(maxWidth: .infinity, alignment: .leading)
-            Button { dismiss() } label: {
-                LibraryIcon(name: "xmarkwavy", size: 23).foregroundStyle(.secondary).frame(width: 44, height: 44)
-            }.buttonStyle(.plain).accessibilityLabel("Close Event")
         }.padding(20)
     }
 

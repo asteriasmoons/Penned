@@ -23,6 +23,13 @@ final class CollectionStore: ObservableObject {
         refresh(markTemplateChanges: false)
     }
 
+    func resetForSpaceChange() {
+        documents.removeAll()
+        snapshots.removeAll()
+        errorMessage = nil
+        revision += 1
+    }
+
     func unwatchDocument(_ id: String) {
         guard documents.remove(id) != nil else { return }
         refresh(markTemplateChanges: false)

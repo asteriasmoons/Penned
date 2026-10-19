@@ -5,6 +5,7 @@
 
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 #if canImport(UIKit)
 import UIKit
@@ -93,15 +94,21 @@ private struct PageSheetEditorBoundsPreferenceKey: PreferenceKey {
 
 struct DocumentEditorView: View {
     @EnvironmentObject private var environment: AppEnvironment
+    @Environment(\.pennedWorkspace) private var workspace
     @Environment(\.openURL) private var openURL
     @ObservedObject private var model: DocumentEditorModel
+    private let sidebarAction: (() -> Void)?
     @State private var titleText = ""
     @FocusState private var isTitleFocused: Bool
     @State private var showSnapshots = false
     @State private var showAppearance = false
     @State private var showIconPicker = false
+    @State private var showFileImporter = false
+    @State private var fileInsertionToken: String?
+    @State private var fileInsertionDocumentID: String?
     @State private var showCalloutIconPicker = false
     @State private var blockquoteColorRequest: BlockquoteColorRequest?
+    @State private var calloutColorRequest: CalloutColorRequest?
     @State private var propertyEditorRequest: InlinePropertyEditorRequest?
     @State private var collectionEditorRequest: CollectionEditorRequest?
     @State private var collectionEntryIDs = Set<String>()
@@ -133,12 +140,14 @@ struct DocumentEditorView: View {
     @State private var presentationReady = false
     @State private var savedBodyHeight: CGFloat = 0
     @State private var pageDeletionTarget: DocumentRecord?
+    @State private var blockDeletionRequest: BlockDeletionRequest?
     @State private var placeholderMode = false
     @State private var canUseTemplateControls = false
     @State private var editorBanner: EditorStatusBanner?
 
-    init(model: DocumentEditorModel) {
+    init(model: DocumentEditorModel, sidebarAction: (() -> Void)? = nil) {
         self.model = model
+        self.sidebarAction = sidebarAction
         _editorContentHeight = State(initialValue: model.session.editorContentHeight)
         _editorVisualContentBottom = State(initialValue: model.session.editorVisualContentBottom)
         _pageBreakRegions = State(initialValue: model.session.pageBreakRegions)
@@ -158,6 +167,11 @@ struct DocumentEditorView: View {
         }
         .onAppear {
             syncLocalState()
+            model.prepareForSpaceChange = {
+                guard let document = model.document, titleText != document.title else { return }
+                let saved = try environment.documents.updateTitle(id: document.id, title: titleText)
+                model.document = saved
+            }
             if environment.selectedDocumentID == model.documentID {
                 updateCollectionPresentation()
             }
@@ -192,6 +206,7 @@ struct DocumentEditorView: View {
             withAnimation(.easeOut(duration: 0.18)) { editorBanner = nil }
         }
         .onChange(of: environment.selectedDocumentID) { oldValue, newValue in
+            dismissBlockDeletion()
             if newValue == model.documentID {
                 updateCollectionPresentation()
             }
@@ -234,6 +249,11 @@ struct DocumentEditorView: View {
             isKeyboardVisible = true
             updateKeyboardFrame(notification)
             model.session.requestCaretVisibility()
+            // Re-reveal after the keyboard finishes animating, so a just-placed caret the
+            // keyboard now covers is lifted into view against the settled layout.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                model.session.requestCaretVisibility()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
             updateKeyboardFrame(notification)
@@ -294,6 +314,17 @@ struct DocumentEditorView: View {
             dismissKeyboard()
             pageDeletionTarget = page
         }
+        .onReceive(model.$blockDeletionRequest) { request in
+            guard let request else { return }
+            model.blockDeletionRequest = nil
+            guard !isEditorLocked, selectionMode == .off, request.documentID == model.documentID,
+                  environment.selectedDocumentID == model.documentID else {
+                model.session.dismissBlockActions(requestToken: request.token)
+                return
+            }
+            dismissKeyboard()
+            blockDeletionRequest = request
+        }
         .onReceive(model.$calloutIconRequest) { request in
             guard let request else { return }
             calloutIconTargetBlockID = request.blockID
@@ -305,6 +336,12 @@ struct DocumentEditorView: View {
             guard let request else { return }
             selectedBlockquoteColor = Color(vellixHex: request.color)
             blockquoteColorRequest = request
+        }
+        .onReceive(model.$calloutColorRequest) { request in
+            guard let request, request.blockID?.isEmpty == false else { return }
+            selectedCalloutColor = Color(vellixHex: request.color)
+            calloutColorRequest = request
+            model.calloutColorRequest = nil
         }
         .onReceive(model.$propertyEditorRequest) { request in
             guard let request else { return }
@@ -328,6 +365,9 @@ struct DocumentEditorView: View {
             environment.select(child)
         }
         .onDisappear {
+            model.session.pauseAttachmentPlayback()
+            model.attachmentActionRequest = nil
+            dismissBlockDeletion()
             editorBanner = nil
             persistTitle()
             dismissKeyboard()
@@ -337,6 +377,19 @@ struct DocumentEditorView: View {
 
     var body: some View {
         editorContent
+        .modifier(TagEditorIntegration(model: model, session: model.session, locked: isEditorLocked))
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            guard fileInsertionDocumentID == model.documentID, !isEditorLocked else { return }
+            switch result {
+            case .success(let urls): Task { await model.importAttachments(urls: urls, token: fileInsertionToken) }
+            case .failure(let error): model.errorMessage = error.localizedDescription
+            }
+        }
+        .sheet(item: $model.attachmentEditorRequest) { request in
+            AttachmentEditorSheet(request: request, session: model.session, editable: !isEditorLocked)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
         .sheet(item: $collectionEditorRequest) { request in
             collectionSheet(request)
         }
@@ -378,16 +431,32 @@ struct DocumentEditorView: View {
                     }
                 )
                 .frame(maxHeight: .infinity, alignment: .top)
-                .background(VellixSurface.appBackground)
                 .navigationTitle("Blockquote Color")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { blockquoteColorRequest = nil }
-                    }
-                }
+                .pennedSheet(title: "Blockquote Color", close: { blockquoteColorRequest = nil })
             }
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $calloutColorRequest) { request in
+            NavigationStack {
+                VellixBlockColorControls(title: "Callout Color", selection: $selectedCalloutColor,
+                    onColorChange: { color in
+                        if let blockID = request.blockID {
+                            model.session.updateCalloutColor(blockID: blockID,
+                                color: color.vellixHexString(fallback: "#ffffff"))
+                        }
+                    })
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .navigationTitle("Callout Color")
+                    .pennedSheet(title: "Callout Color", close: { calloutColorRequest = nil }) {
+                        if request.blockID == nil {
+                            Button("Add") {
+                                model.session.insertPlainCallout(color: selectedCalloutColor.vellixHexString(fallback: "#ffffff"))
+                                calloutColorRequest = nil
+                            }
+                        }
+                    }
+            }.presentationDetents([.medium]).presentationDragIndicator(.visible)
         }
         .sheet(item: $propertyEditorRequest, onDismiss: resumeEditingAfterProperty) { request in
             InlinePropertyEditorSheet(property: request.property,
@@ -398,6 +467,10 @@ struct DocumentEditorView: View {
             })
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $model.templateComponentRequest) { request in
+            TemplateComponentEditorSheet(request: request, session: model.session)
+                .presentationDetents([.large]).presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showCalloutIconPicker) {
             VellixIconLibraryPicker(
@@ -451,6 +524,48 @@ struct DocumentEditorView: View {
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+        }
+        .confirmationDialog("File", isPresented: Binding(
+            get: { model.attachmentActionRequest != nil },
+            set: { if !$0 { model.attachmentActionRequest = nil } }
+        ), titleVisibility: .visible, presenting: model.attachmentActionRequest) { request in
+            Button("File Settings") {
+                guard selectionMode == .off, environment.selectedDocumentID == request.documentID,
+                      model.documentID == request.documentID else { return }
+                model.attachmentActionRequest = nil
+                model.attachmentEditorRequest = request.attachment
+            }
+            if !isEditorLocked {
+                Button("Delete", role: .destructive) {
+                    guard !isEditorLocked, selectionMode == .off,
+                          environment.selectedDocumentID == request.documentID,
+                          model.documentID == request.documentID else { return }
+                    model.attachmentActionRequest = nil
+                    Task { await model.deleteAttachment(request) }
+                }
+            }
+            Button("Cancel", role: .cancel) { model.attachmentActionRequest = nil }
+        }
+        .confirmationDialog("Block", isPresented: Binding(
+            get: { blockDeletionRequest != nil },
+            set: { if !$0 { blockDeletionRequest = nil } }
+        ), titleVisibility: .visible, presenting: blockDeletionRequest) { request in
+            Button("Delete Block", role: .destructive) {
+                guard !isEditorLocked, selectionMode == .off,
+                      environment.selectedDocumentID == request.documentID,
+                      model.documentID == request.documentID else {
+                    model.session.dismissBlockActions(requestToken: request.token)
+                    return
+                }
+                model.session.deleteBlock(requestToken: request.token)
+                blockDeletionRequest = nil
+            }
+            Button("Cancel", role: .cancel) {
+                model.session.dismissBlockActions(requestToken: request.token)
+                blockDeletionRequest = nil
+            }
+        } message: { _ in
+            Text("You can undo this change.")
         }
         .confirmationDialog("Page", isPresented: Binding(
             get: { pageDeletionTarget != nil },
@@ -508,7 +623,7 @@ struct DocumentEditorView: View {
         let appearance = localAppearance
 
         return GeometryReader { proxy in
-            let isCompact = proxy.size.width < 620
+            let isCompact = workspace != nil || proxy.size.width < 620
             let editorBackground = appearance.themeID == nil
                 ? DocumentAppearance.plain.editorBackground
                 : appearance.editorBackground
@@ -546,6 +661,7 @@ struct DocumentEditorView: View {
                     .padding(.bottom, bottomPadding)
                     .background(documentScrollFinder())
                 }
+                .frame(width: workspace == nil ? nil : proxy.size.width, height: workspace == nil ? nil : proxy.size.height)
                 .scrollBounceBehavior(.basedOnSize)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     #if os(iOS)
@@ -569,6 +685,7 @@ struct DocumentEditorView: View {
 
                 EditorTopControls(
                     document: document,
+                    showsDocumentHeading: workspace == nil,
                     isThemed: appearance.themeID != nil,
                     isCompact: isCompact,
                     isSelectionMode: selectionMode != .off && !isEditorLocked,
@@ -576,7 +693,8 @@ struct DocumentEditorView: View {
                     placeholderMode: placeholderMode,
                     canSaveTemplate: canUseTemplateControls && !model.isSavingTemplate
                         && (model.templateNeedsSave || hasTitleChanges),
-                    isSavingTemplate: model.isSavingTemplate
+                    isSavingTemplate: model.isSavingTemplate,
+                    sidebarAction: sidebarAction
                 ) {
                     Task {
                         do {
@@ -619,7 +737,7 @@ struct DocumentEditorView: View {
                     }
                 }
                 .padding(.horizontal, isCompact ? 18 : 28)
-                .padding(.top, isCompact ? 0 : 56)
+                .padding(.top, workspace != nil ? 8 : (isCompact ? 0 : 56))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
                 if let editorBanner {
@@ -668,6 +786,7 @@ struct DocumentEditorView: View {
                 #if os(iOS)
                 if isEditingDocument && isKeyboardVisible && selectionMode == .off && !isEditorLocked {
                     EditorKeyboardFormattingToolbar(
+                        session: model.session,
                         boldAction: { model.session.formatCurrentSelection(action: "bold") },
                         italicAction: { model.session.formatCurrentSelection(action: "italic") },
                         underlineAction: { model.session.formatCurrentSelection(action: "underline") },
@@ -683,10 +802,15 @@ struct DocumentEditorView: View {
                         bulletListAction: { model.session.formatCurrentSelection(action: "bulletList") },
                         numberListAction: { model.session.formatCurrentSelection(action: "numberList") },
                         iconAction: { showIconPicker = true },
+                        fileAction: { presentFileImporter() },
                         insertBlockAction: { model.session.insertBlock($0) },
                         insertDividerAction: { model.session.insertDivider($0) },
                         pageBreakAction: { model.session.insertPageBreak() },
                         calloutAction: { presentNewCalloutPicker() },
+                        plainCalloutAction: { presentNewPlainCalloutPicker() },
+                        templateComponentAction: model.document?.templateID == nil ? nil : { kind in
+                            model.templateComponentRequest = TemplateComponentRequest(definition: TemplateComponentDefinition(kind: kind))
+                        },
                         dismissAction: { dismissKeyboard() }
                     )
                     .padding(.horizontal, 8)
@@ -714,6 +838,42 @@ struct DocumentEditorView: View {
         }
     }
 
+    @ViewBuilder private func documentTitle(_ document: DocumentRecord, appearance: DocumentAppearance, isCompact: Bool) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            if let day = document.dailyNoteDate.flatMap(DailyNoteDay.init(key:)) {
+                Button {
+                    persistTitle()
+                    Task {
+                        do {
+                            try await model.captureAndSave()
+                            environment.calendar.select(day.date())
+                            environment.selectedDocumentID = nil
+                            environment.selectedDestination = .calendar
+                        } catch { environment.report(error) }
+                    }
+                } label: {
+                    HStack(spacing: 6) { LibraryIcon(name: "mooncal", size: 18); Text(day.title) }
+                        .font(.system(size: isCompact ? 17 : 23, weight: .bold, design: appearance.fontStyle.design))
+                        .padding(.horizontal, 8).frame(minHeight: 44)
+                        .background(Color(vellixHex: appearance.textColorHex).opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
+                }.buttonStyle(.plain).fixedSize().accessibilityLabel("Open Calendar for " + day.title)
+                titleInput("Title", text: Binding(get: { day.suffix(from: titleText) }, set: { titleText = $0.isEmpty ? day.title : day.title + " " + $0 }), appearance: appearance, isCompact: isCompact)
+            } else {
+                titleInput("Untitled", text: $titleText, appearance: appearance, isCompact: isCompact)
+            }
+        }.foregroundStyle(Color(vellixHex: appearance.textColorHex))
+    }
+
+    private func titleInput(_ prompt: String, text: Binding<String>, appearance: DocumentAppearance, isCompact: Bool) -> some View {
+        TextField(prompt, text: text, axis: .vertical)
+            .focused($isTitleFocused)
+            .font(.system(size: isCompact ? 22 : 30, weight: .black, design: appearance.fontStyle.design))
+            .foregroundStyle(Color(vellixHex: appearance.textColorHex))
+            .textFieldStyle(.plain).lineLimit(nil).fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading).allowsHitTesting(!isEditorLocked)
+            .onSubmit { model.rename(title: titleText); environment.refresh() }
+    }
+
     private func plainDocument(
         _ document: DocumentRecord,
         appearance: DocumentAppearance,
@@ -724,19 +884,7 @@ struct DocumentEditorView: View {
 
         return ZStack(alignment: .topLeading) {
             VStack(alignment: .leading, spacing: isCompact ? 8 : 26) {
-                TextField("Untitled", text: $titleText, axis: .vertical)
-                    .focused($isTitleFocused)
-                    .font(.system(size: isCompact ? 22 : 30, weight: .black, design: appearance.fontStyle.design))
-                    .foregroundStyle(Color(vellixHex: appearance.textColorHex))
-                    .textFieldStyle(.plain)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .allowsHitTesting(!isEditorLocked)
-                    .onSubmit {
-                        model.rename(title: titleText)
-                        environment.refresh()
-                    }
+                documentTitle(document, appearance: appearance, isCompact: isCompact)
 
                 Rectangle()
                     .fill(Color.white.opacity(0.07))
@@ -768,7 +916,7 @@ struct DocumentEditorView: View {
                 isVisible: isPaged
             )
         }
-        .frame(maxWidth: 900, alignment: .leading)
+        .frame(maxWidth: workspace == nil ? 900 : 720, alignment: .leading)
     }
 
     private func themedDocument(
@@ -786,19 +934,7 @@ struct DocumentEditorView: View {
                     }
 
                     HStack(alignment: .bottom) {
-                        TextField("Untitled", text: $titleText, axis: .vertical)
-                            .focused($isTitleFocused)
-                            .font(.system(size: isCompact ? 22 : 30, weight: .black, design: appearance.fontStyle.design))
-                            .foregroundStyle(Color(vellixHex: appearance.textColorHex))
-                            .textFieldStyle(.plain)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .allowsHitTesting(!isEditorLocked)
-                            .onSubmit {
-                                model.rename(title: titleText)
-                                environment.refresh()
-                            }
+                        documentTitle(document, appearance: appearance, isCompact: isCompact)
 
                         Button {
                             showIconPicker = true
@@ -840,7 +976,7 @@ struct DocumentEditorView: View {
             }
 
         }
-        .frame(maxWidth: isCompact ? .infinity : 900)
+        .frame(maxWidth: workspace != nil ? 720 : (isCompact ? .infinity : 900))
     }
 
     @ViewBuilder
@@ -1120,7 +1256,9 @@ struct DocumentEditorView: View {
     }
 
     private func queueCaretReveal() {
-        guard let update = model.session.caretUpdate, model.session.isEditing,
+        // Only reveal once the keyboard is up. Scrolling/laying out during the focus-
+        // acquiring tap cancels the WebView becoming first responder (tap-twice-to-type).
+        guard let update = model.session.caretUpdate, model.session.isEditing, isKeyboardVisible,
               !isEditorLocked, selectionMode == .off,
               environment.selectedDocumentID == model.documentID else { documentScrollProxy.pendingCaretRevision = nil; return }
         documentScrollProxy.pendingCaretRevision = update.revision
@@ -1302,6 +1440,7 @@ struct DocumentEditorView: View {
     }
 
     private func deactivateEditor() {
+        model.session.pauseAttachmentPlayback()
         persistTitle()
         dismissKeyboard()
         editorContentHeight = max(60, model.session.editorContentHeight)
@@ -1354,11 +1493,36 @@ struct DocumentEditorView: View {
         model.session.focusAfterInlineProperty(blockID: target.blockID)
     }
 
+    private func dismissBlockDeletion() {
+        if let request = blockDeletionRequest {
+            model.session.dismissBlockActions(requestToken: request.token)
+        }
+        blockDeletionRequest = nil
+    }
+
+    private func presentFileImporter() {
+        guard !isEditorLocked else { return }
+        let id = model.documentID
+        Task {
+            do {
+                let token = try await model.session.attachmentCommand("attachmentCaptureInsertion") as? String
+                guard id == model.documentID else { return }
+                fileInsertionDocumentID = id; fileInsertionToken = token
+                showFileImporter = true
+            } catch { model.errorMessage = error.localizedDescription }
+        }
+    }
+
     private func presentNewCalloutPicker() {
         calloutIconTargetBlockID = nil
         calloutIcon = "sparkle"
         selectedCalloutColor = .white
         showCalloutIconPicker = true
+    }
+
+    private func presentNewPlainCalloutPicker() {
+        selectedCalloutColor = .white
+        calloutColorRequest = CalloutColorRequest(blockID: nil, color: "#ffffff")
     }
 
     private func persistTitle() {
@@ -1439,6 +1603,7 @@ private struct EditorStatusBanner: Identifiable {
 
 private struct EditorTopControls: View {
     var document: DocumentRecord
+    var showsDocumentHeading: Bool
     var isThemed: Bool
     var isCompact: Bool
     var isSelectionMode: Bool
@@ -1446,6 +1611,7 @@ private struct EditorTopControls: View {
     var placeholderMode: Bool
     var canSaveTemplate: Bool
     var isSavingTemplate: Bool
+    var sidebarAction: (() -> Void)?
     var backAction: () -> Void
     var lockAction: () -> Void
     var shareAction: () -> Void
@@ -1460,6 +1626,19 @@ private struct EditorTopControls: View {
         let controlSize: CGFloat = isCompact ? 46 : 68
 
         HStack {
+            if let sidebarAction {
+                Button(action: sidebarAction) {
+                    editorAssetIcon("sidebar", padding: isCompact ? 12 : 18)
+                        .frame(width: controlSize, height: controlSize)
+                        .background(.thinMaterial, in: Circle())
+                        .overlay {
+                            Circle().stroke(Color.white.opacity(0.14), lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Show Sidebar").help("Show Sidebar")
+                .accessibilityIdentifier("ipad-editor-sidebar-toggle")
+            }
             Button(action: backAction) {
                 editorAssetIcon("backwavy", padding: isCompact ? 12 : 18)
                     .frame(width: controlSize, height: controlSize)
@@ -1470,7 +1649,7 @@ private struct EditorTopControls: View {
             }
             .buttonStyle(.plain)
 
-            if isThemed && !isCompact {
+            if showsDocumentHeading && isThemed && !isCompact {
               VStack(alignment: .leading, spacing: 4) {
                 Text(document.title)
                     .font(.system(size: isCompact ? 16 : 22, weight: .black, design: document.appearance.fontStyle.design))
@@ -2076,18 +2255,8 @@ private struct SelectedBlockActionsSheet: View {
     var deleteAction: () -> Void
 
     var body: some View {
-        ZStack {
-            Color(red: 0.03, green: 0.04, blue: 0.045).ignoresSafeArea()
-
+        ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                Text("Actions")
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-
-                Rectangle()
-                    .fill(Color.white.opacity(0.10))
-                    .frame(height: 1)
-
                 VStack(spacing: 0) {
                     actionRow("Copy", assetName: "copy", action: copyAction)
                     actionRow("Cut", assetName: "prohibitedwavy", action: cutAction)
@@ -2105,8 +2274,9 @@ private struct SelectedBlockActionsSheet: View {
             }
             .padding(.horizontal, 30)
             .padding(.top, 28)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
+        .pennedSheet(title: "Actions", close: { dismiss() })
     }
 
     private func actionRow(
@@ -2209,6 +2379,7 @@ private struct EditorKeyboardFormattingToolbar: View {
     static let height: CGFloat = 50
     static let bottomPadding: CGFloat = 6
 
+    @ObservedObject var session: TipTapEditorSession
     var boldAction: () -> Void
     var italicAction: () -> Void
     var underlineAction: () -> Void
@@ -2224,32 +2395,35 @@ private struct EditorKeyboardFormattingToolbar: View {
     var bulletListAction: () -> Void
     var numberListAction: () -> Void
     var iconAction: () -> Void
+    var fileAction: () -> Void
     var insertBlockAction: (String) -> Void
     var insertDividerAction: (VellixDividerStyle) -> Void
     var pageBreakAction: () -> Void
     var calloutAction: () -> Void
+    var plainCalloutAction: () -> Void
+    var templateComponentAction: ((TemplateComponentKind) -> Void)?
     var dismissAction: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
-                    toolbarButton("Bold", assetName: "boldtext", action: boldAction)
-                    toolbarButton("Italic", assetName: "italics", action: italicAction)
-                    toolbarButton("Underline", assetName: "underline", action: underlineAction)
-                    toolbarButton("Strikethrough", assetName: "strikethrough", action: strikeAction)
-                    toolbarButton("Inline Code", assetName: "codewindow", action: codeAction)
+                    toolbarButton("Bold", assetName: "boldtext", selected: session.formattingState.bold, action: boldAction)
+                    toolbarButton("Italic", assetName: "italics", selected: session.formattingState.italic, action: italicAction)
+                    toolbarButton("Underline", assetName: "underline", selected: session.formattingState.underline, action: underlineAction)
+                    toolbarButton("Strikethrough", assetName: "strikethrough", selected: session.formattingState.strike, action: strikeAction)
+                    toolbarButton("Inline Code", assetName: "codewindow", selected: session.formattingState.code, action: codeAction)
                     divider
-                    toolbarButton("Align Left", assetName: "leftalign", action: alignLeftAction)
-                    toolbarButton("Align Center", assetName: "centeralign", action: alignCenterAction)
-                    toolbarButton("Align Right", assetName: "rightalign", action: alignRightAction)
+                    toolbarButton("Align Left", assetName: "leftalign", selected: session.formattingState.alignment == "left", action: alignLeftAction)
+                    toolbarButton("Align Center", assetName: "centeralign", selected: session.formattingState.alignment == "center", action: alignCenterAction)
+                    toolbarButton("Align Right", assetName: "rightalign", selected: session.formattingState.alignment == "right", action: alignRightAction)
                     divider
                     toolbarButton("Outdent", assetName: "chevleft", action: outdentAction)
                     toolbarButton("Indent", assetName: "chevright", action: indentAction)
                     divider
-                    toolbarButton("Checklist", assetName: "checklist", action: checklistAction)
-                    toolbarButton("Bullet List", assetName: "bulletlist", action: bulletListAction)
-                    toolbarButton("Numbered List", assetName: "numberlist", action: numberListAction)
+                    toolbarButton("Checklist", assetName: "checklist", selected: session.formattingState.checklist, action: checklistAction)
+                    toolbarButton("Bullet List", assetName: "bulletlist", selected: session.formattingState.bulletList, action: bulletListAction)
+                    toolbarButton("Numbered List", assetName: "numberlist", selected: session.formattingState.numberList, action: numberListAction)
                 }
                 .padding(.leading, 6)
                 .padding(.trailing, 2)
@@ -2262,10 +2436,13 @@ private struct EditorKeyboardFormattingToolbar: View {
             }
             EditorInsertMenu(
                 iconAction: iconAction,
+                fileAction: fileAction,
                 insertBlockAction: insertBlockAction,
                 insertDividerAction: insertDividerAction,
                 pageBreakAction: pageBreakAction,
-                calloutAction: calloutAction
+                calloutAction: calloutAction,
+                plainCalloutAction: plainCalloutAction,
+                templateComponentAction: templateComponentAction
             )
             divider
             toolbarButton("Dismiss Keyboard", assetName: "chevdown", action: dismissAction)
@@ -2292,6 +2469,7 @@ private struct EditorKeyboardFormattingToolbar: View {
     private func toolbarButton(
         _ label: String,
         assetName: String,
+        selected: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -2299,25 +2477,37 @@ private struct EditorKeyboardFormattingToolbar: View {
                 .renderingMode(.template)
                 .resizable()
                 .scaledToFit()
-                .foregroundStyle(.white)
+                .foregroundStyle(selected ? VellixSurface.violet : .white)
                 .frame(width: 20, height: 20)
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
 private struct EditorInsertMenu: View {
     var iconAction: () -> Void
+    var fileAction: () -> Void
     var insertBlockAction: (String) -> Void
     var insertDividerAction: (VellixDividerStyle) -> Void
     var pageBreakAction: () -> Void
     var calloutAction: () -> Void
+    var plainCalloutAction: () -> Void
+    var templateComponentAction: ((TemplateComponentKind) -> Void)?
 
     var body: some View {
         Menu {
+            Button("File") { fileAction() }
+            if let templateComponentAction {
+                Menu("Template Components") {
+                    ForEach(TemplateComponentKind.allCases) { kind in
+                        Button(kind.title) { templateComponentAction(kind) }
+                    }
+                }
+            }
             Button("H1") { insertBlockAction("heading1") }
             Button("H2") { insertBlockAction("heading2") }
             Button("H3") { insertBlockAction("heading3") }
@@ -2327,9 +2517,7 @@ private struct EditorInsertMenu: View {
             Button("Page") { insertBlockAction("nestedPage") }
             Button("Card") { insertBlockAction("pageCard") }
             Button("Table") { insertBlockAction("table") }
-            Button { insertBlockAction("collection") } label: {
-                Label { Text("Collection") } icon: { LibraryIcon(name: "linedpages", size: 18) }
-            }
+            Button("Collection") { insertBlockAction("collection") }
             Menu("Toggle") {
                 Button("Body") { insertBlockAction("toggleListItem") }
                 Button("H1") { insertBlockAction("toggleHeading1") }
@@ -2338,7 +2526,10 @@ private struct EditorInsertMenu: View {
                 Button("H4") { insertBlockAction("toggleHeading4") }
                 Button("H5") { insertBlockAction("toggleHeading5") }
             }
-            Button("Callout") { calloutAction() }
+            Menu("Callout") {
+                Button("With Icon") { calloutAction() }
+                Button("Without Icon") { plainCalloutAction() }
+            }
             Button("Blockquote") { insertBlockAction("quote") }
             Button("Checklist") { insertBlockAction("checkListItem") }
             Button("Bullet List") { insertBlockAction("bulletListItem") }
@@ -2421,6 +2612,8 @@ struct VellixIconLibraryPicker: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                PennedSheetSearchField(text: $query, prompt: isSystemLibrary ? "Search all SF Symbols" : "Search \(selectedCategory.name)")
+                    .padding(.horizontal).padding(.bottom, 12)
                 if let colorSelection {
                     VellixBlockColorControls(
                         title: "Callout Color",
@@ -2438,7 +2631,7 @@ struct VellixIconLibraryPicker: View {
                     }.pickerStyle(.menu).tint(VellixSurface.violet)
                     Spacer()
                     if isSystemLibrary { Text("\(VellixSymbolCatalog.symbols.count) symbols").font(.caption).foregroundStyle(.secondary) }
-                }.padding(.horizontal).padding(.top, 10)
+                }.padding(.horizontal).frame(minHeight: 44).pennedSheetField().padding(.horizontal).padding(.top, 10)
 
                 categoryDropdown
                     .padding(.horizontal)
@@ -2467,14 +2660,15 @@ struct VellixIconLibraryPicker: View {
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
-                                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .opacity(available ? 1 : 0.45)
+                                .pennedSheetField()
                                 .overlay {
                                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                                 }
                             }
                             .buttonStyle(.plain)
-                            .disabled(!available).opacity(available ? 1 : 0.45)
+                            .disabled(!available)
                             .accessibilityLabel(icon.displayName)
                             .accessibilityHint(available ? "Select icon" : "Requires OS \(symbol?.requiredVersion ?? "") or later")
                             .help(icon.displayName)
@@ -2484,19 +2678,11 @@ struct VellixIconLibraryPicker: View {
                     .padding(.bottom)
                 }
             }
-            .searchable(text: $query, prompt: isSystemLibrary ? "Search all SF Symbols" : "Search \(selectedCategory.name)")
             .onChange(of: isSystemLibrary) { _, _ in
                 selectedCategoryID = categories.first?.id ?? ""; query = ""; isCategoryMenuOpen = false
             }
-            .background(VellixSurface.appBackground)
             .navigationTitle(title)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
+            .pennedSheet(title: title, close: { dismiss() })
         }
     }
 
@@ -2524,7 +2710,7 @@ struct VellixIconLibraryPicker: View {
                 }
                 .padding(.horizontal, 14)
                 .frame(minHeight: 48)
-                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: VellixRadius.md, style: .continuous))
+                .pennedSheetField(cornerRadius: VellixRadius.md)
                 .overlay {
                     RoundedRectangle(cornerRadius: VellixRadius.md, style: .continuous)
                         .stroke(VellixSurface.hairline, lineWidth: 1)
@@ -2538,14 +2724,13 @@ struct VellixIconLibraryPicker: View {
                         ForEach(categories) { category in
                             categoryRow(category)
                             if category.id != categories.last?.id {
-                                Divider()
-                                    .overlay(VellixSurface.hairline)
+                                PennedSheetFieldDivider()
                             }
                         }
                     }
                 }
                 .frame(maxHeight: categoryRowHeight * CGFloat(maxVisibleCategories))
-                .background(VellixSurface.paperLifted, in: RoundedRectangle(cornerRadius: VellixRadius.md, style: .continuous))
+                .pennedSheetField(cornerRadius: VellixRadius.md)
                 .overlay {
                     RoundedRectangle(cornerRadius: VellixRadius.md, style: .continuous)
                         .stroke(VellixSurface.hairline, lineWidth: 1)
@@ -2629,14 +2814,14 @@ struct VellixBlockColorControls: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, minHeight: 54)
-                .background(VellixSurface.paperLifted, in: RoundedRectangle(cornerRadius: 16))
+                .pennedSheetField(cornerRadius: 16)
             }
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 Text(title)
                     .font(.headline)
                 swatches
-                customPicker
+                customPicker.padding(.horizontal, 16).pennedSheetField(cornerRadius: 16)
             }
             .padding(.horizontal)
             .padding(.vertical, 12)
@@ -2859,15 +3044,8 @@ private struct SnapshotHistoryView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(VellixSurface.appBackground)
             .navigationTitle("Snapshots")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
+            .pennedSheet(title: "Snapshots", close: { dismiss() })
         }
     }
 }

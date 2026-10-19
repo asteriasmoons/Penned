@@ -44,7 +44,7 @@ struct TableEditorSheet: View {
     @State private var functionQuery = ""
     @State private var colorTarget: TableColorTarget?
     @State private var selectedDetent: PresentationDetent = .fraction(0.45)
-    private let accent = Color(vellixHex: "#8FE9FF")
+    private let accent = PennedSheetStyle.accent
 
     init(model: DocumentEditorModel, request: TableEditorRequest) {
         self.model = model
@@ -60,7 +60,6 @@ struct TableEditorSheet: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            if panel != .overview { header }
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     switch panel {
@@ -84,10 +83,28 @@ struct TableEditorSheet: View {
         .frame(maxWidth: 620, maxHeight: .infinity, alignment: .top)
         .font(.system(.body, design: .rounded))
         .foregroundStyle(.white)
-        .background(.ultraThinMaterial)
-        .preferredColorScheme(.dark)
+        .pennedSheet(title: panel.title, close: { dismiss() }) {
+            if panel != .overview && panel != .create {
+                Button("Back") { panel = .overview }
+            }
+            switch panel {
+            case .create:
+                Button("Insert Table") {
+                    model.session.tableAction("insert", values: ["rows": rows, "columns": columns, "header": headerRow])
+                    dismiss()
+                }.disabled(rows == 0 && columns == 0)
+            case .content:
+                Button("Add Content") { action("content", values: ["value": value]); dismiss() }
+            case .formula:
+                Button("Insert Formula") { action("formula", values: ["value": value]); dismiss() }
+                    .disabled(!value.hasPrefix("=") || value.count < 2)
+            case .rename:
+                Button("Save") { action("rename", values: ["value": value]); panel = .overview }
+                    .disabled(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            default: EmptyView()
+            }
+        }
         .presentationDetents(detents, selection: $selectedDetent)
-        .presentationCornerRadius(24)
         .presentationDragIndicator(.visible)
         .sheet(item: $colorTarget) { target in
             CardThreeModeColorPicker(selection: colorBinding(target), title: target.title)
@@ -111,35 +128,11 @@ struct TableEditorSheet: View {
         [.fraction(0.45), .large]
     }
 
-    private var header: some View {
-        VStack(spacing: 16) {
-            HStack {
-                Text(panel.title).font(.system(size: 20, weight: .bold, design: .rounded))
-                Spacer()
-                Button {
-                    if panel == .create { dismiss() }
-                    else { panel = .overview }
-                } label: { LibraryIcon(name: "xmarkwavy", size: 23).foregroundStyle(.secondary) }
-                    .buttonStyle(.plain).accessibilityLabel("Close \(panel.title)")
-            }
-            Divider().overlay(.white.opacity(0.07))
-        }
-    }
-
     private var creation: some View {
         VStack(spacing: 18) {
-            Stepper("Rows: \(rows)", value: $rows, in: 0...200)
-            Stepper("Columns: \(columns)", value: $columns, in: 0...32)
-            Toggle("Header Row", isOn: $headerRow).tint(accent)
-            Button {
-                model.session.tableAction("insert", values: ["rows": rows, "columns": columns, "header": headerRow])
-                dismiss()
-            } label: {
-                HStack { LibraryIcon(name: "blackcal"); Text("Insert Table").font(.headline) }
-                    .frame(maxWidth: .infinity).frame(height: 46)
-                    .foregroundStyle(.black).background(.white, in: Capsule())
-                    .opacity(rows == 0 && columns == 0 ? 0.4 : 1)
-            }.buttonStyle(.plain).disabled(rows == 0 && columns == 0)
+            Stepper("Rows: \(rows)", value: $rows, in: 0...200).padding(12).pennedSheetField()
+            Stepper("Columns: \(columns)", value: $columns, in: 0...32).padding(12).pennedSheetField()
+            Toggle("Header Row", isOn: $headerRow).tint(accent).padding(12).pennedSheetField()
             if rows == 0 && columns == 0 {
                 Text("Pick at least one row or column \u{2014} a 0 \u{00D7} 0 table isn\u{2019}t allowed.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -157,7 +150,7 @@ struct TableEditorSheet: View {
                 Button { panel = .format } label: {
                     VStack(spacing: 12) { Text("Aa").font(.system(size: 24)); Text("Format").font(.subheadline) }
                         .frame(maxWidth: .infinity).frame(height: 86)
-                        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 8))
+                        .pennedSheetField()
                 }.buttonStyle(.plain).disabled(context?.selectedCount == 0)
             }.padding(.bottom, 3)
             prominent("Add Content", icon: "arrowin") { value = context?.contents ?? ""; panel = .content }
@@ -181,6 +174,8 @@ struct TableEditorSheet: View {
                 .disabled(context?.selectedCount == 0)
             row("Clear Cell Contents", destructive: true) { action("clearContents") }
                 .disabled(context?.selectedCount == 0)
+            Divider().padding(.vertical, 6)
+            row("Delete Table", icon: "xmarkwavy", destructive: true) { action("deleteTable"); dismiss() }
         }
     }
 
@@ -206,19 +201,17 @@ struct TableEditorSheet: View {
                 mark("italic", icon: "italics", active: context?.italic == true)
                 mark("strike", icon: "strikethrough", active: context?.strike == true)
                 mark("code", icon: "codewindow", active: context?.code == true)
-            }.background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 8)).clipped()
+            }.pennedSheetField()
             HStack(spacing: 0) {
                 alignment("left", icon: "leftalign")
                 alignment("center", icon: "centeralign")
                 alignment("right", icon: "rightalign")
                 alignment("justify", icon: "linedpages")
-            }.background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+            }.pennedSheetField()
             row(context?.font == "default" ? "Default Font" : DocumentFontStyle(rawValue: context?.font ?? "")?.title ?? "Default Font",
                 icon: "linedpages", chevron: true) { panel = .font }
-                .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
             section("CELL FORMAT")
             row(formatTitle(context?.format ?? "text"), chevron: true) { panel = .cellFormat }
-                .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
             section("CELL STYLE")
             colorRow("Alternating Row Color", target: .stripe)
             colorRow("Cell Fill Color", target: .fill)
@@ -247,8 +240,9 @@ struct TableEditorSheet: View {
 
     private var headerOptions: some View {
         VStack(spacing: 20) {
-            Toggle("Header Row", isOn: Binding(get: { context?.headerRow ?? false }, set: { _ in action("headerRow") })).tint(accent)
+            Toggle("Header Row", isOn: Binding(get: { context?.headerRow ?? false }, set: { _ in action("headerRow") })).tint(accent).padding(12).pennedSheetField()
             Toggle("Header Column", isOn: Binding(get: { context?.headerColumn ?? false }, set: { _ in action("headerColumn") })).tint(accent)
+                .padding(12).pennedSheetField()
                 .disabled(context?.selectedCount == 0)
         }
     }
@@ -263,7 +257,8 @@ struct TableEditorSheet: View {
                         Text(font.sample).font(.system(size: 23, design: font.design))
                             .frame(maxWidth: .infinity).frame(height: 54)
                             .foregroundStyle(selected ? accent : .white)
-                            .background(selected ? accent.opacity(0.15) : .white.opacity(0.05), in: Capsule())
+                            .background(selected ? accent.opacity(0.15) : .clear, in: Capsule())
+                            .pennedSheetField(cornerRadius: 27)
                     }.buttonStyle(.plain).accessibilityLabel(font.title)
                 }
             }
@@ -278,12 +273,12 @@ struct TableEditorSheet: View {
             if context?.format == "number" || context?.format == "currency" || context?.format == "percent" {
                 Stepper("Decimals: \(context?.decimals ?? 2)", value: Binding(
                     get: { context?.decimals ?? 2 }, set: { style(["decimals": $0]) }
-                ), in: 0...10).padding(.top, 12)
+                ), in: 0...10).padding(12).pennedSheetField().padding(.top, 12)
             }
             if context?.format == "currency" {
                 Picker("Currency", selection: Binding(get: { context?.currency ?? "USD" }, set: { style(["currency": $0]) })) {
                     ForEach(["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "INR"], id: \.self) { Text($0).tag($0) }
-                }.pickerStyle(.menu).tint(.white)
+                }.pickerStyle(.menu).tint(.white).padding(12).pennedSheetField()
             }
         }
     }
@@ -291,8 +286,7 @@ struct TableEditorSheet: View {
     private var contentEditor: some View {
         VStack(spacing: 16) {
             TextEditor(text: $value).scrollContentBackground(.hidden).frame(minHeight: 130)
-                .padding(8).background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
-            applyButton("Add Content") { action("content", values: ["value": value]); dismiss() }
+                .padding(8).pennedSheetField()
         }
     }
 
@@ -300,13 +294,11 @@ struct TableEditorSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             TextField("=", text: $value, axis: .vertical).font(.system(.body, design: .monospaced))
                 .textFieldStyle(.plain).autocorrectionDisabled().lineLimit(2...4)
-                .padding(12).background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                .padding(12).pennedSheetField()
             Text(model.tableFormulaPreview).font(.system(.body, design: .monospaced)).foregroundStyle(accent)
                 .frame(maxWidth: .infinity, alignment: .leading).frame(minHeight: 28)
-            applyButton("Insert Formula") { action("formula", values: ["value": value]); dismiss() }
-                .disabled(!value.hasPrefix("=") || value.count < 2)
             HStack { LibraryIcon(name: "searchwavy", size: 18); TextField("Search Functions", text: $functionQuery).textFieldStyle(.plain) }
-                .padding(10).background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                .padding(10).pennedSheetField()
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach((context?.functions ?? []).filter { functionQuery.isEmpty || $0.localizedCaseInsensitiveContains(functionQuery) }, id: \.self) { name in
                     Button {
@@ -323,9 +315,7 @@ struct TableEditorSheet: View {
     private var renameEditor: some View {
         VStack(spacing: 18) {
             TextField("Table Name", text: $value).textFieldStyle(.plain).padding(12)
-                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-            applyButton("Save") { action("rename", values: ["value": value]); panel = .overview }
-                .disabled(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .pennedSheetField()
         }
     }
 
@@ -343,14 +333,14 @@ struct TableEditorSheet: View {
         Button(action: action) {
             VStack(spacing: 12) { LibraryIcon(name: icon, size: 26); Text(title).font(.subheadline) }
                 .frame(maxWidth: .infinity).frame(height: 86)
-                .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 8))
+                .pennedSheetField()
         }.buttonStyle(.plain)
     }
     private func prominent(_ title: String, icon: String = "", formula: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) { if formula { Text("f(x)").italic() } else { LibraryIcon(name: icon) }; Text(title) }
                 .frame(maxWidth: .infinity).frame(height: 44)
-                .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                .pennedSheetField()
         }.buttonStyle(.plain)
     }
     private func row(_ title: String, icon: String? = nil, chevron: Bool = false, destructive: Bool = false,
@@ -364,7 +354,7 @@ struct TableEditorSheet: View {
             }.frame(minHeight: 40).contentShape(Rectangle())
                 .foregroundStyle(destructive ? Color(vellixHex: "#FF4874") : .white)
                 .opacity(enabled ? 1 : 0.3)
-        }.buttonStyle(.plain).disabled(!enabled)
+        }.buttonStyle(.plain).pennedSheetField().disabled(!enabled)
     }
     private func mark(_ key: String, icon: String, active: Bool) -> some View {
         Button { style([key: !active]) } label: {
@@ -387,7 +377,7 @@ struct TableEditorSheet: View {
                     .frame(width: 24, height: 24).overlay(RoundedRectangle(cornerRadius: 6).stroke(accent.opacity(0.5), lineWidth: 2))
                     .overlay(LibraryIcon(name: "chevdown", size: 10).foregroundStyle(.white.opacity(0.7)))
             }.frame(minHeight: 38).contentShape(Rectangle())
-        }.buttonStyle(.plain)
+        }.buttonStyle(.plain).pennedSheetField()
     }
     private func colorBinding(_ target: TableColorTarget) -> Binding<Color> {
         Binding(get: {
@@ -406,12 +396,6 @@ struct TableEditorSheet: View {
             case .text: style(["textColor": hex])
             }
         })
-    }
-    private func applyButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).font(.headline).foregroundStyle(.black).frame(maxWidth: .infinity).frame(height: 44)
-                .background(.white, in: Capsule())
-        }.buttonStyle(.plain)
     }
 }
 

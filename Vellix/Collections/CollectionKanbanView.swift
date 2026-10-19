@@ -108,13 +108,17 @@ struct CollectionKanbanView: View {
                         cancelAdding()
                         perform { try store.repository.selectView(collectionID: collectionID, viewID: candidate.id) }
                     } label: {
-                        Label(candidate.name, systemImage: candidate.id == view.id ? "checkmark" : candidate.kind.systemIcon)
+                        Label { Text(candidate.name) } icon: {
+                            LibraryIcon(name: candidate.id == view.id ? "checkwavy" : candidate.kind.icon, size: 18)
+                        }
                     }
                 }
                 Divider()
                 Menu {
                     ForEach(CollectionViewKind.allCases) { kind in
-                        Button { sheet = BoardSheet(kind: .addView(kind)) } label: { Label(kind.title, systemImage: kind.systemIcon) }
+                        Button { sheet = BoardSheet(kind: .addView(kind)) } label: {
+                            Label { Text(kind.title) } icon: { LibraryIcon(name: kind.icon, size: 18) }
+                        }
                     }
                 } label: { Label("Add View", systemImage: "plus.square.on.square") }
                 Button("Edit View", systemImage: "slider.horizontal.3") { sheet = BoardSheet(kind: .viewSettings) }
@@ -326,18 +330,18 @@ struct CollectionKanbanColumnsSheet: View {
                             Spacer()
                             Image(systemName: column.collapsed ? "chevron.right" : "chevron.down").foregroundStyle(.secondary)
                         }
-                    }
+                    }.collectionFormRows(showsSeparator: true)
                 }.onMove { source, destination in
                     var ordered = columns.map(\.id); ordered.move(fromOffsets: source, toOffset: destination)
                     do { try store.repository.reorderKanbanColumns(collectionID: collectionID, viewID: viewID, ids: ordered); store.refresh() }
                     catch { self.error = error.localizedDescription }
-                }
-                Button { target = ColumnTarget(column: nil) } label: { Label("Add Column", systemImage: "plus") }
-                if let error { Text(error).foregroundStyle(.red) }
+                }.collectionFormRows()
+                Button { target = ColumnTarget(column: nil) } label: { Label("Add Column", systemImage: "plus") }.collectionFormRows()
+                if let error { Text(error).foregroundStyle(.red).collectionFormRows() }
             }.collectionForm().navigationTitle("Columns")
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-                    ToolbarItem(placement: .automatic) { EditButton() }
+                .pennedSheet(title: "Columns", close: { dismiss() }) {
+                    EditButton()
+                    Button("Done") { dismiss() }
                 }
                 .sheet(item: $target) { target in
                     CollectionKanbanColumnEditor(store: store, collectionID: collectionID, viewID: viewID, column: target.column)
@@ -368,7 +372,7 @@ struct CollectionKanbanColumnEditor: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Column") { TextField("Column name", text: $name) }
+                Section("Column") { TextField("Column name", text: $name) }.collectionFormRows()
                 Section("Background Color") {
                     Button { showsColors = true } label: {
                         HStack {
@@ -377,24 +381,23 @@ struct CollectionKanbanColumnEditor: View {
                             RoundedRectangle(cornerRadius: 6).fill(Color(vellixHex: hex)).frame(width: 46, height: 30)
                                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(.white.opacity(0.25), lineWidth: 1))
                         }
-                    }
+                    }.collectionFormRows(showsSeparator: true)
                     TextField("#RRGGBB", text: $hex).autocorrectionDisabled()
                         .collectionKeyboard(.url)
-                }
+                }.collectionFormRows()
                 if columnID != nil && !alternatives.isEmpty {
                     Section("Delete Column") {
                         Picker("Move Entries To", selection: $destinationID) {
                             Text("Choose Column").tag("")
                             ForEach(alternatives) { Text($0.name).tag($0.id) }
-                        }
+                        }.collectionFormRows(showsSeparator: true)
                         Button("Delete Column", role: .destructive) { confirmsDelete = true }.disabled(destinationID.isEmpty)
-                    }
+                    }.collectionFormRows()
                 }
-                if let error { Text(error).foregroundStyle(.red) }
+                if let error { Text(error).foregroundStyle(.red).collectionFormRows() }
             }.collectionForm().navigationTitle(columnID == nil ? "New Column" : "Edit Column")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(name.trimmedNonEmpty == nil) }
+                .pennedSheet(title: columnID == nil ? "New Column" : "Edit Column", close: { dismiss() }) {
+                    Button("Save") { save() }.disabled(name.trimmedNonEmpty == nil)
                 }
                 .sheet(isPresented: $showsColors) {
                     CardThreeModeColorPicker(selection: Binding(get: { Color(vellixHex: hex) }, set: { hex = $0.vellixHexString(fallback: hex) }), title: "Column Color")

@@ -13,16 +13,19 @@ struct SpaceRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, H
     var title: String
     var spaceDescription: String?
     var icon: String?
+    var iconImageData: Data?
     var isArchived: Bool
     var createdAt: Date
     var updatedAt: Date
     var sortOrder: Double
+    var libraryID: String = LibraryRecord.localID
 
     init(
         id: String = UUID().uuidString,
         title: String,
         spaceDescription: String? = nil,
         icon: String? = nil,
+        iconImageData: Data? = nil,
         isArchived: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
@@ -32,6 +35,7 @@ struct SpaceRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, H
         self.title = title
         self.spaceDescription = spaceDescription
         self.icon = icon
+        self.iconImageData = iconImageData
         self.isArchived = isArchived
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -107,6 +111,7 @@ struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
     var sortOrder: Double
     var templateOriginID: String?
     var templateID: String?
+    var dailyNoteDate: String?
 
     init(
         id: String = UUID().uuidString,
@@ -137,7 +142,8 @@ struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
         estimatedReadingMinutes: Int = 0,
         sortOrder: Double = 0,
         templateOriginID: String? = nil,
-        templateID: String? = nil
+        templateID: String? = nil,
+        dailyNoteDate: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -168,6 +174,7 @@ struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
         self.sortOrder = sortOrder
         self.templateOriginID = templateOriginID
         self.templateID = templateID
+        self.dailyNoteDate = dailyNoteDate
     }
 }
 
@@ -222,6 +229,7 @@ struct TemplateRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
     var createdAt: Date
     var updatedAt: Date
     var rootDocumentID: String?
+    var spaceID: String?
 
     init(
         id: String = UUID().uuidString,
@@ -233,7 +241,8 @@ struct TemplateRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
         isBuiltIn: Bool,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        rootDocumentID: String? = nil
+        rootDocumentID: String? = nil,
+        spaceID: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -245,10 +254,11 @@ struct TemplateRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.rootDocumentID = rootDocumentID
+        self.spaceID = spaceID
     }
 }
 
-struct AttachmentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, Hashable {
+nonisolated struct AttachmentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, Hashable, Sendable {
     static let databaseTableName = "attachments"
 
     var id: String
@@ -283,4 +293,5 @@ struct LibraryOverview {
     var spaces: [SpaceRecord] = []
     var folders: [FolderRecord] = []
     var templates: [TemplateRecord] = []
+    var templateDocuments: [String: DocumentRecord] = [:]
 }
