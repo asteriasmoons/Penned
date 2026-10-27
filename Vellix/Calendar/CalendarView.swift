@@ -113,7 +113,7 @@ struct CalendarView: View {
     @ViewBuilder private var unscheduledAgenda: some View {
         if !model.unscheduledTasks.isEmpty {
             Text("Unscheduled").font(.system(.headline, design: .rounded)).padding(.top, 12)
-            ForEach(model.unscheduledTasks) { CalendarTaskRow(model: model, entry: $0) }
+            ForEach(model.unscheduledTasks) { CalendarTaskRow(model: model, entry: $0, showsDocumentBadge: true) }
         }
     }
 
@@ -165,15 +165,22 @@ struct CalendarView: View {
     private var dailyNoteAction: some View {
         Button { openDailyNote(DailyNoteDay(date: model.selectedDate)) } label: {
             HStack(spacing: 10) {
-                LibraryIcon(name: "mooncal", size: 20)
+                LibraryIcon(name: "linedpages", size: 24)
                 Text(model.dailyNote(on: model.selectedDate) == nil ? "Create Daily Note" : "Open Daily Note")
                     .font(.system(.body, design: .rounded).weight(.semibold))
-                Spacer()
+                    .foregroundStyle(VellixSurface.ink)
+                Spacer(minLength: 8)
                 if openingDailyNote { ProgressView() }
-                else { Text(DailyNoteDay(date: model.selectedDate).title).font(.subheadline) }
-            }.padding(.vertical, 12).contentShape(Rectangle())
+                else { LibraryIcon(name: "chevright", size: 16) }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 14)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .background(CalendarStyle.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: VellixRadius.md))
+            .overlay { RoundedRectangle(cornerRadius: VellixRadius.md).strokeBorder(CalendarStyle.accent.opacity(0.24), lineWidth: 1) }
+            .contentShape(Rectangle())
         }.buttonStyle(.plain).foregroundStyle(CalendarStyle.accent)
         .disabled(openingDailyNote || environment.isSwitchingSpace)
+        .accessibilityHint("Daily note for " + DailyNoteDay(date: model.selectedDate).title)
         .accessibilityIdentifier("daily-note-action")
     }
 
@@ -294,9 +301,9 @@ private struct CalendarDateBubble: View {
                 Text(date.formatted(.dateTime.weekday(.abbreviated))).font(.caption2)
                     .foregroundStyle(.secondary)
                 Text(date.formatted(.dateTime.day())).font(.system(.subheadline, design: .rounded).weight(.bold))
-                    .foregroundStyle(selected ? .black : CalendarStyle.accent)
+                    .foregroundStyle(selected ? VellixSurface.inverseInk : CalendarStyle.accent)
                     .frame(width: diameter, height: diameter)
-                    .background(selected ? CalendarStyle.accent : .white.opacity(0.04), in: Circle())
+                    .background(selected ? CalendarStyle.accent : VellixSurface.controlInk.opacity(0.04), in: Circle())
                     .overlay { if Calendar.current.isDateInToday(date) { Circle().stroke(CalendarStyle.accent, lineWidth: 1.5) } }
                 HStack(spacing: 3) {
                     Circle().fill(hasContent ? CalendarStyle.accent : .clear).frame(width: 4, height: 4)

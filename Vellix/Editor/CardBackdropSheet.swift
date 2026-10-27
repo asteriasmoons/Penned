@@ -76,7 +76,7 @@ struct CardBackdropSheet: View {
                         }
                     }
                     .frame(maxWidth: .infinity).frame(height: 34)
-                    .background(mode == style.backdrop ? Color.black : Color.clear, in: Capsule())
+                    .background(mode == style.backdrop ? VellixSurface.activeTab : Color.clear, in: Capsule())
                 }.buttonStyle(.plain).accessibilityLabel(mode.title)
             }
         }.padding(3).pennedSheetField(cornerRadius: 22)

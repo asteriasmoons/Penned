@@ -64,7 +64,7 @@ struct PennedSettingsView: View {
                         Text("PENNED").font(.system(size: 28, weight: .black, design: .rounded))
                         Text("version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")")
                             .font(.footnote)
-                    }.foregroundStyle(.white.opacity(0.18)).frame(maxWidth: .infinity).padding(.top, 90).padding(.bottom, 50)
+                    }.foregroundStyle(VellixSurface.controlInk.opacity(0.18)).frame(maxWidth: .infinity).padding(.top, 90).padding(.bottom, 50)
                 }
                 .padding(.horizontal, 20).frame(maxWidth: 660).frame(maxWidth: .infinity)
             }
@@ -72,7 +72,7 @@ struct PennedSettingsView: View {
                 showingTitle = value
             }
         }
-        .background(Color.black).foregroundStyle(.white).preferredColorScheme(.dark)
+        .background(VellixSurface.workspace).foregroundStyle(VellixSurface.controlInk)
         .navigationBarBackButtonHidden()
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
@@ -102,7 +102,7 @@ struct PennedSettingsView: View {
             Button { showingSpaces = true } label: {
                 HStack(spacing: 12) {
                     Text(environment.activeSpace?.title ?? "Space").font(.system(size: 20, weight: .semibold)).multilineTextAlignment(.center)
-                    LibraryIcon(name: "chevdown", size: 12).foregroundStyle(.white.opacity(0.45))
+                    LibraryIcon(name: "chevdown", size: 12).foregroundStyle(VellixSurface.secondaryControlInk(opacity: 0.45))
                 }.padding(.horizontal, 10).frame(minHeight: 36)
             }.accessibilityLabel("Switch or create a Space")
         }
@@ -134,29 +134,30 @@ struct PennedSettingsView: View {
                 }
             } label: {
                 HStack(spacing: 14) {
-                    LibraryIcon(name: item.icon, size: 19).foregroundStyle(.white.opacity(0.45)).frame(width: 20)
-                    Text(item.rawValue).font(.system(size: 16)).foregroundStyle(.white.opacity(0.72)).frame(maxWidth: .infinity, alignment: .leading)
-                    LibraryIcon(name: "chevright", size: 11).foregroundStyle(.white.opacity(0.28))
+                    LibraryIcon(name: item.icon, size: 19).foregroundStyle(VellixSurface.secondaryControlInk(opacity: 0.45)).frame(width: 20)
+                    Text(item.rawValue).font(.system(size: 16)).foregroundStyle(VellixSurface.controlInk.opacity(0.72)).frame(maxWidth: .infinity, alignment: .leading)
+                    LibraryIcon(name: "chevright", size: 11).foregroundStyle(VellixSurface.secondaryControlInk(opacity: 0.28))
                 }.frame(minHeight: 44).contentShape(Rectangle())
             }.buttonStyle(.plain)
-            if separator { Rectangle().fill(.white.opacity(0.055)).frame(height: 0.5).padding(.leading, 34) }
+            if separator { Rectangle().fill(VellixSurface.controlInk.opacity(0.055)).frame(height: 0.5).padding(.leading, 34) }
         }
     }
 
     @ViewBuilder private func settingDestination(_ setting: PennedSetting) -> some View {
         switch setting {
+        case .appearance: PennedAppearanceSettingsView()
         case .spaces: SpaceManagementView()
         case .dailyNotes: DailyNotesSettingsView()
         case .about:
             VStack(spacing: 12) {
                 Text("Penned").font(.largeTitle.bold())
                 Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0").foregroundStyle(.secondary)
-            }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.black)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity).background(VellixSurface.workspace)
         default:
             VStack(spacing: 14) {
                 LibraryIcon(name: setting.icon, size: 32).foregroundStyle(.secondary)
                 Text("Not available yet").foregroundStyle(.secondary)
-            }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.black)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity).background(VellixSurface.workspace)
         }
     }
 }
@@ -165,9 +166,9 @@ struct SettingsBackButton: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         Button { dismiss() } label: {
-            LibraryIcon(name: "chevleft", size: 20).foregroundStyle(.white)
+            LibraryIcon(name: "chevleft", size: 20).foregroundStyle(VellixSurface.controlInk)
                 .frame(width: 40, height: 40).background(.regularMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(.white.opacity(0.10)))
+                .overlay(Circle().strokeBorder(VellixSurface.controlInk.opacity(0.10)))
         }.buttonStyle(.plain).accessibilityLabel("Back")
     }
 }
@@ -211,7 +212,7 @@ struct SpacePickerSheet: View {
             }.scrollBounceBehavior(.basedOnSize)
             if let error { Text(error).font(.footnote).foregroundStyle(.red).padding(.bottom, 8) }
         }
-        .buttonStyle(.plain).foregroundStyle(.white).preferredColorScheme(.dark)
+        .buttonStyle(.plain).foregroundStyle(VellixSurface.controlInk)
         .padding(.horizontal, 20).padding(.top, 8)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             HStack {

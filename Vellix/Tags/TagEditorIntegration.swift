@@ -177,7 +177,7 @@ private struct TagActionsSheet: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .foregroundStyle(.white).preferredColorScheme(.dark)
+        .foregroundStyle(VellixSurface.controlInk)
         .presentationDragIndicator(.visible)
         .presentationDetents(swapping ? [.medium, .large] : [.height(compactHeight), .large])
         .interactiveDismissDisabled(busy)
@@ -225,7 +225,7 @@ private struct TagSelectorSheet: View {
                         }
                         if let clean = TagName.clean(query), !tags.contains(where: { $0.normalizedName == TagName.normalized(clean) }) {
                             Button { select(clean) } label: {
-                                Text("Create #" + clean).fontWeight(.black).foregroundStyle(Color(vellixHex: "#B59AD9"))
+                                Text("Create #" + clean).fontWeight(.black).foregroundStyle(VellixSurface.lilac)
                                     .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 14).contentShape(Rectangle())
                             }.buttonStyle(.plain)
                         }

@@ -20,6 +20,13 @@
 		CFB7C20630D0A10000A17A01 /* Calendar/CalendarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7C21630D0A10000A17A01 /* Calendar/CalendarView.swift */; };
 		CFB7C20730D0A10000A17A01 /* Calendar/CalendarEventDetailSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7C21730D0A10000A17A01 /* Calendar/CalendarEventDetailSheet.swift */; };
 		CFB7D10330E0100000A17001 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = CFB7D10230E0100000A17001 /* Supabase */; };
+		CFB7E10130E1300000A17001 /* Documents/InlineTextColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7E11130E1300000A17001 /* Documents/InlineTextColor.swift */; };
+		CFB7E10230E1300000A17001 /* Editor/InlineTextColorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7E11230E1300000A17001 /* Editor/InlineTextColorSheet.swift */; };
+		CFB7E10330E1300000A17001 /* Editor/InlineTextColorPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7E11330E1300000A17001 /* Editor/InlineTextColorPresentation.swift */; };
+		CFB7E10430E1300000A17001 /* Documents/InlineTextColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7E11130E1300000A17001 /* Documents/InlineTextColor.swift */; };
+		CFB7E10530E1300000A17001 /* Inspector/MacTextColorInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7E11430E1300000A17001 /* Inspector/MacTextColorInspector.swift */; };
+		D00100000000000000000001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = CFA16E12301AD193007825F0 /* GRDB */; };
+		D00100000000000000000002 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = CFB7D10230E0100000A17001 /* Supabase */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +63,10 @@
 		CFB7C21630D0A10000A17A01 /* Calendar/CalendarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Calendar/CalendarView.swift; sourceTree = "<group>"; };
 		CFB7C21730D0A10000A17A01 /* Calendar/CalendarEventDetailSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Calendar/CalendarEventDetailSheet.swift; sourceTree = "<group>"; };
 		CFB7D20130E0200000A17001 /* Vellix/Configuration/Supabase.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Vellix/Configuration/Supabase.xcconfig; sourceTree = SOURCE_ROOT; };
+		CFB7E11130E1300000A17001 /* Documents/InlineTextColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Documents/InlineTextColor.swift; sourceTree = "<group>"; };
+		CFB7E11230E1300000A17001 /* Editor/InlineTextColorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Editor/InlineTextColorSheet.swift; sourceTree = "<group>"; };
+		CFB7E11330E1300000A17001 /* Editor/InlineTextColorPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Editor/InlineTextColorPresentation.swift; sourceTree = "<group>"; };
+		CFB7E11430E1300000A17001 /* Inspector/MacTextColorInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Inspector/MacTextColorInspector.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -70,12 +81,16 @@
 				Calendar/CalendarModel.swift,
 				Calendar/CalendarView.swift,
 				Configuration/Supabase.xcconfig,
+				Documents/InlineTextColor.swift,
+				Editor/InlineTextColorPresentation.swift,
+				Editor/InlineTextColorSheet.swift,
 				Editor/TaskEditorSheet.swift,
 				Resources/LaunchInfo.plist,
 				Tasks/DocumentTask.swift,
 				Tasks/DocumentTaskRepository.swift,
 				Tasks/TaskNotificationsManager.swift,
 				VellixTests/AccountTests.swift,
+				VellixTests/AppAppearanceTests.swift,
 				VellixTests/AttachmentBridgeTests.swift,
 				VellixTests/AttachmentTests.swift,
 				VellixTests/CalendarTests.swift,
@@ -104,6 +119,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				VellixTests/AccountTests.swift,
+				VellixTests/AppAppearanceTests.swift,
 				VellixTests/AttachmentBridgeTests.swift,
 				VellixTests/AttachmentTests.swift,
 				VellixTests/CalendarTests.swift,
@@ -134,11 +150,99 @@
 			);
 			target = CFA16D7D301AC183007825F0 /* VellixUITests */;
 		};
+		D00100000000000000000003 /* Exceptions for "Vellix" folder in "PennedMac" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Accounts/AccountLibrarySheet.swift,
+				Accounts/AccountSettingsView.swift,
+				Accounts/LibraryWorkspace.swift,
+				Accounts/SignInView.swift,
+				App/PadSettingsView.swift,
+				App/PadWorkspaceModel.swift,
+				App/PadWorkspaceSidebar.swift,
+				App/PadWorkspaceView.swift,
+				App/VellixCommands.swift,
+				App/VellixShellView.swift,
+				Attachments/AttachmentEditorSheet.swift,
+				Calendar/CalendarAgendaRows.swift,
+				Calendar/CalendarEventDetailSheet.swift,
+				Calendar/CalendarView.swift,
+				Collections/CollectionDocumentIntegration.swift,
+				Collections/CollectionKanbanView.swift,
+				Collections/CollectionPropertySheets.swift,
+				Collections/CollectionViewSheets.swift,
+				Configuration/Supabase.xcconfig,
+				ContentView.swift,
+				DailyNotes/DailyNotesSettingsView.swift,
+				DailyNotes/TemplateComponentEditorSheet.swift,
+				Documents/DocumentBrowserView.swift,
+				Documents/FolderLibraryViews.swift,
+				Documents/HomeView.swift,
+				Documents/InlineTextColor.swift,
+				Documents/LibraryChrome.swift,
+				Editor/CardBackdropSheet.swift,
+				Editor/CardPhotoSearchSheet.swift,
+				Editor/CardThreeModeColorPicker.swift,
+				Editor/DocumentEditorCache.swift,
+				Editor/DocumentEditorView.swift,
+				Editor/DocumentStyleSheet.swift,
+				Editor/InlinePropertyEditorSheet.swift,
+				Editor/InlineTextColorPresentation.swift,
+				Editor/InlineTextColorSheet.swift,
+				Editor/PageCardEditorSheet.swift,
+				Editor/StyleNameAlert.swift,
+				Editor/TableEditorSheet.swift,
+				Editor/TaskEditorSheet.swift,
+				Editor/TipTapEditorSession.swift,
+				Editor/TipTapWebView.swift,
+				Resources/LaunchInfo.plist,
+				Spaces/PennedSettingsView.swift,
+				Spaces/SpaceViews.swift,
+				Tags/TagBrowserView.swift,
+				Tags/TagEditorIntegration.swift,
+				VellixApp.swift,
+				VellixTests/AccountTests.swift,
+				VellixTests/AppAppearanceTests.swift,
+				VellixTests/AttachmentBridgeTests.swift,
+				VellixTests/AttachmentTests.swift,
+				VellixTests/CalendarTests.swift,
+				VellixTests/CollectionTests.swift,
+				VellixTests/DocumentLaunchTests.swift,
+				VellixTests/DocumentPreviewTests.swift,
+				VellixTests/DocumentTagTests.swift,
+				VellixTests/DocumentTaskTests.swift,
+				VellixTests/FolderLibraryTests.swift,
+				VellixTests/LibraryOwnershipTests.swift,
+				VellixTests/LibrarySyncTests.swift,
+				VellixTests/LibraryWorkspaceTests.swift,
+				VellixTests/PadWorkspaceTests.swift,
+				VellixTests/PageCardTests.swift,
+				VellixTests/SpaceEnvironmentTests.swift,
+				VellixTests/SpaceTests.swift,
+				VellixTests/SupabaseAuthTests.swift,
+				VellixTests/TagBridgeTests.swift,
+				VellixTests/VellixTests.swift,
+				VellixUITests/VellixUITests.swift,
+				VellixUITests/VellixUITestsLaunchTests.swift,
+			);
+			target = CF8C0EA6308548190058BF74 /* PennedMac */;
+		};
+		D00100000000000000000004 /* Exceptions for "PennedMac" folder in "PennedMac" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Inspector/MacTextColorInspector.swift,
+				Resources/MacInfo.plist,
+			);
+			target = CF8C0EA6308548190058BF74 /* PennedMac */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		CF8C0EA8308548190058BF74 /* PennedMac */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				D00100000000000000000004 /* Exceptions for "PennedMac" folder in "PennedMac" target */,
+			);
 			path = PennedMac;
 			sourceTree = "<group>";
 		};
@@ -148,6 +252,7 @@
 				CFA16DA5301AC3D4007825F0 /* Exceptions for "Vellix" folder in "Vellix" target */,
 				CFA16DA6301AC3D4007825F0 /* Exceptions for "Vellix" folder in "VellixTests" target */,
 				CFA16DAC301AC3DA007825F0 /* Exceptions for "Vellix" folder in "VellixUITests" target */,
+				D00100000000000000000003 /* Exceptions for "Vellix" folder in "PennedMac" target */,
 			);
 			path = Vellix;
 			sourceTree = "<group>";
@@ -159,6 +264,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D00100000000000000000001 /* GRDB in Frameworks */,
+				D00100000000000000000002 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -204,6 +311,8 @@
 				CFA16D69301AC182007825F0 /* Vellix */,
 				CFB7A22030D0A10000A17A01 /* Task Sources */,
 				CFB7C22030D0A10000A17A01 /* Calendar Sources */,
+				CFB7E12030E1300000A17001 /* Inline Text Color Sources */,
+				CFB7E12130E1300000A17001 /* Mac Text Color Sources */,
 				CF8C0953308486D30058BF74 /* Recovered References */,
 			);
 			sourceTree = "<group>";
@@ -246,6 +355,26 @@
 			path = Vellix;
 			sourceTree = "<group>";
 		};
+		CFB7E12030E1300000A17001 /* Inline Text Color Sources */ = {
+			isa = PBXGroup;
+			children = (
+				CFB7E11130E1300000A17001 /* Documents/InlineTextColor.swift */,
+				CFB7E11230E1300000A17001 /* Editor/InlineTextColorSheet.swift */,
+				CFB7E11330E1300000A17001 /* Editor/InlineTextColorPresentation.swift */,
+			);
+			name = "Inline Text Color Sources";
+			path = Vellix;
+			sourceTree = "<group>";
+		};
+		CFB7E12130E1300000A17001 /* Mac Text Color Sources */ = {
+			isa = PBXGroup;
+			children = (
+				CFB7E11430E1300000A17001 /* Inspector/MacTextColorInspector.swift */,
+			);
+			name = "Mac Text Color Sources";
+			path = PennedMac;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -263,9 +392,12 @@
 			);
 			fileSystemSynchronizedGroups = (
 				CF8C0EA8308548190058BF74 /* PennedMac */,
+				CFA16D69301AC182007825F0 /* Vellix */,
 			);
 			name = PennedMac;
 			packageProductDependencies = (
+				CFA16E12301AD193007825F0 /* GRDB */,
+				CFB7D10230E0100000A17001 /* Supabase */,
 			);
 			productName = PennedMac;
 			productReference = CF8C0EA7308548190058BF74 /* PennedMac.app */;
@@ -423,6 +555,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CFB7E10430E1300000A17001 /* Documents/InlineTextColor.swift in Sources */,
+				CFB7E10530E1300000A17001 /* Inspector/MacTextColorInspector.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -430,6 +564,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CFB7E10130E1300000A17001 /* Documents/InlineTextColor.swift in Sources */,
+				CFB7E10230E1300000A17001 /* Editor/InlineTextColorSheet.swift in Sources */,
+				CFB7E10330E1300000A17001 /* Editor/InlineTextColorPresentation.swift in Sources */,
 				CFB7C20130D0A10000A17A01 /* Calendar/CalendarAgenda.swift in Sources */,
 				CFB7C20230D0A10000A17A01 /* Calendar/AppleCalendarService.swift in Sources */,
 				CFB7C20330D0A10000A17A01 /* Calendar/CalendarEventNoteRepository.swift in Sources */,
@@ -476,10 +613,11 @@
 /* Begin XCBuildConfiguration section */
 		CF8C0EAF3085481B0058BF74 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = CFB7D20130E0200000A17001 /* Vellix/Configuration/Supabase.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				AUTOMATION_APPLE_EVENTS = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = PennedMacAppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = PennedMacAccentColor;
+				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_ENTITLEMENTS = PennedMac/PennedMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -487,6 +625,7 @@
 				DEVELOPMENT_TEAM = PLRRW8XCVU;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
@@ -494,14 +633,19 @@
 				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PennedMac/Resources/MacInfo.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Penned;
+				INFOPLIST_KEY_CFBundleName = Penned;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Penned displays your calendars and links document notes to events.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Choose profile and document images.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = im.lystaria.PennedMac;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -514,6 +658,8 @@
 				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -524,10 +670,11 @@
 		};
 		CF8C0EB03085481B0058BF74 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = CFB7D20130E0200000A17001 /* Vellix/Configuration/Supabase.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				AUTOMATION_APPLE_EVENTS = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = PennedMacAppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = PennedMacAccentColor;
+				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_ENTITLEMENTS = PennedMac/PennedMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -535,6 +682,7 @@
 				DEVELOPMENT_TEAM = PLRRW8XCVU;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
@@ -542,14 +690,19 @@
 				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PennedMac/Resources/MacInfo.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Penned;
+				INFOPLIST_KEY_CFBundleName = Penned;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Penned displays your calendars and links document notes to events.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Choose profile and document images.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = im.lystaria.PennedMac;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -562,6 +715,8 @@
 				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -728,7 +883,6 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
@@ -799,7 +953,6 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";

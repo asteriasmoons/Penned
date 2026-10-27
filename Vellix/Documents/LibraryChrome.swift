@@ -56,7 +56,7 @@ struct LibrarySearchField: View {
                 }
                 .foregroundStyle(.secondary)
             }
-            .menuStyle(.borderlessButton).fixedSize()
+            .pennedIconMenuStyle().fixedSize()
         }
         .padding(.horizontal, 14).frame(height: 44)
         .background(Color.primary.opacity(0.10), in: Capsule())
@@ -82,7 +82,7 @@ struct LibraryBottomBar: View {
                 destination(.calendar, icon: "mooncal")
             }
             .padding(4).background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
+            .overlay(Capsule().strokeBorder(VellixSurface.controlInk.opacity(0.12), lineWidth: 1))
             Spacer(minLength: 12)
             HStack(spacing: 4) {
                 Button { environment.focusLibrarySearch() } label: {
@@ -98,10 +98,11 @@ struct LibraryBottomBar: View {
                 } label: {
                     LibraryIcon(name: "addwavy", size: 26).frame(width: 42, height: 44)
                 }
+                .pennedIconMenuStyle()
                 .accessibilityLabel("Create").help("Create")
             }
             .padding(4).background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
+            .overlay(Capsule().strokeBorder(VellixSurface.controlInk.opacity(0.12), lineWidth: 1))
         }
         .buttonStyle(.plain).padding(.horizontal, 16).padding(.bottom, 8)
     }

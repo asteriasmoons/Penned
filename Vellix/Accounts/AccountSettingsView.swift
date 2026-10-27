@@ -112,7 +112,7 @@ struct AccountSettingsView: View {
             .refreshable { accounts.refreshProfile(); await accounts.waitForProfileSync() }
         }
         .foregroundStyle(VellixSurface.ink).tint(VellixSurface.violet)
-        .background(VellixSurface.appBackground).preferredColorScheme(.dark)
+        .background(VellixSurface.appBackground)
         .navigationBarBackButtonHidden()
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar).toolbarBackground(.hidden, for: .navigationBar)

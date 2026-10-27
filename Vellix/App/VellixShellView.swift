@@ -31,6 +31,7 @@ struct VellixShellView: View {
             #endif
         }
         .disabled(environment.isSwitchingSpace)
+        .modifier(PublishingRuntime())
         .onChange(of: environment.selectedDocumentID) { _, id in
             if id != nil { environment.isSettingsPresented = false }
         }
@@ -512,7 +513,7 @@ struct TemplatesView: View {
                                     .frame(width: 44, height: 44)
                                     .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
+                            .pennedIconMenuStyle()
                             .accessibilityLabel("Actions for \(template.title)")
                         }
                         .contextMenu {

@@ -11,11 +11,13 @@ await mkdir(join(workspace, "Tests/AccountTests"), { recursive: true });
 await mkdir(join(workspace, "Sources/LegacyAccountFixture"), { recursive: true });
 for (const path of ["Models/AuthUser.swift", "Data/AppState.swift", "Data/KeychainHelper.swift",
   "Accounts/AccountIdentity.swift", "Accounts/SupabaseConfiguration.swift", "Accounts/AccountPersistence.swift",
-  "Services/EmailAuthentication.swift", "Services/SupabaseEmailAuth.swift", "Services/AuthService.swift", "Services/AccountCloudStore.swift"]) {
+  "Services/EmailAuthentication.swift", "Services/SupabaseEmailAuth.swift", "Services/AuthService.swift", "Services/AccountCloudStore.swift",
+  "Publishing/PublishingTypes.swift", "Publishing/PublishingClient.swift", "Publishing/PublishingAppleAuth.swift"]) {
   await symlink(join(root, "Vellix", path), join(workspace, "Sources/Vellix", path.replaceAll("/", "_")));
 }
 await symlink(join(root, "Vellix/VellixTests/AccountTests.swift"), join(workspace, "Tests/AccountTests/AccountTests.swift"));
 await symlink(join(root, "Vellix/VellixTests/SupabaseAuthTests.swift"), join(workspace, "Tests/AccountTests/SupabaseAuthTests.swift"));
+await symlink(join(root, "Tests/Publishing/PublishingAuthTests.swift"), join(workspace, "Tests/AccountTests/PublishingAuthTests.swift"));
 await symlink(join(root, "Scripts/fixtures/LegacyAccountStore.swift"), join(workspace, "Sources/LegacyAccountFixture/LegacyAccountStore.swift"));
 await writeFile(join(workspace, "Package.swift"), `// swift-tools-version:6.4
 import PackageDescription

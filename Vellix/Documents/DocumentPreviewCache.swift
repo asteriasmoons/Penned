@@ -19,14 +19,17 @@ final class DocumentPreviewCache: ObservableObject {
     private(set) var presentationEpoch = 0
     private var latestFiles: [String: URL] = [:]
     private let session = TipTapEditorSession()
-    private lazy var renderer = TipTapEditorWebViewStore(session: session)
+    private let loadEditor: ((WKWebView, Coordinator) -> Void)?
+    private lazy var renderer = TipTapEditorWebViewStore(session: session, loadEditor: loadEditor)
     private let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("VellixDocumentPreviewsStyles-v10-collections", isDirectory: true)
 
-    init(documents: DocumentRepository, attachments: AttachmentStore, collections: CollectionRepository) {
+    init(documents: DocumentRepository, attachments: AttachmentStore, collections: CollectionRepository,
+         loadEditor: ((WKWebView, Coordinator) -> Void)? = nil) {
         self.documents = documents
         self.attachments = attachments
         self.collections = collections
+        self.loadEditor = loadEditor
         session.attachmentStore = attachments
         session.attachmentResolver = { [weak documents] id, json in
             try documents?.editorAttachments(documentID: id, json: json, store: attachments) ?? []
@@ -76,8 +79,8 @@ final class DocumentPreviewCache: ObservableObject {
         if !changed.isEmpty { contentRevision += 1; prewarm(changed) }
     }
 
-    func cachedImage(for document: DocumentRecord) -> CGImage? {
-        let expected = content(for: document).cacheKey
+    func cachedImage(for document: DocumentRecord, colorScheme: ColorScheme = .dark) -> CGImage? {
+        let expected = content(for: document).cacheKey(for: colorScheme)
         if latestFiles[document.id]?.deletingPathExtension().lastPathComponent == expected,
            let image = latestImages.object(forKey: document.id as NSString) { return image.image }
         let url = directory.appendingPathComponent(expected + ".png")
@@ -88,10 +91,10 @@ final class DocumentPreviewCache: ObservableObject {
         return image
     }
 
-    func presentationImage(for document: DocumentRecord, fallback: () -> CGImage?) -> CGImage? {
-        let key = content(for: document).cacheKey as NSString
+    func presentationImage(for document: DocumentRecord, colorScheme: ColorScheme = .dark, fallback: () -> CGImage?) -> CGImage? {
+        let key = content(for: document).cacheKey(for: colorScheme) as NSString
         if let image = presentedImages.object(forKey: key) { return image.image }
-        guard let image = cachedImage(for: document) ?? fallback() else { return nil }
+        guard let image = cachedImage(for: document, colorScheme: colorScheme) ?? fallback() else { return nil }
         presentedImages.setObject(PreviewImageBox(image), forKey: key, cost: image.bytesPerRow * image.height)
         return image
     }
@@ -132,10 +135,10 @@ final class DocumentPreviewCache: ObservableObject {
         }
     }
 
-    func image(for document: DocumentRecord) async -> CGImage? {
+    func image(for document: DocumentRecord, colorScheme: ColorScheme = .dark) async -> CGImage? {
         guard documents.spaceID == nil || documents.spaceID == document.spaceID else { return nil }
         let content = content(for: document)
-        let key = content.cacheKey
+        let key = content.cacheKey(for: colorScheme)
         if let cached = memory.object(forKey: key as NSString) { return cached.image }
         if let task = pending[key] { return await task.value }
         let url = directory.appendingPathComponent(key + ".png")
@@ -149,10 +152,10 @@ final class DocumentPreviewCache: ObservableObject {
         let task = Task { [weak self] () -> CGImage? in
             await prior?.value
             guard let self else { return nil }
-            guard contents[document.id]?.cacheKey == key else { return nil }
+            guard contents[document.id]?.cacheKey(for: colorScheme) == key else { return nil }
             do {
-                let image = try await render(content)
-                guard contents[document.id]?.cacheKey == key else { return nil }
+                let image = try await render(content, colorScheme: colorScheme)
+                guard contents[document.id]?.cacheKey(for: colorScheme) == key else { return nil }
                 remember(image, key: key)
                 latestImages.setObject(PreviewImageBox(image), forKey: document.id as NSString, cost: image.bytesPerRow * image.height)
                 latestFiles[document.id] = url
@@ -182,12 +185,15 @@ final class DocumentPreviewCache: ObservableObject {
         DocumentPreviewContent.cacheKey(document, children: children, collections: collections)
     }
 
-    private func render(_ content: DocumentPreviewContent) async throws -> CGImage {
+    private func render(_ content: DocumentPreviewContent, colorScheme: ColorScheme) async throws -> CGImage {
         guard content.hasResolvedCollections else { throw PreviewError.renderUnavailable }
         let document = content.document
+        let appearance = document.appearance.resolved(for: colorScheme)
+        let documentScheme = appearance.presentationColorScheme
         let webView = renderer.webView
         webView.frame = CGRect(x: 0, y: 0, width: 320, height: 800)
         session.bridgeErrorMessage = nil
+        session.setApplicationColorScheme(colorScheme)
         session.setAppearance(document.appearance)
         session.setPageReferences(content.children)
         session.setCollections(content.payloads)
@@ -211,8 +217,8 @@ final class DocumentPreviewCache: ObservableObject {
             guard let id = host["collectionID"] as? String, let blockID = host["blockID"] as? String,
                   let snapshot = content.collections.first(where: { $0.record.id == id }),
                   let width = host["width"] as? NSNumber, width.doubleValue > 0 else { throw PreviewError.renderUnavailable }
-            let native = ImageRenderer(content: CollectionSnapshotPreview(snapshot: snapshot, appearance: document.appearance, attachments: attachments)
-                .frame(width: CGFloat(width.doubleValue)).environment(\.colorScheme, .dark))
+            let native = ImageRenderer(content: CollectionSnapshotPreview(snapshot: snapshot, appearance: appearance, attachments: attachments)
+                .frame(width: CGFloat(width.doubleValue)).environment(\.colorScheme, documentScheme))
             native.scale = 2
             guard let image = native.cgImage else { throw PreviewError.renderUnavailable }
             let png = NSMutableData()
@@ -234,20 +240,12 @@ final class DocumentPreviewCache: ObservableObject {
             document.activeElement?.blur();
             await document.fonts.ready;
             const assets = getComputedStyle(document.documentElement);
-            for (const callout of document.querySelectorAll('.vellix-callout')) {
-                const icon = callout.querySelector('.vellix-callout-icon-image');
-                if (!icon) continue;
-                const name = callout.dataset.calloutIcon || 'sparkle';
-                const source = assets.getPropertyValue('--vellix-asset-' + name)
-                    || assets.getPropertyValue('--vellix-asset-sparkle');
+            async function rasterizedIcon(source, width, height, color) {
                 const match = source.match(/url\(["']?(.*?)["']?\)/);
-                if (!match) continue;
+                if (!match || width <= 0 || height <= 0) return null;
                 const glyph = new Image();
                 glyph.src = match[1];
                 await glyph.decode();
-                const width = icon.getBoundingClientRect().width;
-                const height = icon.getBoundingClientRect().height;
-                if (width <= 0 || height <= 0) continue;
                 const canvas = document.createElement('canvas');
                 canvas.width = Math.max(1, Math.ceil(width * 3));
                 canvas.height = Math.max(1, Math.ceil(height * 3));
@@ -256,17 +254,54 @@ final class DocumentPreviewCache: ObservableObject {
                 const w = glyph.naturalWidth * scale, h = glyph.naturalHeight * scale;
                 context.drawImage(glyph, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
                 context.globalCompositeOperation = 'source-in';
-                context.fillStyle = callout.dataset.calloutColor || '#FFFFFF';
+                context.fillStyle = color;
                 context.globalAlpha = 1;
                 context.fillRect(0, 0, canvas.width, canvas.height);
+                return canvas.toDataURL('image/png');
+            }
+            for (const callout of document.querySelectorAll('.vellix-callout')) {
+                const icon = callout.querySelector('.vellix-callout-icon-image');
+                if (!icon) continue;
+                const name = callout.dataset.calloutIcon || 'sparkle';
+                const source = assets.getPropertyValue('--vellix-asset-' + name)
+                    || assets.getPropertyValue('--vellix-asset-sparkle');
+                const {width, height} = icon.getBoundingClientRect();
+                const png = await rasterizedIcon(source, width, height, callout.dataset.calloutColor || '#FFFFFF');
+                if (!png) continue;
                 const image = document.createElement('img');
                 image.className = 'vellix-preview-callout-icon';
-                image.src = canvas.toDataURL('image/png');
+                image.src = png;
                 image.style.cssText = 'position:absolute;inset:8px;object-fit:contain;margin:0;max-width:none;border:0;';
                 image.style.width = width + 'px';
                 image.style.height = height + 'px';
                 icon.replaceWith(image);
                 await image.decode();
+            }
+            // WebKit's PDF compositor paints masked pseudo-elements as opaque squares.
+            // Flatten only the snapshot's mask, preserving the live editor and icon geometry.
+            document.getElementById('penned-preview-toggle-style')?.remove();
+            const toggleStyle = document.createElement('style');
+            toggleStyle.id = 'penned-preview-toggle-style';
+            toggleStyle.textContent = `
+                .vellix-toggle-button[data-penned-preview-icon]::before {
+                    background-image: var(--penned-preview-toggle-icon) !important;
+                    background-color: transparent !important;
+                    mask-image: none !important;
+                    -webkit-mask-image: none !important;
+                }`;
+            document.head.appendChild(toggleStyle);
+            for (const button of document.querySelectorAll('.vellix-toggle-button')) {
+                button.removeAttribute('data-penned-preview-icon');
+                button.style.removeProperty('--penned-preview-toggle-icon');
+                const icon = getComputedStyle(button, '::before');
+                const mask = icon.webkitMaskImage || icon.maskImage;
+                if (!mask || mask === 'none') continue;
+                const png = await rasterizedIcon(mask, parseFloat(icon.width), parseFloat(icon.height), icon.backgroundColor);
+                if (!png) continue;
+                const image = new Image(); image.src = png;
+                await image.decode();
+                button.style.setProperty('--penned-preview-toggle-icon', `url("${png}")`);
+                button.dataset.pennedPreviewIcon = '';
             }
             await Promise.race([
                 Promise.all(Array.from(document.images).map(image => image.decode().catch(() => {}))),
@@ -300,20 +335,21 @@ final class DocumentPreviewCache: ObservableObject {
         context.drawPDFPage(page)
         guard let body = context.makeImage() else { throw PreviewError.renderUnavailable }
         let headerRenderer = ImageRenderer(content: VStack(alignment: .leading, spacing: 10) {
-            LibrarySnapshotHeader(document: document, cover: CardImageLoader.image(path: document.cover, store: attachments))
+            LibrarySnapshotHeader(document: document, cover: CardImageLoader.image(path: document.cover, store: attachments), appearance: appearance)
             if let (collection, entry) = content.entryContext {
-                CollectionFieldsSnapshotPreview(snapshot: collection, entry: entry, appearance: document.appearance)
+                CollectionFieldsSnapshotPreview(snapshot: collection, entry: entry, appearance: appearance)
             }
-        }.frame(width: 320))
+        }.frame(width: 320).environment(\.colorScheme, documentScheme))
         headerRenderer.scale = 2
         guard let header = headerRenderer.cgImage else { throw PreviewError.renderUnavailable }
         let headerHeight = CGFloat(header.height) / 2
         let height = min(740, max(480, bodyHeight + headerHeight + 58 + (document.isThemed ? 16 : 0)))
-        let pageView = LibrarySnapshotPage(document: document, headerImage: header, headerHeight: headerHeight,
+        let pageView = LibrarySnapshotPage(document: document, appearance: appearance, headerImage: header, headerHeight: headerHeight,
             bodyImage: body, bodyHeight: bodyHeight, pageBreaks: pageBreaks,
             outerImage: CardImageLoader.image(path: document.appearance.editorBackground.imagePath, store: attachments),
             innerImage: CardImageLoader.image(path: document.appearance.innerPageBackground.imagePath, store: attachments))
             .frame(width: document.isThemed ? 376 : 360, height: height, alignment: .topLeading)
+            .environment(\.colorScheme, documentScheme)
         let imageRenderer = ImageRenderer(content: pageView)
         imageRenderer.scale = 2
         guard let image = imageRenderer.cgImage else { throw PreviewError.renderUnavailable }
@@ -330,6 +366,7 @@ private final class PreviewImageBox {
 
 private struct LibrarySnapshotPage: View {
     let document: DocumentRecord
+    let appearance: DocumentAppearance
     let headerImage: CGImage
     let headerHeight: CGFloat
     let bodyImage: CGImage
@@ -342,7 +379,7 @@ private struct LibrarySnapshotPage: View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
                 LibrarySnapshotSurface(
-                    style: document.isThemed ? document.appearance.editorBackground : DocumentAppearance.plain.editorBackground,
+                    style: appearance.editorBackground,
                     photo: document.isThemed ? outerImage : nil)
                 if let theme = document.appearance.editorBackground.patternTheme(for: document.appearance.themeID) {
                     ThemePatternOverlay(theme: theme)
@@ -355,12 +392,12 @@ private struct LibrarySnapshotPage: View {
                     ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                         Group {
                             if document.isThemed {
-                                LibrarySnapshotSurface(style: document.appearance.innerPageBackground, photo: innerImage)
+                                LibrarySnapshotSurface(style: appearance.innerPageBackground, photo: innerImage)
                             } else {
                                 // Match the editor's plain sheets, including documents with legacy black backgrounds.
                                 ZStack {
-                                    LibrarySnapshotSurface(style: DocumentAppearance.plain.editorBackground, photo: nil)
-                                    Color.black.opacity(0.30)
+                                    LibrarySnapshotSurface(style: appearance.editorBackground, photo: nil)
+                                    if appearance.presentationColorScheme == .dark { Color.black.opacity(0.30) }
                                 }
                             }
                         }
@@ -406,8 +443,10 @@ nonisolated struct PreviewPageBreak: Equatable {
 struct LibrarySnapshotHeader: View {
     let document: DocumentRecord
     let cover: CGImage?
+    var appearance: DocumentAppearance? = nil
 
     var body: some View {
+        let appearance = appearance ?? document.appearance
         VStack(alignment: .leading, spacing: 18) {
             if document.appearance.displaysCover {
                 Group {
@@ -420,10 +459,10 @@ struct LibrarySnapshotHeader: View {
                 if document.dailyNoteDate != nil { LibraryIcon(name: "mooncal", size: 20) }
                 Text(document.title)
             }
-                .font(.system(size: 26, weight: .black, design: document.appearance.fontStyle.design))
-                .foregroundStyle(Color(vellixHex: document.appearance.textColorHex))
+                .font(.system(size: 26, weight: .black, design: appearance.fontStyle.design))
+                .foregroundStyle(Color(vellixHex: appearance.textColorHex))
                 .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-            Rectangle().fill(Color(vellixHex: document.appearance.textColorHex).opacity(0.13)).frame(height: 1)
+            Rectangle().fill(Color(vellixHex: appearance.textColorHex).opacity(0.13)).frame(height: 1)
         }
     }
 }

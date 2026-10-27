@@ -27,7 +27,7 @@ struct CollectionCreateSheet: View {
                     Button(saving ? "Creating..." : "Create") { create() }
                         .disabled(saving || name.trimmedNonEmpty == nil || viewName.trimmedNonEmpty == nil)
                 }.onAppear { focused = true }
-        }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.medium, .large])
+        }.tint(VellixSurface.violet).presentationDetents([.medium, .large])
             .interactiveDismissDisabled(saving)
             .onDisappear { if !saved { model.session.cancelCollectionInsertion(blockID) } }
     }
@@ -69,14 +69,18 @@ struct CollectionAddEntrySheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                #if os(iOS)
+                TextField("Page title", text: $title.singleLinePageTitle).focused($focused).collectionFormRows(showsSeparator: true)
+                #else
                 TextField("Page title", text: $title).focused($focused).collectionFormRows(showsSeparator: true)
+                #endif
                 Button("Create and Open") { create(open: true) }.disabled(title.trimmedNonEmpty == nil).collectionFormRows()
                 if let error { Text(error).foregroundStyle(.red).collectionFormRows() }
             }.collectionForm().navigationTitle("New Entry")
                 .pennedSheet(title: "New Entry", close: { dismiss() }) {
                     Button("Create") { create(open: false) }.disabled(title.trimmedNonEmpty == nil)
                 }.onAppear { focused = true }
-        }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.medium])
+        }.tint(VellixSurface.violet).presentationDetents([.medium])
     }
     private func create(open: Bool) {
         do {
@@ -104,7 +108,11 @@ struct CollectionEntryActionsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                #if os(iOS)
+                TextField("Page title", text: $title.singleLinePageTitle).collectionFormRows(showsSeparator: true)
+                #else
                 TextField("Page title", text: $title).collectionFormRows(showsSeparator: true)
+                #endif
                 Button("Open Page") { dismiss(); onOpen(documentID) }.collectionFormRows(showsSeparator: true)
                 Button("Duplicate Entry") {
                     do {
@@ -129,7 +137,7 @@ struct CollectionEntryActionsSheet: View {
                         catch { self.error = error.localizedDescription }
                     }
                 } message: { Text("The page disappears from every view. You can restore it from Trash.") }
-        }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.medium, .large])
+        }.tint(VellixSurface.violet).presentationDetents([.medium, .large])
     }
     private func move(_ offset: Int) {
         guard let snapshot = store.snapshots[collectionID] else { return }

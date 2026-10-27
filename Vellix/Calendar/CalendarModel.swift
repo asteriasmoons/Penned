@@ -31,7 +31,7 @@ final class CalendarModel: ObservableObject {
     private var loading: Task<Void, Never>?
     private var generation = 0
     private var isVisible = false
-    var completeTask: ((String, String, Bool) async throws -> Void)?
+    var completeTask: ((String, String, Bool, Bool) async throws -> Void)?
 
     init(tasks: DocumentTaskRepository, documents: DocumentRepository, notes: CalendarEventNoteRepository, database: AppDatabase, dailyNotes: DailyNoteRepository? = nil) {
         taskRepository = tasks
@@ -176,11 +176,11 @@ final class CalendarModel: ObservableObject {
         catch { errorMessage = error.localizedDescription; access = await apple.access() }
     }
 
-    func complete(_ entry: CalendarTaskEntry) async {
+    func complete(_ entry: CalendarTaskEntry, skipped: Bool = false) async {
         guard entry.canComplete, !completingTasks.contains(entry.task.id), let completeTask else { return }
         completingTasks.insert(entry.task.id)
         defer { completingTasks.remove(entry.task.id) }
-        do { try await completeTask(entry.task.id, entry.occurrenceID, !entry.isCompleted); refresh() }
+        do { try await completeTask(entry.task.id, entry.occurrenceID, skipped || !entry.isCompleted, skipped); refresh() }
         catch { errorMessage = error.localizedDescription; refresh() }
     }
 }

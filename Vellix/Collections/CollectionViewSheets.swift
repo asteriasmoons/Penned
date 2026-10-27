@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CollectionManagementSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var environment: AppEnvironment
     @ObservedObject var store: CollectionStore
     let collectionID: String
     let closesOnSelection: Bool
@@ -10,6 +11,8 @@ struct CollectionManagementSheet: View {
     @State private var viewTarget: CollectionViewRecord?
     @State private var newViewKind: CollectionViewKind?
     @State private var deletingView: CollectionViewRecord?
+    @State private var confirmingDeletion = false
+    @State private var isDeleting = false
     @State private var error: String?
 
     init(store: CollectionStore, snapshot: CollectionSnapshot, closesOnSelection: Bool = false) {
@@ -55,6 +58,7 @@ struct CollectionManagementSheet: View {
                                     Button("Move Down") { moveView(view.id, offset: 1) }.disabled(view.id == snapshot.views.last?.id)
                                     Button("Delete View", role: .destructive) { deletingView = view }.disabled(snapshot.views.count == 1)
                                 } label: { LibraryIcon(name: "dotswavy", size: 22).frame(width: 44) }
+                                .pennedIconMenuStyle()
                                 .accessibilityLabel("Actions for \(view.name)")
                             }.collectionFormRows(showsSeparator: true)
                         }.onMove { offsets, destination in
@@ -71,6 +75,7 @@ struct CollectionManagementSheet: View {
                             Label { Text("Add View") } icon: { LibraryIcon(name: "addwavy", size: 18) }
                                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                         }
+                        .pennedIconMenuStyle()
                     } header: {
                         Text("Views").pennedSheetSectionHeader()
                     }.collectionFormRows().pennedSheetSectionBackground("collection-views")
@@ -98,15 +103,23 @@ struct CollectionManagementSheet: View {
                     } header: {
                         Text("Shared Fields").pennedSheetSectionHeader()
                     }.collectionFormRows().pennedSheetSectionBackground("collection-fields")
+                    if !closesOnSelection {
+                        Section {
+                            Button(role: .destructive) { confirmingDeletion = true } label: {
+                                Label { Text("Delete Collection") } icon: { LibraryIcon(name: "trash", size: 18) }
+                                    .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                            }
+                        }.collectionFormRows().pennedSheetSectionBackground("collection-delete")
+                    }
                 }
                 if let message = error ?? store.errorMessage { Text(message).foregroundStyle(.red).collectionFormRows() }
-            }.collectionForm(compact: true).pennedSheetGroupedSections()
+            }.collectionForm(compact: true).pennedSheetGroupedSections().disabled(isDeleting)
                 .navigationTitle(closesOnSelection ? "Views" : "Collection")
-                .pennedSheet(title: closesOnSelection ? "Views" : "Collection", close: { dismiss() }) {
+                .pennedSheet(title: closesOnSelection ? "Views" : "Collection", closeDisabled: isDeleting, close: { dismiss() }) {
                     Button("Done") {
                         do { try store.repository.rename(collectionID: collectionID, name: name); store.refresh(); dismiss() }
                         catch { self.error = error.localizedDescription }
-                    }.disabled(name.trimmedNonEmpty == nil)
+                    }.disabled(isDeleting || name.trimmedNonEmpty == nil)
                 }
                 .sheet(item: $fieldTarget) { CollectionFieldEditorSheet(store: store, field: $0) }
                 .sheet(item: $viewTarget) { view in
@@ -120,7 +133,21 @@ struct CollectionManagementSheet: View {
                         deletingView = nil
                     }
                 } message: { Text("Entries and shared fields will not be deleted.") }
-        }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.large])
+                .confirmationDialog("Delete this collection?", isPresented: $confirmingDeletion, titleVisibility: .visible) {
+                    Button("Delete Collection", role: .destructive) {
+                        isDeleting = true
+                        Task { @MainActor in
+                            defer { isDeleting = false }
+                            do {
+                                try await CollectionDeletion.delete(collectionID, in: environment)
+                                dismiss()
+                            } catch { self.error = error.localizedDescription }
+                        }
+                    }
+                } message: {
+                    Text("The collection, its views, fields, and field values will be deleted. Entry documents will be kept as ordinary pages. This cannot be undone.")
+                }
+        }.tint(VellixSurface.violet).presentationDetents([.large]).interactiveDismissDisabled(isDeleting)
     }
     private func moveView(_ id: String, offset: Int) {
         guard var ids = snapshot?.views.map(\.id), let i = ids.firstIndex(of: id), ids.indices.contains(i + offset) else { return }
@@ -154,7 +181,7 @@ struct CollectionAddViewSheet: View {
                         catch { self.error = error.localizedDescription }
                     }.disabled(name.trimmedNonEmpty == nil)
                 }.onAppear { focused = true }
-        }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.medium])
+        }.tint(VellixSurface.violet).presentationDetents([.medium])
     }
 }
 
@@ -249,7 +276,7 @@ struct CollectionViewEditorSheet: View {
                         configuration.filters.removeAll { $0.id == filter.id }
                     }
                 }
-        }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.large])
+        }.tint(VellixSurface.violet).presentationDetents([.large])
     }
     private func visibility(_ id: String) -> Binding<Bool> {
         Binding(get: { configuration.visibleFieldIDs.contains(id) }, set: { enabled in
@@ -299,6 +326,6 @@ struct CollectionFilterSheet: View {
                 .pennedSheet(title: "Filter", close: { dismiss() }) {
                     Button("Done") { onSave(filter); dismiss() }.disabled(field.filterValidation(filter) != nil)
                 }
-        }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.medium, .large])
+        }.tint(VellixSurface.violet).presentationDetents([.medium, .large])
     }
 }

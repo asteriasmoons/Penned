@@ -45,7 +45,10 @@ test("editors remain one cached deck independent of tab and sidebar navigation",
 
 test("gallery layout uses the exact existing previews and preserves phone columns", async () => {
   const source = await read("Documents/DocumentBrowserView.swift");
-  assert.match(source, /LibraryDocumentPreview\(document: document, visibleHeightFraction: workspace == nil \? 1 : PadWorkspaceMetrics\.galleryPreviewHeightFraction\)/);
+  assert.match(source, /LibraryDocumentPreview\(document: document, visibleHeightFraction: previewHeightFraction\)/);
+  assert.match(source, /if let phoneFraction = LibraryDocumentPreview\.phoneGalleryHeightFraction/);
+  assert.match(source, /return mode == \.all && displayTitle == nil \? 0\.7 : phoneFraction/);
+  assert.match(source, /return workspace == nil \? 1 : PadWorkspaceMetrics\.galleryPreviewHeightFraction/);
   assert.match(source, /workspace == nil \? 2 : \(availableWidth > 0/);
   assert.match(source, /PadWorkspaceMetrics\.galleryColumns/);
   assert.match(source, /ForEach\(0\.\.<columnCount/);
@@ -112,7 +115,7 @@ test("open documents hide the workspace bar and put the sidebar action beside th
   assert.match(editor, /if showsDocumentHeading && isThemed && !isCompact/);
 });
 
-test("the bottom crop preserves the existing renderer and defaults to full height on phone", async () => {
+test("the bottom crop preserves the existing renderer and isolates phone gallery overrides from iPad sizing", async () => {
   const preview = await read("Documents/LibraryDocumentPreview.swift");
   assert.match(preview, /visibleHeightFraction: CGFloat = 1/);
   assert.match(preview, /Image\(decorative: snapshot, scale: 1\)\.resizable\(\)\.scaledToFill\(\)/);
@@ -120,7 +123,8 @@ test("the bottom crop preserves the existing renderer and defaults to full heigh
   assert.match(preview, /\/ min\(1, max\(0\.01, visibleHeightFraction\)\)/);
   assert.match(preview, /\.clipped\(\)/);
   assert.match(preview, /frame\(width: current\.isThemed \? 376 : 360, height: 740/);
-  assert.match(await read("Tags/TagBrowserView.swift"), /visibleHeightFraction: workspace == nil \? 1 : PadWorkspaceMetrics\.galleryPreviewHeightFraction/);
+  assert.match(preview, /UIDevice\.current\.userInterfaceIdiom == \.phone \? 0\.6 : nil/);
+  assert.match(await read("Tags/TagBrowserView.swift"), /visibleHeightFraction: LibraryDocumentPreview\.phoneGalleryHeightFraction\s+\?\? \(workspace == nil \? 1 : PadWorkspaceMetrics\.galleryPreviewHeightFraction\)/);
   const metrics = await read("App/PadWorkspaceModel.swift");
   assert.match(metrics, /galleryWidthIncrease: CGFloat = 1\.1/);
   assert.match(metrics, /galleryCornerEnlargement: CGFloat = 1\.05/);
@@ -138,7 +142,9 @@ test("iPad editor controls remain fixed and have a small top gap without changin
   assert.match(editor, /let isCompact = workspace != nil \|\| proxy\.size\.width < 620/);
   assert.match(editor, /maxWidth: workspace == nil \? 900 : 720/);
   assert.match(editor, /maxWidth: workspace != nil \? 720 : \(isCompact \? \.infinity : 900\)/);
-  assert.match(editor, /height: workspace == nil \? nil : proxy\.size\.height/);
+  assert.match(editor, /let scrollWidth: CGFloat\? = workspace == nil \? nil : size\.width/);
+  assert.match(editor, /let scrollHeight: CGFloat\? = workspace == nil \? nil : size\.height/);
+  assert.match(editor, /\.frame\(width: scrollWidth, height: scrollHeight\)/);
   assert.match(editor, /\.padding\(\.top, workspace != nil \? 8 : \(isCompact \? 0 : 56\)\)/);
   assert.match(editor, /ScrollView\(showsIndicators: false\)[\s\S]*?\.onChange\(of: model\.tableEditorRequest\?\.id\)[\s\S]*?EditorTopControls\(/);
   const workspace = await read("App/PadWorkspaceView.swift");

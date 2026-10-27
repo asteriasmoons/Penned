@@ -252,6 +252,31 @@ struct PadWorkspaceTests {
         #expect(tabs.tabs.count == 2)
     }
 
+    @Test func calendarBadgeReturnSurvivesSwitchingIPadTabs() async throws {
+        let app = try environment(), tabs = PadWorkspaceModel(environment: app)
+        let parent = try app.documents.create(DocumentDraft(title: "Parent"))
+        let page = try app.documents.create(DocumentDraft(title: "Exact page", parentDocumentID: parent.id))
+        tabs.start()
+        try await tabs.navigate(.library(.calendar))
+        let calendarTab = tabs.activeID
+        app.openCalendarDocument(page, returnToCalendar: true)
+        app.selectedDocumentID = page.id
+        tabs.capture()
+        #expect(tabs.activeTab.location.documentID == page.id)
+        #expect(tabs.activeTab.location.calendarDocumentReturnID == page.id)
+
+        try await tabs.newTab()
+        #expect(app.calendarDocumentReturnID == nil)
+        try await tabs.selectTab(calendarTab)
+        #expect(app.pendingDocumentID == page.id && app.calendarDocumentReturnID == page.id)
+        app.returnFromDocument(page)
+        tabs.capture()
+        #expect(app.selectedDocumentID == nil && app.pendingDocumentID == nil)
+        #expect(tabs.activeID == calendarTab && tabs.tabs.count == 2)
+        #expect(tabs.activeTab.location.destination == .library(.calendar))
+        #expect(tabs.activeTab.location.documentID == nil && tabs.activeTab.location.calendarDocumentReturnID == nil)
+    }
+
     @Test func galleryCropsOnlyTheBottomFifthAtTheSamePixelScale() throws {
         let app = try environment()
         let page = try app.documents.create(DocumentDraft(title: "Crop fixture"))
@@ -392,6 +417,64 @@ struct PadWorkspaceTests {
         #expect(try await fixture.session.currentJSON() == before)
         #expect(before?.contains("Live text not yet saved") == true)
         replacement.unhost()
+    }
+
+    @Test func liveAppearanceChangesKeepTheWebViewUnsavedTextSelectionAndOwnership() async throws {
+        let saved = TipTapContentAnalyzer.starterDocument(title: "", lines: ["Saved body"])
+        let fixture = try NativeEditorFixture(documentID: "live-appearance", json: saved)
+        defer { fixture.close() }
+        fixture.session.setAppearance(.plain)
+        try await fixture.waitUntilLoaded()
+        let host = TipTapWebViewContainer()
+        fixture.store.claimHost(host)
+        defer { host.unhost() }
+        _ = try await fixture.webView.callAsyncJavaScript("""
+            const editor = document.querySelector('.tiptap-editor').editor;
+            editor.commands.insertContent('Unsaved typing');
+            editor.commands.setTextSelection({from: 2, to: 6});
+            return true;
+            """, arguments: [:], in: nil, contentWorld: .page)
+        let before = try await fixture.session.currentJSON()
+        let selection = try await fixture.webView.evaluateJavaScript("JSON.stringify(document.querySelector('.tiptap-editor').editor.state.selection.toJSON())") as? String
+        let loads = fixture.loads
+        var writes = 0
+        fixture.session.onEvent = { event in if case .documentChanged = event { writes += 1 } }
+        for scheme in [ColorScheme.light, .dark, .light] {
+            fixture.session.setApplicationColorScheme(scheme)
+            let expected = scheme == .light ? "light" : "dark"
+            let deadline = Date().addingTimeInterval(10)
+            while try await fixture.webView.evaluateJavaScript("document.documentElement.dataset.pennedDocumentScheme") as? String != expected {
+                if Date() > deadline { throw VellixError.editorBridge("The live appearance did not reach WebKit.") }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(try await fixture.session.currentJSON() == before)
+            #expect(try await fixture.webView.evaluateJavaScript("JSON.stringify(document.querySelector('.tiptap-editor').editor.state.selection.toJSON())") as? String == selection)
+            #expect(fixture.webView.superview === host && fixture.store.ownsHost(host))
+            #expect(fixture.loads == loads && !fixture.session.isLoadingDocument)
+            let expectedInk = scheme == .light ? "rgb(33, 29, 41)" : "rgb(247, 247, 247)"
+            #expect(try await fixture.webView.evaluateJavaScript("getComputedStyle(document.querySelector('.tiptap-editor')).color") as? String == expectedInk)
+        }
+        #expect(writes == 0)
+    }
+
+    @Test func aCustomDocumentKeepsItsAppearanceWhenOnlyTheInterfaceSchemeChanges() async throws {
+        let fixture = try NativeEditorFixture(documentID: "custom-live-appearance", json: TipTapContentAnalyzer.starterDocument(title: "", lines: ["Custom document body"]))
+        defer { fixture.close() }
+        var saved = DocumentAppearance.defaultForTheme(.custom)
+        saved.textColorHex = "#FFF1DB"
+        fixture.session.setAppearance(saved)
+        try await fixture.waitUntilLoaded()
+        let before = try await fixture.session.currentJSON(), loads = fixture.loads
+        fixture.session.setApplicationColorScheme(.light)
+        let deadline = Date().addingTimeInterval(10)
+        while try await fixture.webView.evaluateJavaScript("document.documentElement.dataset.pennedInterfaceScheme") as? String != "light" {
+            if Date() > deadline { throw VellixError.editorBridge("The interface appearance was not applied.") }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(try await fixture.webView.evaluateJavaScript("getComputedStyle(document.querySelector('.tiptap-editor')).color") as? String == "rgb(255, 241, 219)")
+        #expect(try await fixture.webView.evaluateJavaScript("document.documentElement.dataset.pennedDocumentScheme") as? String == "dark")
+        #expect(try await fixture.session.currentJSON() == before)
+        #expect(fixture.loads == loads && !fixture.session.isLoadingDocument)
     }
 
     @Test func reloadingOneRetainedEditorDoesNotBlankAnotherEditor() async throws {

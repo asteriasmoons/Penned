@@ -57,6 +57,44 @@ struct SpaceEnvironmentTests {
         #expect(session.formattingState == TipTapFormattingState())
     }
 
+    @Test func inlineTextColorBridgeValidatesColorsAndDefaultsOlderFormattingEvents() throws {
+        let gradient = try #require(InlineTextColor(kind: .gradient, start: "#abc", end: "#42c4d5", angle: -90))
+        #expect(gradient.start == "#AABBCC" && gradient.end == "#42C4D5" && gradient.angle == 270)
+        #expect(InlineTextColor.decode(gradient.bridgeValue) == gradient)
+        #expect(InlineTextColor(kind: .solid, start: "url(invalid)") == nil)
+        #expect(InlineTextColor.decode(["kind": "gradient", "start": "#FFFFFF", "end": "#000000", "angle": "90"]) == nil)
+        let state = TipTapFormattingState.decode(["hasTextSelection": true, "textColor": gradient.bridgeValue])
+        #expect(state.hasTextSelection && state.textColor == gradient)
+        #expect(state.canColorText)
+        let sidebarState = TipTapFormattingState.decode(["hasTextSelection": false, "canColorText": true,
+            "textColorToken": "held-selection", "textColor": gradient.bridgeValue])
+        #expect(!sidebarState.hasTextSelection && sidebarState.canColorText)
+        #expect(sidebarState.textColorToken == "held-selection" && sidebarState.textColor == gradient)
+        #expect(!TipTapFormattingState.decode([:]).hasTextSelection)
+        #expect(TipTapFormattingState.decode(["textColor": ["kind": "solid", "start": "invalid"]]).textColor == nil)
+    }
+
+    @Test func inlineTextGradientSurvivesCanonicalSaveAndRepositoryReloadAlongsideOtherMarks() throws {
+        let app = try environment()
+        let page = try app.documents.create(DocumentDraft(title: "Colored text"))
+        let gradient: [String: Any] = ["start": "#BC76FF", "end": "#42C4D5", "angle": 90]
+        let attributes: [String: Any] = ["color": NSNull(), "gradient": gradient]
+        let marks: [[String: Any]] = [["type": "bold"], ["type": "textStyle", "attrs": attributes]]
+        let run: [String: Any] = ["type": "text", "text": "Selected words", "marks": marks]
+        let json = try TipTapContentAnalyzer.makeDocumentJSON(content: [["type": "paragraph", "content": [run]]])
+        _ = try app.documents.saveEditorJSON(id: page.id, canonicalJSON: json)
+        let saved = try app.documents.requireDocument(id: page.id)
+        let object = TipTapContentAnalyzer.documentObject(from: saved.tipTapJSON)
+        let paragraph = try #require((object["content"] as? [[String: Any]])?.first)
+        let text = try #require((paragraph["content"] as? [[String: Any]])?.first)
+        let savedMarks = try #require(text["marks"] as? [[String: Any]])
+        let attrs = try #require(savedMarks.first { $0["type"] as? String == "textStyle" }?["attrs"] as? [String: Any])
+        #expect(InlineTextColor.markAttributes(attrs)?.kind == .gradient)
+        #expect(InlineTextColor.markAttributes(attrs)?.angle == 90)
+        #expect(savedMarks.contains { $0["type"] as? String == "bold" })
+        #expect(saved.plainText.contains("Selected words"))
+    }
+
     @Test func dailyNoteCreationCommitsPendingTemplateEditsAndBridgeResponses() async throws {
         let app = try environment()
         let root = try app.templates.create(title: "Daily")
@@ -87,6 +125,76 @@ struct SpaceEnvironmentTests {
 
     private func environment(_ db: AppDatabase? = nil, preferences: UserDefaults? = nil) throws -> AppEnvironment {
         AppEnvironment(database: try db ?? AppDatabase.makeInMemory(), attachmentStore: AttachmentStore(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), preferences: preferences)
+    }
+
+    @Test(arguments: ["nested", "collection"])
+    func calendarBadgeOpensExactPageAndReturnsToCalendarInsteadOfItsParent(kind: String) throws {
+        let app = try environment()
+        let parent = try app.documents.create(DocumentDraft(title: "Parent"))
+        let page: DocumentRecord
+        if kind == "collection" {
+            let collection = try app.collections.repository.create(ownerID: parent.id, name: "Tasks", viewName: "Main", kind: .gallery)
+            page = try app.collections.repository.addEntry(collectionID: collection.record.id, title: "Same title")
+        } else {
+            page = try app.documents.create(DocumentDraft(title: "Same title", parentDocumentID: parent.id))
+        }
+        let other = try app.documents.create(DocumentDraft(title: "Same title"))
+        app.selectedDestination = .calendar
+        app.calendar.mode = .day
+        let day = try #require(DailyNoteDay(key: "2026-10-22"))
+        app.calendar.select(day.date())
+        let selectedDate = app.calendar.selectedDate
+        let expandedDays = app.calendar.expandedDays
+
+        app.openCalendarDocument(page, returnToCalendar: true)
+        #expect(app.pendingDocumentID == page.id)
+        #expect(app.pendingDocumentID != parent.id && app.pendingDocumentID != other.id)
+        #expect(app.calendarDocumentReturnID == page.id)
+        app.returnFromDocument(page)
+        #expect(app.selectedDocumentID == nil && app.pendingDocumentID == nil)
+        #expect(app.selectedDestination == .calendar && app.calendarDocumentReturnID == nil)
+        #expect(app.calendar.mode == .day && app.calendar.selectedDate == selectedDate)
+        #expect(app.calendar.expandedDays == expandedDays)
+    }
+
+    @Test func calendarReturnSurvivesDeeperPagesWithoutChangingOrdinaryParentNavigation() throws {
+        let app = try environment()
+        let parent = try app.documents.create(DocumentDraft(title: "Parent"))
+        let child = try app.documents.create(DocumentDraft(title: "Badge destination", parentDocumentID: parent.id))
+        let deeper = try app.documents.create(DocumentDraft(title: "Deeper", parentDocumentID: child.id))
+        app.selectedDestination = .calendar
+        app.openCalendarDocument(child, returnToCalendar: true)
+        // Set the displayed ID as the editor-ready callback would; no WebView is needed for routing.
+        app.selectedDocumentID = child.id
+        app.select(deeper)
+        app.selectedDocumentID = deeper.id
+        app.returnFromDocument(deeper)
+        #expect(app.pendingDocumentID == child.id && app.calendarDocumentReturnID == child.id)
+        app.selectedDocumentID = child.id
+        app.returnFromDocument(child)
+        #expect(app.selectedDocumentID == nil && app.pendingDocumentID == nil && app.selectedDestination == .calendar)
+
+        app.select(deeper)
+        #expect(app.calendarDocumentReturnID == nil)
+        app.returnFromDocument(deeper)
+        #expect(app.pendingDocumentID == child.id)
+        app.selectedDestination = .allDocuments
+        #expect(app.calendarDocumentReturnID == nil)
+    }
+
+    @Test func calendarBadgeRejectsTrashedAndOtherSpaceDocuments() async throws {
+        let app = try environment()
+        let trashed = try app.documents.create(DocumentDraft(title: "Trashed"))
+        _ = try app.documents.trash(id: trashed.id)
+        app.selectedDestination = .calendar
+        app.openCalendarDocument(trashed, returnToCalendar: true)
+        #expect(app.pendingDocumentID == nil && app.calendarDocumentReturnID == nil && app.errorMessage != nil)
+        let old = try app.documents.create(DocumentDraft(title: "Old Space"))
+        let other = try app.spaces.create(title: "Other")
+        try await app.switchSpace(to: other.id)
+        app.selectedDestination = .calendar
+        app.openCalendarDocument(old, returnToCalendar: true)
+        #expect(app.selectedDocumentID == nil && app.pendingDocumentID == nil && app.calendarDocumentReturnID == nil)
     }
 
     @Test func switchingScopesEveryLibrarySurfaceAndKeepsSelectionAcrossNavigation() async throws {

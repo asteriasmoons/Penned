@@ -182,7 +182,8 @@ test("the presentation surface routes through the shared native backdrop without
   const source = await read("Resources/PennedSheetStyle.swift");
   assert.match(declaration(source, "PennedSheetPresentation"), /\.pennedSheetBackdrop\(\)/);
   assert.match(source, /\.presentationCornerRadius\(PennedSheetStyle\.cornerRadius\)/);
-  assert.match(source, /\.preferredColorScheme\(\.dark\)/);
+  assert.match(source, /\.pennedApplicationAppearance\(\)/);
+  assert.doesNotMatch(source, /\.preferredColorScheme\(\.dark\)/);
   assert.match(source, /\.scrollContentBackground\(\.hidden\)/);
   assert.doesNotMatch(source, /\.blur\(|LinearGradient|AngularGradient|\.background\(Color\.black/);
   assert.doesNotMatch(source, /\.presentationDetents|\.presentationDragIndicator|\.interactiveDismissDisabled/);
@@ -386,7 +387,8 @@ test("compact collection forms size rows from content rather than imposing contr
   assert.match(management, /HStack\(spacing: 12\)/);
   assert.match(management, /HStack\(spacing: 10\)/);
   assert.match(management, /TextField\("Collection name", text: \$name\)/);
-  assert.equal((management.match(/\.frame\(maxWidth: \.infinity, alignment: \.leading\)\.contentShape\(Rectangle\(\)\)/g) ?? []).length, 4);
+  assert.equal((management.match(/\.frame\(maxWidth: \.infinity, alignment: \.leading\)\.contentShape\(Rectangle\(\)\)/g) ?? []).length, 5);
+  assert.match(management, /pennedSheetSectionBackground\("collection-delete"\)/);
   assert.doesNotMatch(management, /minHeight:|height:|\.offset\(|\.padding\(/);
   assert.doesNotMatch(source.slice(source.indexOf("struct CollectionAddViewSheet:")), /collectionForm\(compact: true\)/);
 });
@@ -422,10 +424,11 @@ test("collection section labels explicitly control their gap to fields without r
   assert.match(source, /LibraryIcon\(name: "xmarkwavy", size: 23\)\.frame\(width: 44, height: 44\)/);
 });
 
-test("all field surfaces use the copied material with one dark-gray tint and no content resizing", async () => {
+test("all field surfaces use the copied material with one semantic tint and no content resizing", async () => {
   const source = await read("Resources/PennedSheetStyle.swift");
   const field = declaration(source, "PennedSheetFieldBackground");
-  assert.match(source, /static let fieldTint = Color\(white: 0\.2\)/);
+  assert.match(source, /static let fieldTint = VellixSurface\.input/);
+  assert.match(await read("Resources/VellixDesignSystem.swift"), /static let input = Color\.penned\(light: Color\(vellixHex: "#F0ECF5"\), dark: Color\(white: 0\.2\)\)/);
   assert.match(field, /PennedFrostedMaterial\(tint: PennedSheetStyle\.fieldTint, cornerRadius: cornerRadius\)/);
   assert.match(field, /\.allowsHitTesting\(false\)\.accessibilityHidden\(true\)/);
   assert.doesNotMatch(field, /PennedSheetBlurSurface|UIBlurEffect|ultraThinMaterial|PennedFrostedCard|\.padding\(|\.frame\(|\.opacity\(|\.blur\(|presentationBackground/);
@@ -529,7 +532,7 @@ test("grouped rows provide transparent geometry probes instead of additional nat
   assert.match(row, /PennedSheetFieldDivider\(\)\.padding\(\.horizontal, 20\)\.padding\(\.bottom, pixelLength\)/);
 });
 
-test("one copied dark-gray material is retained per visible section behind the original Form cells", async () => {
+test("one copied theme-aware material is retained per visible section behind the original Form cells", async () => {
   const source = await read("Resources/PennedSheetSectionBackground.swift");
   assert.match(source, /Dictionary\(grouping: rows, by: \\.sectionID\)/);
   assert.match(source, /if let existing = plane\.surfaces\[id\]/);
@@ -537,7 +540,7 @@ test("one copied dark-gray material is retained per visible section behind the o
   assert.equal((source.match(/PennedFrostedMaterial\(/g) ?? []).length, 1);
   assert.match(source, /private final class Surface: UIView/);
   assert.match(source, /materialView = UIHostingConfiguration \{\s*PennedFrostedMaterial\(tint: PennedSheetStyle\.fieldTint, cornerRadius: 0\)/);
-  assert.match(source, /\.environment\(\\\.colorScheme, \.dark\)/);
+  assert.doesNotMatch(source, /\.environment\(\\\.colorScheme, \.dark\)/);
   assert.match(source, /\.margins\(\.all, 0\)\s*\.minSize\(width: 0, height: 0\)\s*\.background \{ Color\.clear \}\s*\.makeContentView\(\)/);
   assert.match(source, /materialView\.backgroundColor = \.clear/);
   assert.match(source, /materialView\.isUserInteractionEnabled = false/);

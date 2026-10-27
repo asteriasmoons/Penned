@@ -1,5 +1,10 @@
 # Penned Supabase Auth Deletion
 
+Publish to Web phases 1 and 2 now live alongside this existing function. Their
+privacy contract, migration, endpoints, native/website integration, deployment
+requirements and checks are documented in [Docs/Publishing.md](../Docs/Publishing.md).
+The account-deletion endpoint below remains in place.
+
 Server-only support for deleting the requesting Supabase Auth account, intended
 for the email-auth integration. Read alongside `Docs/Accounts.md` for the client
 OTP/session setup and CloudKit cleanup sequence. This folder contains the server

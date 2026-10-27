@@ -141,12 +141,61 @@ nonisolated struct TaskRepeatRule: Codable, Equatable, Sendable {
             return try timed(day)
         }
     }
+
+    func containsOccurrence(_ date: Date, after current: Date) throws -> Bool {
+        guard date.timeIntervalSince1970.isFinite, date > current else { return false }
+        var candidate = try next(after: current)
+        if candidate < date {
+            switch frequency {
+            case .daily:
+                let distance = calendar.dateComponents([.day], from: candidate, to: date).day ?? 0
+                let steps = max(0, distance / interval - 1)
+                if let day = calendar.date(byAdding: .day, value: steps * interval, to: candidate) {
+                    candidate = try first(onOrAfter: calendar.startOfDay(for: day))
+                }
+            case .weekdays, .weekly:
+                candidate = try first(onOrAfter: date)
+            case .monthly, .yearly:
+                break
+            }
+        }
+        while candidate < date {
+            let following = try next(after: candidate)
+            guard following > candidate else { throw DocumentTaskError.invalidSchedule }
+            candidate = following
+        }
+        return candidate == date
+    }
+}
+
+nonisolated enum TaskOccurrenceOutcome: String, Codable, Sendable {
+    case completed, skipped
 }
 
 nonisolated struct TaskCompletedOccurrence: Codable, Equatable, Identifiable, Sendable {
     var id: String
     var scheduledAt: Double?
     var completedAt: Double
+    var outcome: TaskOccurrenceOutcome = .completed
+    var taskText: String?
+    var timeZoneID: String?
+
+    init(id: String, scheduledAt: Double?, completedAt: Double, outcome: TaskOccurrenceOutcome = .completed,
+         taskText: String? = nil, timeZoneID: String? = nil) {
+        self.id = id; self.scheduledAt = scheduledAt; self.completedAt = completedAt
+        self.outcome = outcome; self.taskText = taskText; self.timeZoneID = timeZoneID
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, scheduledAt, completedAt, outcome, taskText, timeZoneID }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        scheduledAt = try values.decodeIfPresent(Double.self, forKey: .scheduledAt)
+        completedAt = try values.decode(Double.self, forKey: .completedAt)
+        outcome = try values.decodeIfPresent(TaskOccurrenceOutcome.self, forKey: .outcome) ?? .completed
+        taskText = try values.decodeIfPresent(String.self, forKey: .taskText)
+        timeZoneID = try values.decodeIfPresent(String.self, forKey: .timeZoneID)
+    }
 }
 
 nonisolated struct DocumentTaskMetadata: Codable, Equatable, Sendable {
@@ -157,26 +206,74 @@ nonisolated struct DocumentTaskMetadata: Codable, Equatable, Sendable {
     var recurrence: TaskRepeatRule?
     var history: [TaskCompletedOccurrence] = []
 
+    private static let projectedOccurrencePrefix = "scheduled:"
+    static func projectedOccurrenceID(for date: Date) -> String {
+        projectedOccurrencePrefix + String(date.timeIntervalSince1970)
+    }
+
     var notificationID: String { "vellix.task.\(id).\(occurrenceID)" }
     var scheduledDate: Date? { scheduledAt.map(Date.init(timeIntervalSince1970:)) }
+    var isSkipped: Bool { history.contains { $0.id == occurrenceID && $0.outcome == .skipped } }
+    var reminderSummary: String? {
+        guard reminderEnabled, let scheduledDate else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = recurrence?.calendar.timeZone ?? .current
+        formatter.dateFormat = "MMM d, h:mm a"
+        return formatter.string(from: scheduledDate)
+    }
 
-    func completing(_ completed: Bool, at date: Date = Date()) throws -> (metadata: Self, checked: Bool) {
+    func completing(_ completed: Bool, skipped: Bool = false, text: String? = nil, at date: Date = Date()) throws -> (metadata: Self, checked: Bool) {
         var copy = self
-        if !completed {
+        if !completed && !skipped {
             if history.contains(where: { $0.id == occurrenceID }) { copy.occurrenceID = UUID().uuidString }
             return (copy, false)
         }
         guard !history.contains(where: { $0.id == occurrenceID }) else { return (copy, recurrence == nil) }
         copy.history.append(TaskCompletedOccurrence(id: occurrenceID, scheduledAt: scheduledAt,
-                                                     completedAt: date.timeIntervalSince1970))
+            completedAt: date.timeIntervalSince1970, outcome: skipped ? .skipped : .completed,
+            taskText: text, timeZoneID: recurrence?.timeZoneID ?? TimeZone.current.identifier))
         if let recurrence {
             // A repeating occurrence is always anchored, even without a notification.
             guard let scheduledDate else { throw DocumentTaskError.invalidSchedule }
-            copy.scheduledAt = try recurrence.next(after: scheduledDate).timeIntervalSince1970
+            let recordedDates = Set(copy.history.compactMap(\.scheduledAt))
+            var next = try recurrence.next(after: scheduledDate)
+            while recordedDates.contains(next.timeIntervalSince1970) {
+                let following = try recurrence.next(after: next)
+                guard following > next else { throw DocumentTaskError.invalidSchedule }
+                next = following
+            }
+            copy.scheduledAt = next.timeIntervalSince1970
             copy.occurrenceID = UUID().uuidString
             return (copy, false)
         }
         return (copy, true)
+    }
+
+    func completingOccurrence(_ requestedID: String, completed: Bool, skipped: Bool = false,
+                             text: String? = nil, at date: Date = Date()) throws -> (metadata: Self, checked: Bool) {
+        if requestedID == occurrenceID {
+            return try completing(completed, skipped: skipped, text: text, at: date)
+        }
+        guard completed || skipped, requestedID.hasPrefix(Self.projectedOccurrencePrefix),
+              let timestamp = Double(requestedID.dropFirst(Self.projectedOccurrencePrefix.count)), timestamp.isFinite,
+              let recurrence, let current = scheduledDate else { throw DocumentTaskError.staleOccurrence }
+        let scheduled = Date(timeIntervalSince1970: timestamp)
+        guard requestedID == Self.projectedOccurrenceID(for: scheduled),
+              !history.contains(where: { $0.scheduledAt == timestamp }) else { throw DocumentTaskError.staleOccurrence }
+        if scheduled == current {
+            return try completing(completed, skipped: skipped, text: text, at: date)
+        }
+        guard try recurrence.containsOccurrence(scheduled, after: current) else { throw DocumentTaskError.staleOccurrence }
+
+        // Record this date without completing or rescheduling an earlier unfinished occurrence.
+        var occurrence = self
+        occurrence.occurrenceID = UUID().uuidString
+        occurrence.scheduledAt = timestamp
+        let result = try occurrence.completing(completed, skipped: skipped, text: text, at: date)
+        var copy = self
+        copy.history = result.metadata.history
+        return (copy, false)
     }
 
     func independent() -> Self {
@@ -206,12 +303,13 @@ nonisolated struct DocumentTaskContext: Equatable, Identifiable, Sendable {
     var blockID: String
     var checked: Bool
     var metadata: DocumentTaskMetadata?
+    var text: String? = nil
     var id: String { blockID }
 
     static func decode(_ payload: [String: Any]) -> Self? {
         guard let id = payload["blockId"] as? String, !id.isEmpty else { return nil }
         return Self(blockID: id, checked: payload["checked"] as? Bool ?? false,
-                    metadata: DocumentTaskMetadata.decode(payload["task"]))
+                    metadata: DocumentTaskMetadata.decode(payload["task"]), text: payload["text"] as? String)
     }
 }
 

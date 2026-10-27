@@ -8,6 +8,7 @@ import Combine
 import CoreGraphics
 import os
 import WebKit
+import SwiftUI
 
 #if canImport(UIKit)
 import UIKit
@@ -25,6 +26,8 @@ final class TipTapEditorSession: ObservableObject {
     private var confirmingFrameGeneration: Int?
     private var pendingNativePresentationHeights: [String: (viewID: String, height: CGFloat)] = [:]
     private var currentAppearance: DocumentAppearance?
+    private(set) var applicationColorScheme: ColorScheme = .dark
+    private var pageReferenceColorScheme: ColorScheme = .dark
     var preparesInteractivePresentation = true
     var presentationDiagnostics: String {
         "generation=\(presentation.generation) webPrepared=\(presentation.webPrepared) contentReady=\(presentation.isContentReady) snapshotPending=\(confirmingFrameGeneration != nil) nativePending=\(pendingNativePresentationHeights.count)"
@@ -37,9 +40,12 @@ final class TipTapEditorSession: ObservableObject {
     @Published var selectionMode = "off"
     @Published var isEditing = false
     @Published private(set) var formattingState = TipTapFormattingState()
+    @Published private(set) var textConversionState = TipTapTextConversionState()
+    @Published private(set) var isConvertingSelectedText = false
     private(set) var caretUpdate: TipTapCaretUpdate?
     let caretUpdates = PassthroughSubject<TipTapCaretUpdate?, Never>()
     @Published var slashMenuState: TipTapSlashMenuState?
+    private var mobileSlashMenuSuppressed = false
     @Published var tagRequest: InlineTagRequest?
     @Published var pageBreakRegions: [TipTapPageBreakRegion] = []
     @Published private(set) var collectionRegions: [TipTapCollectionRegion] = []
@@ -58,6 +64,7 @@ final class TipTapEditorSession: ObservableObject {
     private var recoveryDocument: (id: String, json: String)?
     private var preservesRecoveryPayload = false
     private var loadGeneration = 0
+    private var textColorContext: (token: String, documentID: String, generation: Int)?
     private var pendingAppearance: DocumentAppearance?
     private var awaitingRenderedDocumentID: String?
     private var registeredIconAssets = Set<String>()
@@ -123,6 +130,7 @@ final class TipTapEditorSession: ObservableObject {
         preservesRecoveryPayload = preservesRecoveryPayload || loadedDocumentID != nil
         pendingDocument = documentForRecovery?() ?? pendingDocument ?? recoveryDocument
         loadGeneration += 1
+        setMobileSlashMenuSuppressed(false)
         tagRequest = nil
         formattingState = TipTapFormattingState()
         resetPresentation(documentID: pendingDocument?.id ?? loadedDocumentID)
@@ -255,6 +263,10 @@ final class TipTapEditorSession: ObservableObject {
         send(TipTapEditorCommand(name, args: args))
     }
 
+    func refreshTaskHistory(_ json: String) {
+        send(TipTapEditorCommand("taskHistoryRefresh", args: ["document": TipTapContentAnalyzer.documentObject(from: json)]))
+    }
+
     func configureTask(_ context: DocumentTaskContext, configuration: [String: Any]) async throws {
         guard isReady, let webView, let task = context.metadata else { throw DocumentTaskError.missingTask }
         let args: [String: Any] = ["blockId": context.blockID, "taskID": task.id, "configuration": configuration]
@@ -339,6 +351,7 @@ final class TipTapEditorSession: ObservableObject {
 
     func setEditable(_ editable: Bool) {
         editingEnabled = editable
+        if !editable { textConversionState = TipTapTextConversionState() }
         send(TipTapEditorCommand.setEditable(editable))
     }
 
@@ -356,19 +369,28 @@ final class TipTapEditorSession: ObservableObject {
 
         logger.info("🎨 TRACE setAppearance send text=\(appearance.textColorHex, privacy: .public) font=\(appearance.fontStyle.cssFamily, privacy: .public)")
         pendingAppearance = nil
-        send(TipTapEditorCommand.setAppearance(appearance)) { [weak self] _ in self?.preparePresentation() }
+        send(TipTapEditorCommand.setAppearance(appearance.resolved(for: applicationColorScheme), interfaceScheme: applicationColorScheme)) { [weak self] _ in self?.preparePresentation() }
+    }
+
+    func setApplicationColorScheme(_ scheme: ColorScheme) {
+        guard applicationColorScheme != scheme else { return }
+        applicationColorScheme = scheme
+        if let currentAppearance { setAppearance(currentAppearance) }
+        setPageReferences(pageRecords)
     }
 
     func setPageReferences(_ records: [DocumentRecord]) {
-        guard records != pageRecords else { return }
+        guard records != pageRecords || pageReferenceColorScheme != applicationColorScheme else { return }
+        let schemeChanged = pageReferenceColorScheme != applicationColorScheme
+        pageReferenceColorScheme = applicationColorScheme
         let previous = Dictionary(uniqueKeysWithValues: pageRecords.map { ($0.id, $0) })
         let presentations = Dictionary(uniqueKeysWithValues: pageReferencePayload.compactMap { payload -> (String, [String: Any])? in
             guard let id = payload["documentID"] as? String else { return nil }
             return (id, payload)
         })
         pageReferencePayload = records.map { record in
-            if previous[record.id] == record, let cached = presentations[record.id] { return cached }
-            return PageReferencePresentation.bridgeObject(record, attachmentStore: attachmentStore)
+            if previous[record.id] == record, !(schemeChanged && record.appearance.isThemeDependent), let cached = presentations[record.id] { return cached }
+            return PageReferencePresentation.bridgeObject(record, attachmentStore: attachmentStore, colorScheme: applicationColorScheme)
         }
         pageRecords = records
         if isReady { sendPageReferences() }
@@ -461,6 +483,8 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     private func resetPresentation(documentID: String?) {
+        textConversionState = TipTapTextConversionState()
+        isConvertingSelectedText = false
         presentationTask?.cancel()
         confirmingFrameGeneration = nil
         presentation.begin(documentID: documentID)
@@ -477,7 +501,7 @@ final class TipTapEditorSession: ObservableObject {
         presentationTask?.cancel()
         let generation = presentation.startPreparation()
         let args: [String: Any] = ["collections": collectionPayloads, "pages": pageReferencePayload, "files": attachmentFiles.map(\.object),
-            "appearance": currentAppearance.map { TipTapEditorCommand.setAppearance($0).args } ?? [:]]
+            "appearance": currentAppearance.map { TipTapEditorCommand.setAppearance($0.resolved(for: applicationColorScheme), interfaceScheme: applicationColorScheme).args } ?? [:]]
         let icons = Set(collectionPayloads.flatMap { ($0["fields"] as? [[String: Any]] ?? []).compactMap { $0["icon"] as? String } })
         presentationTask = Task { [weak self, weak webView] in
             guard let self, let webView else { return }
@@ -598,6 +622,71 @@ final class TipTapEditorSession: ObservableObject {
         send(TipTapEditorCommand.formatCurrentSelection(action: action, value: value))
     }
 
+    func convertSelectedText(to target: String, token: String) {
+        guard isReady, !isLoadingDocument, editingEnabled, selectionMode == "off",
+              !isConvertingSelectedText, textConversionState.token == token,
+              textConversionState.targets.contains(target), let documentID = loadedDocumentID else { return }
+        let generation = loadGeneration
+        isConvertingSelectedText = true
+        let apply: () -> Void = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { if self.loadGeneration == generation { self.isConvertingSelectedText = false } }
+                guard self.loadedDocumentID == documentID, self.loadGeneration == generation,
+                      self.isReady, !self.isLoadingDocument, self.editingEnabled,
+                      self.selectionMode == "off", self.textConversionState.token == token else { return }
+                do {
+                    let applied = try await self.attachmentCommand("convertSelectedText",
+                        args: ["target": target, "token": token]) as? Bool
+                    guard self.loadedDocumentID == documentID, self.loadGeneration == generation else { return }
+                    guard applied == true else {
+                        self.bridgeErrorMessage = "This text selection cannot be converted to that block type."
+                        return
+                    }
+                    self.requestSnapshot()
+                } catch {
+                    guard self.loadedDocumentID == documentID, self.loadGeneration == generation else { return }
+                    self.bridgeErrorMessage = error.localizedDescription
+                }
+            }
+        }
+        if target == "callout" { registerIconAsset("sparkle", completion: apply) }
+        else { apply() }
+    }
+
+    func beginTextColorEditing() async throws -> InlineTextColorEditorRequest? {
+        guard isReady, !isLoadingDocument, editingEnabled, formattingState.hasTextSelection,
+              let documentID = loadedDocumentID else { return nil }
+        let generation = loadGeneration
+        guard let value = try await attachmentCommand("textColorBegin") as? [String: Any],
+              let token = value["token"] as? String, let text = value["text"] as? String,
+              loadedDocumentID == documentID, loadGeneration == generation, editingEnabled else { return nil }
+        textColorContext = (token, documentID, generation)
+        return InlineTextColorEditorRequest(id: token, documentID: documentID, selectedText: text,
+            initialColor: InlineTextColor.decode(value["style"]))
+    }
+
+    func applyTextColor(_ color: InlineTextColor?, request: InlineTextColorEditorRequest) async throws {
+        guard textColorContext?.token == request.id, loadedDocumentID == request.documentID,
+              textColorContext?.generation == loadGeneration, editingEnabled, !isLoadingDocument else {
+            throw VellixError.editorBridge("This text selection is no longer available.")
+        }
+        let generation = loadGeneration
+        let applied = try await attachmentCommand("textColorApply", args: ["token": request.id,
+            "style": color.map { $0.bridgeValue as Any } ?? NSNull()]) as? Bool
+        guard applied == true, generation == loadGeneration, loadedDocumentID == request.documentID else {
+            throw VellixError.editorBridge("This text selection changed. Select the text again.")
+        }
+    }
+
+    func endTextColorEditing(restoreFocus: Bool = true) {
+        guard let context = textColorContext else { return }
+        textColorContext = nil
+        guard context.documentID == loadedDocumentID, context.generation == loadGeneration,
+              isReady, !isLoadingDocument else { return }
+        send(TipTapEditorCommand("textColorEnd", args: ["token": context.token, "restoreFocus": restoreFocus && editingEnabled]))
+    }
+
     func updateCalloutIcon(blockID: String?, icon: String) {
         let icon = normalizedIconName(icon)
         registerIconAsset(icon) { [weak self] in
@@ -671,6 +760,16 @@ final class TipTapEditorSession: ObservableObject {
 
     func chooseSlashMenuItem(_ key: String) {
         send(TipTapEditorCommand.chooseSlashMenuItem(key))
+    }
+
+    func dismissSlashMenu() {
+        setMobileSlashMenuSuppressed(true)
+        send(TipTapEditorCommand("mobileDismissSlashMenu"))
+    }
+
+    func setMobileSlashMenuSuppressed(_ suppressed: Bool) {
+        mobileSlashMenuSuppressed = suppressed
+        if suppressed { slashMenuState = nil }
     }
 
     func updateEditorContentGeometry(height: CGFloat, visualContentBottom: CGFloat) {
@@ -827,6 +926,10 @@ final class TipTapEditorSession: ObservableObject {
         case .formattingStateChanged(let state):
             if formattingState != state { formattingState = state }
 
+        case .textConversionStateChanged(let state):
+            let current = isReady && !isLoadingDocument && editingEnabled && selectionMode == "off" ? state : TipTapTextConversionState()
+            if textConversionState != current { textConversionState = current }
+
         case .requestHaptic(let style):
             logger.info("🫨 TRACE EVENT requestHaptic style=\(style, privacy: .public)")
             triggerHaptic(style: style)
@@ -855,6 +958,7 @@ final class TipTapEditorSession: ObservableObject {
 
         case .slashMenuChanged(let state):
             logger.info("⌘ TRACE EVENT slashMenuChanged visible=\(state != nil) count=\(state?.items.count ?? 0)")
+            if mobileSlashMenuSuppressed, state != nil { return }
             slashMenuState = state
             onEvent?(event)
 
@@ -1189,7 +1293,9 @@ final class DocumentEditorModel: ObservableObject {
     @Published private(set) var tableContext: TipTapTableContext?
     @Published private(set) var tableFormulaPreview = ""
     @Published private(set) var taskContext: DocumentTaskContext?
+    @Published private(set) var historyPageTask: DocumentTaskRecord?
     @Published var taskEditorRequest: TaskEditorRequest?
+    @Published var taskHistoryRequest: TaskHistorySheetRequest?
     @Published var taskFeedback: String?
     var onChildCreated: ((DocumentRecord) -> Void)?
     var onDocumentSaved: ((DocumentRecord) -> Void)?
@@ -1320,6 +1426,7 @@ final class DocumentEditorModel: ObservableObject {
         document = record
         taskContext = nil
         taskEditorRequest = nil
+        taskHistoryRequest = nil
         attachmentEditorRequest = nil
         attachmentActionRequest = nil
         templateNeedsSave = record.templateID != nil
@@ -1535,10 +1642,10 @@ final class DocumentEditorModel: ObservableObject {
         case .requestTaskMenu(let context):
             taskContext = context
             taskEditorRequest = TaskEditorRequest(context: context)
-        case .requestTaskCompletion(let context, let completed):
+        case .requestTaskCompletion(let context, let completed, let skipped):
             guard let task = context.metadata else { return }
             do {
-                let result = try task.completing(completed)
+                let result = try task.completing(completed, skipped: skipped, text: context.text)
                 session.taskCommand("taskComplete", context: context, values: [
                     "expectedOccurrenceID": task.occurrenceID, "task": result.metadata.object, "checked": result.checked
                 ])
@@ -1552,6 +1659,7 @@ final class DocumentEditorModel: ObservableObject {
             pendingDocumentID = document?.id
             do {
                 try saveCurrentContent()
+                refreshRelated()
             } catch {
                 session.saveState = .failed(error.localizedDescription)
                 errorMessage = error.localizedDescription
@@ -1601,6 +1709,15 @@ final class DocumentEditorModel: ObservableObject {
             pendingCardBlockID = blockID
             cardEditorRequest = PageCardEditorRequest(blockID: blockID, document: DocumentRecord(title: "Untitled"))
         case .requestOpenPage(let documentID):
+            if let taskID = DocumentTaskPages.taskID(for: documentID) {
+                do {
+                    guard let task = try documentRepository.taskForHistoryPage(id: documentID),
+                          task.documentID == self.documentID || DocumentTaskPages.taskID(for: self.documentID) == taskID else { return }
+                    taskHistoryRequest = TaskHistorySheetRequest(task: task)
+                } catch { errorMessage = error.localizedDescription }
+                return
+            }
+            refreshRelated()
             guard let child = children.first(where: { $0.id == documentID }),
                   child.parentDocumentID == document?.id else { return }
             nestedPageToOpen = child
@@ -1866,6 +1983,14 @@ final class DocumentEditorModel: ObservableObject {
         guard let document else { return }
         do {
             let current = try documentRepository.requireDocument(id: document.id)
+            historyPageTask = try documentRepository.taskForHistoryPage(id: document.id)
+            if DocumentTaskPages.isManaged(document.id), current.tipTapJSON != (latestJSON ?? document.tipTapJSON) {
+                if session.isReady && !session.isLoadingDocument { session.refreshTaskHistory(current.tipTapJSON) }
+                else {
+                    latestJSON = current.tipTapJSON
+                    session.load(documentID: current.id, canonicalJSON: current.tipTapJSON, force: true)
+                }
+            }
             if self.document != current { self.document = current }
             let effectiveAppearance = try documentRepository.effectiveAppearance(for: current)
             if appearance != effectiveAppearance {
@@ -1876,6 +2001,11 @@ final class DocumentEditorModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func refreshTaskHistoryPage() {
+        guard DocumentTaskPages.isManaged(documentID) else { return }
+        refreshLibraryContext()
     }
 
     // Called only after the workspace has drained pending writes and applied a remote transaction.

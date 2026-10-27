@@ -69,6 +69,7 @@ struct PadWorkspaceLocation: Equatable {
     var folderID: String?
     var documentID: String?
     var tagIDs: Set<String> = []
+    var calendarDocumentReturnID: String?
 }
 
 struct PadWorkspaceTab: Identifiable {
@@ -100,7 +101,7 @@ final class PadWorkspaceModel: ObservableObject {
             tab.location = PadWorkspaceLocation(destination: environment.isSettingsPresented && environment.selectedDocumentID == nil
                 ? .settings : .library(environment.selectedDestination),
                 folderID: environment.selectedFolderID, documentID: environment.selectedDocumentID ?? environment.pendingDocumentID,
-                tagIDs: environment.selectedTagIDs)
+                tagIDs: environment.selectedTagIDs, calendarDocumentReturnID: environment.calendarDocumentReturnID)
         }
         tab.history = [tab.location]
         tabs = [tab]; activeID = tab.id
@@ -132,7 +133,8 @@ final class PadWorkspaceModel: ObservableObject {
                 old != .settings { destination = old }
         else { destination = .library(environment.selectedDestination) }
         return PadWorkspaceLocation(destination: destination, folderID: environment.selectedFolderID,
-            documentID: environment.selectedDocumentID, tagIDs: environment.selectedTagIDs)
+            documentID: environment.selectedDocumentID, tagIDs: environment.selectedTagIDs,
+            calendarDocumentReturnID: environment.calendarDocumentReturnID)
     }
 
     func capture() {
@@ -231,6 +233,7 @@ final class PadWorkspaceModel: ObservableObject {
                 var result = location
                 if let id = result.documentID,
                    (try? environment.documents.document(id: id)).map({ $0.spaceID == spaceID && !$0.isTrashed }) != true { result.documentID = nil }
+                if result.documentID == nil { result.calendarDocumentReturnID = nil }
                 if let id = result.folderID, id != "__unsorted", !environment.overview.folders.contains(where: { $0.id == id }) { result.folderID = nil }
                 return result
             }
@@ -299,7 +302,12 @@ final class PadWorkspaceModel: ObservableObject {
         environment.selectedTagIDs = location.tagIDs
         environment.isSettingsPresented = location.destination == .settings
         if let id = location.documentID, let document = try? environment.documents.document(id: id),
-           document.spaceID == spaceID, !document.isTrashed { environment.select(document) }
+           document.spaceID == spaceID, !document.isTrashed {
+            environment.select(document)
+            if location.destination.base == .calendar {
+                environment.calendarDocumentReturnID = location.calendarDocumentReturnID
+            }
+        }
     }
 }
 

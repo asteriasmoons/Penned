@@ -385,6 +385,12 @@ fileprivate extension TipTapWebView {
     static func makeWebView(coordinator: Coordinator) -> WKWebView {
         let contentController = WKUserContentController()
         contentController.add(coordinator, name: "tiptap")
+        contentController.addUserScript(WKUserScript(source: TextBlockConversion.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+
+        #if os(iOS)
+        contentController.addUserScript(WKUserScript(source: MobileBlockSelection.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        contentController.addUserScript(WKUserScript(source: MobileEditorInteractions.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        #endif
 
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = contentController
@@ -504,6 +510,16 @@ final class Coordinator:
         guard message.name == "tiptap" else {
             return
         }
+
+        #if os(iOS)
+        if let dictionary = message.body as? [String: Any],
+           dictionary["kind"] as? String == "mobileSlashSuppression",
+           let payload = dictionary["payload"] as? [String: Any],
+           let suppressed = payload["suppressed"] as? Bool {
+            session.setMobileSlashMenuSuppressed(suppressed)
+            return
+        }
+        #endif
 
         if let dictionary = message.body as? [String: Any] {
             let kind = dictionary["kind"] as? String ?? "unknown"

@@ -510,7 +510,7 @@ struct CalendarTests {
         let range = DateInterval(start: date("2026-10-13T00:00:00Z"), end: date("2026-10-17T00:00:00Z"))
         let entries = try CalendarAgenda.taskEntries([task], in: range)
         #expect(entries.count == 4)
-        #expect(entries.filter(\.canComplete).count == 1)
+        #expect(entries.filter(\.canComplete).count == 4)
         #expect(entries.first?.occurrenceID == metadata.occurrenceID)
         #expect(metadata.history.isEmpty)
         let completed = try metadata.completing(true)
@@ -519,7 +519,26 @@ struct CalendarTests {
         let next = try CalendarAgenda.taskEntries([updated], in: range)
         #expect(next.count == 4)
         #expect(next.filter(\.isCompleted).count == 1)
+        #expect(next.filter(\.canComplete).count == 3)
         #expect(next.first(where: \.canComplete)?.scheduledDate == date("2026-10-14T09:00:00Z"))
+    }
+
+    @Test func completedDatesDoNotAlsoAppearAsPendingProjections() throws {
+        let start = date("2026-10-19T09:00:00Z"), selected = date("2026-10-21T09:00:00Z")
+        var metadata = DocumentTaskMetadata()
+        metadata.scheduledAt = start.timeIntervalSince1970
+        metadata.recurrence = TaskRepeatRule(frequency: .daily, timeZoneID: "UTC", anchor: start.timeIntervalSince1970)
+        metadata = try metadata.completingOccurrence(DocumentTaskMetadata.projectedOccurrenceID(for: selected),
+            completed: true, text: "Task").metadata
+        let task = DocumentTaskRecord(documentID: "document", rootDocumentID: "document", blockID: "checklist",
+            documentTitle: "Document", text: "Task", checked: false, isTemplate: false, isActive: true, metadata: metadata)
+        let entries = try CalendarAgenda.taskEntries([task], in: DateInterval(
+            start: date("2026-10-19T00:00:00Z"), end: date("2026-10-24T00:00:00Z")))
+        #expect(entries.count == 5)
+        let selectedEntries = entries.filter { $0.scheduledDate == selected }
+        #expect(selectedEntries.count == 1 && selectedEntries[0].isCompleted && !selectedEntries[0].canComplete)
+        #expect(entries.first(where: { $0.kind == .current })?.scheduledDate == start)
+        #expect(entries.filter(\.canComplete).count == 4)
     }
 
     @Test func unscheduledTasksAndTemplatesRemainDistinct() throws {

@@ -90,7 +90,7 @@ struct PageCardEditorSheet: View {
             HStack(spacing: 7) {
                 ForEach(PageCardSize.allCases) { size in
                     Button { style.size = size } label: {
-                        Circle().fill(size == style.size ? Color.white : Color.white.opacity(0.25)).frame(width: 5, height: 5)
+                        Circle().fill(size == style.size ? VellixSurface.controlInk : VellixSurface.controlInk.opacity(0.25)).frame(width: 5, height: 5)
                             .frame(width: 26, height: 28)
                     }.buttonStyle(.plain).accessibilityLabel(size.title)
                         .accessibilityIdentifier("card-size-\(size.rawValue)")
@@ -130,15 +130,15 @@ struct PageCardEditorSheet: View {
                         if style.backdrop == .photo { Image("imagesign").resizable().scaledToFit().padding(12) }
                     }
                     .frame(width: 48, height: 40).clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.1), lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(VellixSurface.controlInk.opacity(0.1), lineWidth: 1))
                 }.foregroundStyle(.primary).padding(.horizontal, 12).frame(minHeight: 44).pennedSheetField()
             }.buttonStyle(.plain)
             if style.backdrop == .photo, let photo = style.remotePhoto { CardPhotoCredit(photo: photo) }
             Spacer(minLength: 12)
         }
         .padding(18).frame(maxWidth: 550, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.white.opacity(0.015), in: RoundedRectangle(cornerRadius: 24))
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.10), lineWidth: 1))
+        .background(VellixSurface.controlInk.opacity(0.015), in: RoundedRectangle(cornerRadius: 24))
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke(VellixSurface.controlInk.opacity(0.10), lineWidth: 1))
     }
 
     private func previewOption(pages: Bool) -> some View {
@@ -149,14 +149,14 @@ struct PageCardEditorSheet: View {
                         size: style.size == .compact ? CGSize(width: 23, height: 30) : CGSize(width: 37, height: 48), isCardSheet: true, isStylePreview: true)
                         .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 2)
                         .frame(width: 38, height: 38)
-                        .background { if style.size == .compact { Circle().fill(Color.white.opacity(0.08)) } }
-                        .overlay { if style.size == .compact { Circle().stroke(.white.opacity(0.7), lineWidth: 1) } }
+                        .background { if style.size == .compact { Circle().fill(VellixSurface.controlInk.opacity(0.08)) } }
+                        .overlay { if style.size == .compact { Circle().stroke(VellixSurface.controlInk.opacity(0.7), lineWidth: 1) } }
                 }
                 else { Image("eyeslash").renderingMode(.template).resizable().scaledToFit().frame(width: 24, height: 24).foregroundStyle(.secondary) }
             }
             .frame(width: 92, height: 66)
             .pennedSheetField()
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(pages == style.showsPages ? Color(vellixHex: "#2EC5F4") : Color.white.opacity(0.12), lineWidth: pages == style.showsPages ? 2 : 1))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(pages == style.showsPages ? Color(vellixHex: "#2EC5F4") : VellixSurface.controlInk.opacity(0.12), lineWidth: pages == style.showsPages ? 2 : 1))
         }.buttonStyle(.plain).accessibilityLabel(pages ? "Page Sheets" : "No Page Sheets")
     }
 

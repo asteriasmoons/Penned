@@ -24,7 +24,7 @@ struct CardPhotoSearchSheet: View {
                             VStack(alignment: .leading, spacing: 5) {
                                 Button { select(photo); dismiss() } label: {
                                     GeometryReader { proxy in
-                                        AsyncImage(url: URL(string: photo.thumbURL)) { image in image.resizable().scaledToFill() } placeholder: { Color.white.opacity(0.05) }
+                                        AsyncImage(url: URL(string: photo.thumbURL)) { image in image.resizable().scaledToFill() } placeholder: { VellixSurface.subtleFill }
                                             .frame(width: proxy.size.width, height: 115).clipped()
                                     }.frame(height: 115).clipShape(RoundedRectangle(cornerRadius: 8))
                                 }.buttonStyle(.plain).accessibilityLabel("Select photo by \(photo.photographer)")

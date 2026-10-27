@@ -83,7 +83,8 @@ nonisolated struct CalendarTaskEntry: Identifiable, Sendable {
     var id: String { task.id + ":" + occurrenceID }
     var agendaDate: Date? { scheduledDate ?? completedDate }
     var isCompleted: Bool { kind == .completed || (kind == .current && task.checked) }
-    var canComplete: Bool { kind == .current }
+    var isSkipped: Bool { task.metadata.history.contains { $0.id == occurrenceID && $0.outcome == .skipped } }
+    var canComplete: Bool { kind != .completed }
 }
 
 nonisolated enum CalendarAgenda {
@@ -122,6 +123,7 @@ nonisolated enum CalendarAgenda {
         for task in tasks where task.isActive && !task.isTemplate {
             let metadata = task.metadata
             let current = metadata.scheduledDate
+            let recordedDates = Set(metadata.history.compactMap(\.scheduledAt))
             if current.map({ $0 >= range.start && $0 < range.end }) ?? true {
                 entries.append(CalendarTaskEntry(task: task, occurrenceID: metadata.occurrenceID,
                     scheduledDate: current, kind: .current))
@@ -151,9 +153,9 @@ nonisolated enum CalendarAgenda {
                 }
             }
             while next < range.end {
-                if next >= range.start {
+                if next >= range.start && !recordedDates.contains(next.timeIntervalSince1970) {
                     entries.append(CalendarTaskEntry(task: task,
-                        occurrenceID: "scheduled:" + String(next.timeIntervalSince1970), scheduledDate: next, kind: .projected))
+                        occurrenceID: DocumentTaskMetadata.projectedOccurrenceID(for: next), scheduledDate: next, kind: .projected))
                 }
                 let following = try rule.next(after: next)
                 guard following > next else { throw DocumentTaskError.invalidSchedule }

@@ -61,11 +61,11 @@ nonisolated enum DocumentTaskIndex {
             END;
             INSERT INTO taskDocumentChanges SELECT id FROM documents;
             """)
-        _ = try reconcile(in: db)
+        _ = try reconcile(in: db, projectsPages: false)
     }
 
     @discardableResult
-    static func reconcile(in db: Database) throws -> Bool {
+    static func reconcile(in db: Database, projectsPages: Bool = true) throws -> Bool {
         let documentIDs = try String.fetchAll(db, sql: "SELECT documentID FROM taskDocumentChanges")
         guard !documentIDs.isEmpty else { return false }
         try db.execute(sql: "DELETE FROM taskDocumentChanges")
@@ -104,6 +104,16 @@ nonisolated enum DocumentTaskIndex {
                                    arguments: [completion.id, task.id, completion.scheduledAt, completion.completedAt])
                 }
             }
+        }
+        if projectsPages {
+            var sources = Set(documentIDs)
+            for id in documentIDs {
+                if let taskID = DocumentTaskPages.taskID(for: id),
+                   let source = try String.fetchOne(db, sql: "SELECT documentID FROM documentTasks WHERE id=?", arguments: [taskID]) {
+                    sources.insert(source)
+                }
+            }
+            for id in sources { try DocumentTaskPages.reconcile(sourceID: id, in: db) }
         }
         // Even an ancestor with no tasks can change eligibility of every nested task.
         return changed || !documentIDs.isEmpty
@@ -158,6 +168,123 @@ nonisolated enum DocumentTaskIndex {
         let value = walk(TipTapContentAnalyzer.documentObject(from: json))
         guard found else { throw DocumentTaskError.missingTask }
         return String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
+    }
+}
+
+// Stable page identities make this an idempotent projection of the source task,
+// including after undo, sync, relaunch, or moving a task to another document.
+nonisolated enum DocumentTaskPages {
+    static func detailID(_ taskID: String) -> String { "vellix-task-page:" + taskID }
+    static func historyID(_ taskID: String) -> String { "vellix-task-history:" + taskID }
+    static func taskID(for documentID: String) -> String? {
+        for prefix in ["vellix-task-page:", "vellix-task-history:"] where documentID.hasPrefix(prefix) {
+            let id = String(documentID.dropFirst(prefix.count))
+            if UUID(uuidString: id) != nil { return id }
+        }
+        return nil
+    }
+    static func isManaged(_ documentID: String) -> Bool { taskID(for: documentID) != nil }
+    static func isDetail(_ documentID: String) -> Bool { documentID.hasPrefix("vellix-task-page:") && isManaged(documentID) }
+
+    static func reconcile(sourceID: String, in db: Database) throws {
+        guard let source = try DocumentRecord.fetchOne(db, key: sourceID) else { return }
+        let texts = DocumentTaskIndex.texts(in: source.tipTapJSON)
+        for context in try DocumentTaskIndex.contexts(in: source.tipTapJSON) {
+            guard let task = context.metadata else { continue }
+            let text = texts[context.blockID]?.trimmedNonEmpty ?? "Untitled Task"
+            let detail = detailID(task.id), history = historyID(task.id)
+            let reference: [String: Any] = ["type": "pageReference", "attrs": ["id": task.id + "-history-link", "documentID": history]]
+            try save(id: detail, title: text, parentID: source.id, content: [reference], task: task, taskText: text, source: source, in: db)
+            try save(id: history, title: "Completed Tasks", parentID: detail,
+                     content: historyContent(task, fallbackText: text), task: task, taskText: text, source: source, in: db)
+            // Their initial content contains no tracked tasks. Authored additions
+            // are indexed on the page's own subsequent save.
+            try db.execute(sql: "DELETE FROM taskDocumentChanges WHERE documentID IN (?, ?)", arguments: [detail, history])
+        }
+    }
+
+    static func historyContent(_ task: DocumentTaskMetadata, fallbackText: String) -> [[String: Any]] {
+        guard !task.history.isEmpty else { return [["type": "paragraph", "attrs": ["id": task.id + "-empty-history"]]] }
+        let items: [[String: Any]] = task.history.sorted { $0.completedAt > $1.completedAt }.map { occurrence in
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = occurrence.timeZoneID.flatMap(TimeZone.init(identifier:)) ?? task.recurrence?.calendar.timeZone ?? .current
+            formatter.dateFormat = "MMM d"
+            let scheduled = Date(timeIntervalSince1970: occurrence.scheduledAt ?? occurrence.completedAt)
+            let day = formatter.string(from: scheduled)
+            formatter.dateFormat = "MMM d, yyyy, h:mm a"
+            let timestamp = formatter.string(from: Date(timeIntervalSince1970: occurrence.completedAt))
+            let text = "\(day) \(occurrence.taskText ?? fallbackText) (\(occurrence.outcome.rawValue) on \(timestamp))"
+            return ["type": "taskItem", "attrs": ["id": occurrence.id, "checked": true, "crossed": occurrence.outcome == .skipped],
+                    "content": [["type": "paragraph", "attrs": ["id": occurrence.id + "-text"],
+                                 "content": [["type": "text", "text": text, "marks": [["type": "strike"]]]]]]]
+        }
+        return [["type": "taskList", "attrs": ["id": task.id + "-occurrences-" + (task.history.first?.id ?? "empty")], "content": items]]
+    }
+
+    static func removingOccurrences(_ content: [[String: Any]], ids: Set<String>) -> [[String: Any]] {
+        func retract(_ node: [String: Any]) -> [String: Any]? {
+            let attrs = node["attrs"] as? [String: Any] ?? [:]
+            if let id = attrs["id"] as? String, ids.contains(id) { return nil }
+            var copy = node
+            if let children = node["content"] as? [[String: Any]] {
+                var kept = children.compactMap(retract)
+                let type = node["type"] as? String ?? ""
+                if kept.isEmpty && ["taskList", "bulletList", "orderedList"].contains(type) { return nil }
+                if kept.isEmpty && ["blockquote", "callout", "plainCallout", "toggleItem", "taskItem", "listItem", "tableCell", "tableHeader"].contains(type) {
+                    kept = [["type": "paragraph", "attrs": ["id": (attrs["id"] as? String ?? "history") + "-empty"]]]
+                }
+                copy["content"] = kept
+            }
+            return copy
+        }
+        return content.compactMap(retract)
+    }
+
+    private static func save(id: String, title: String, parentID: String, content: [[String: Any]], task: DocumentTaskMetadata, taskText: String, source: DocumentRecord, in db: Database) throws {
+        let old = try DocumentRecord.fetchOne(db, key: id)
+        let oldObject = old.map { TipTapContentAnalyzer.documentObject(from: $0.tipTapJSON) }
+        let projection = (oldObject?["attrs"] as? [String: Any])?["taskHistoryProjection"] as? [String: Any] ?? [:]
+        let priorIDs = Set(projection["occurrences"] as? [String] ?? [])
+        let currentIDs = Set(task.history.map(\.id))
+        var body = oldObject?["content"] as? [[String: Any]] ?? content
+        if old != nil && !isDetail(id) {
+            // A projection watermark distinguishes an intentionally edited/deleted
+            // entry from an occurrence that has not been recorded yet.
+            let removed = priorIDs.subtracting(currentIDs)
+            body = removingOccurrences(body, ids: removed)
+            var additions = task
+            additions.history = task.history.filter { !priorIDs.contains($0.id) }
+            if !additions.history.isEmpty { body.append(contentsOf: historyContent(additions, fallbackText: taskText)) }
+        }
+        if body.isEmpty { body = [["type": "paragraph", "attrs": ["id": task.id + "-empty-history"]]] }
+        let attributes: [String: Any] = ["taskHistoryProjection": ["taskID": task.id,
+            "sourceTitle": isDetail(id) ? title : (projection["sourceTitle"] as? String ?? title),
+            "occurrences": currentIDs.sorted()]]
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: ["type": "doc", "attrs": attributes, "content": body], options: [.sortedKeys]), as: UTF8.self)
+        let analysis = try TipTapContentAnalyzer.analyze(json)
+        var appearance = source.appearance
+        appearance.showsCover = false
+        let style = appearance.encodedJSON()
+        let savedTitle = old.map { isDetail(id) && $0.title == (projection["sourceTitle"] as? String) ? title : $0.title } ?? title
+        if let old, old.title == savedTitle, old.tipTapJSON == analysis.canonicalJSON, old.parentDocumentID == parentID,
+           old.spaceID == source.spaceID, old.folderID == source.folderID, old.templateID == source.templateID { return }
+        var record = old ?? DocumentRecord(id: id, title: title, createdAt: source.createdAt)
+        record.title = savedTitle; record.parentDocumentID = parentID
+        record.spaceID = source.spaceID; record.folderID = source.folderID; record.templateID = source.templateID
+        if old == nil { record.appearanceJSON = style }
+        record.tipTapJSON = analysis.canonicalJSON
+        record.plainText = analysis.plainText; record.previewText = analysis.previewText
+        record.wordCount = analysis.wordCount; record.characterCount = analysis.characterCount
+        record.estimatedReadingMinutes = analysis.estimatedReadingMinutes
+        if old == nil {
+            record.isTrashed = source.isTrashed; record.isArchived = source.isArchived
+            record.trashedAt = source.trashedAt; record.trashBatchID = source.trashBatchID
+        }
+        record.updatedAt = max(old?.updatedAt ?? source.updatedAt, source.updatedAt)
+        if old != nil { record.revision += 1 }
+        try record.save(db)
+        try DocumentRepository.upsertSearchIndex(record, in: db)
     }
 }
 
@@ -228,23 +355,29 @@ final class DocumentTaskRepository: @unchecked Sendable {
             if let taskID { values.append(taskID) }
             let arguments = StatementArguments(values)
             let rows = try Row.fetchAll(db, sql: taskID == nil
-                ? "SELECT taskCompletions.*, documentTasks.documentID, blockID FROM taskCompletions JOIN documentTasks ON taskID=documentTasks.id JOIN documents d ON d.id=documentTasks.documentID WHERE \(LibraryAccess.spaces("d.spaceID")) AND (? IS NULL OR d.spaceID=?) ORDER BY completedAt DESC"
-                : "SELECT taskCompletions.*, documentTasks.documentID, blockID FROM taskCompletions JOIN documentTasks ON taskID=documentTasks.id JOIN documents d ON d.id=documentTasks.documentID WHERE \(LibraryAccess.spaces("d.spaceID")) AND (? IS NULL OR d.spaceID=?) AND taskID=? ORDER BY completedAt DESC",
+                ? "SELECT taskCompletions.*, documentTasks.documentID, blockID, metadataJSON FROM taskCompletions JOIN documentTasks ON taskID=documentTasks.id JOIN documents d ON d.id=documentTasks.documentID WHERE \(LibraryAccess.spaces("d.spaceID")) AND (? IS NULL OR d.spaceID=?) ORDER BY completedAt DESC"
+                : "SELECT taskCompletions.*, documentTasks.documentID, blockID, metadataJSON FROM taskCompletions JOIN documentTasks ON taskID=documentTasks.id JOIN documents d ON d.id=documentTasks.documentID WHERE \(LibraryAccess.spaces("d.spaceID")) AND (? IS NULL OR d.spaceID=?) AND taskID=? ORDER BY completedAt DESC",
                 arguments: arguments)
-            return rows.map { DocumentTaskOccurrence(taskID: $0["taskID"], documentID: $0["documentID"], blockID: $0["blockID"],
-                occurrence: TaskCompletedOccurrence(id: $0["id"], scheduledAt: $0["scheduledAt"], completedAt: $0["completedAt"])) }
+            return try rows.map { row in
+                let metadata = try JSONDecoder().decode(DocumentTaskMetadata.self, from: Data((row["metadataJSON"] as String).utf8))
+                let id: String = row["id"]
+                let occurrence = metadata.history.first { $0.id == id }
+                    ?? TaskCompletedOccurrence(id: id, scheduledAt: row["scheduledAt"], completedAt: row["completedAt"])
+                return DocumentTaskOccurrence(taskID: row["taskID"], documentID: row["documentID"], blockID: row["blockID"], occurrence: occurrence)
+            }
         }
     }
 
     @discardableResult
-    func setCompleted(taskID: String, occurrenceID: String, completed: Bool) throws -> DocumentRecord {
+    func setCompleted(taskID: String, occurrenceID: String, completed: Bool, skipped: Bool = false) throws -> DocumentRecord {
         try database.write { db in
             guard let row = try Row.fetchOne(db, sql: "SELECT * FROM documentTasks WHERE id = ?", arguments: [taskID]),
                   var document = try DocumentRecord.fetchOne(db, key: row["documentID"] as String) else { throw DocumentTaskError.missingTask }
             _ = try SpaceOwnership.document(document.id, scope: spaceID, in: db)
             let metadata = try JSONDecoder().decode(DocumentTaskMetadata.self, from: Data((row["metadataJSON"] as String).utf8))
-            guard metadata.occurrenceID == occurrenceID else { throw DocumentTaskError.staleOccurrence }
-            let result = try metadata.completing(completed)
+            guard metadata.occurrenceID == occurrenceID || !(row["checked"] as Bool) else { throw DocumentTaskError.staleOccurrence }
+            let result = try metadata.completingOccurrence(occurrenceID, completed: completed, skipped: skipped,
+                text: DocumentTaskIndex.texts(in: document.tipTapJSON)[row["blockID"] as String])
             document.tipTapJSON = try DocumentTaskIndex.updating(document.tipTapJSON, blockID: row["blockID"], metadata: result.metadata, checked: result.checked)
             document.updatedAt = Date()
             document.revision += 1

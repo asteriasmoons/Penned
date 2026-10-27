@@ -110,7 +110,7 @@ struct PadWorkspaceSidebar: View {
                     }
                 }
                 .foregroundStyle(workspace.activeID == tab.id ? VellixSurface.violet : VellixSurface.ink)
-                .background(workspace.activeID == tab.id ? Color.black : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                .background(workspace.activeID == tab.id ? VellixSurface.activeTab : Color.clear, in: RoundedRectangle(cornerRadius: 8))
                 .accessibilityAddTraits(workspace.activeID == tab.id ? .isSelected : [])
                 .accessibilityIdentifier("ipad-tab-\(tab.id)")
                 .contextMenu {
@@ -139,6 +139,7 @@ struct PadWorkspaceSidebar: View {
                     Button("New Space", action: environment.createSpace)
                     Button("Space Settings") { navigate(.settings) }
                 } label: { LibraryIcon(name: "dotswavy", size: 19).frame(width: 36, height: 44) }
+                    .pennedIconMenuStyle()
                     .accessibilityLabel("Space actions")
             }.padding(.horizontal, 12)
             row("New Document", icon: "writepen") { _ = environment.createDocument() }
@@ -160,7 +161,7 @@ struct PadWorkspaceSidebar: View {
                 LibraryIcon(name: icon, size: 20).foregroundStyle(selected ? VellixSurface.violet : .secondary)
                 Text(title).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
             }.padding(.horizontal, 12).frame(minHeight: 44).contentShape(Rectangle())
-                .background(selected ? .white.opacity(0.075) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                .background(selected ? VellixSurface.controlInk.opacity(0.075) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
         }.accessibilityAddTraits(selected ? .isSelected : [])
     }
 
@@ -204,7 +205,7 @@ struct PadWorkspaceSidebar: View {
                 }
             } else { Color.clear.frame(width: 10) }
         }
-        .background(workspace.activeTab.location.folderID == folder.id ? .white.opacity(0.075) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+        .background(workspace.activeTab.location.folderID == folder.id ? VellixSurface.controlInk.opacity(0.075) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
         .contextMenu {
             FolderContextMenu(folder: folder)
             Button("Open in New Tab") { perform { try await workspace.navigate(.library(.allDocuments), folderID: folder.id, newTab: true) } }

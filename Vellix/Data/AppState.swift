@@ -104,9 +104,17 @@ final class AppState: ObservableObject {
         refreshProfile()
     }
 
-    func signInWithApple(credential: ASAuthorizationAppleIDCredential, existingUsers: [AuthUser], modelContext: ModelContext) throws {
-        let user = try auth.signInWithApple(credential: credential, existingUsers: existingUsers, modelContext: modelContext)
+    func signInWithApple(credential: ASAuthorizationAppleIDCredential, existingUsers: [AuthUser], modelContext: ModelContext, nonce: PublishingAppleNonce? = nil) throws {
+        let user = try auth.signInWithApple(credential: credential, existingUsers: existingUsers, modelContext: modelContext, nonce: nonce)
         setSignedIn(user)
+    }
+
+    func publishingAccessToken() async throws -> String {
+        guard !isWorking else { throw CancellationError() }
+        guard let identity = currentAccountIdentity, currentUser?.remoteAuthDeleted == false else { throw PublishingFailure.authenticationRequired }
+        let token = try await auth.publishingAccessToken(for: identity)
+        guard !isWorking, currentAccountIdentity == identity, currentUser?.remoteAuthDeleted == false else { throw CancellationError() }
+        return token
     }
 
     func requestEmailCode(_ address: String, attempt: UUID) async throws -> String {
@@ -263,10 +271,14 @@ final class AppState: ObservableObject {
         syncTask?.cancel()
         // Drain an in-flight upload before deletion so it cannot recreate the record afterwards.
         await syncTask?.value
+        auth.cancelAccountConnection(for: id)
         let owner = try await cloud.accountID()
         if let bound = user.cloudAccountRecordName, bound != owner { throw AccountError.differentCloudAccount }
-        if case .email = id, !user.remoteAuthDeleted {
-            try await auth.deleteEmailAccount(id)
+        if !user.remoteAuthDeleted {
+            switch id {
+            case .email: try await auth.deleteEmailAccount(id)
+            case .apple: try await auth.deleteApplePublishingOwner(id)
+            }
             // Retain a durable cleanup state if iCloud becomes unavailable after Supabase deletion.
             user.remoteAuthDeleted = true
             try context.save()
@@ -275,6 +287,7 @@ final class AppState: ObservableObject {
         }
         try await cloud.delete(identity: id, ownerID: owner)
         try auth.forgetEmailSession(id)
+        try auth.forgetPublishingSession(id)
         try auth.signOutLocal()
         for account in savedAccounts where account.identity == id { context.delete(account) }
         do { try context.save() } catch { context.rollback(); status = .signedOut; throw error }

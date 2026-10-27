@@ -217,6 +217,18 @@ struct SupabaseAuthTests {
         #expect(account.identity == .email(project: try config(fixture).projectID, userID: session.user.id))
     }
 
+    @Test func publishingReusesTheExistingVerifiedEmailSessionWithoutSendingAnotherCode() async throws {
+        let session = Self.session()
+        let fixture = AuthHTTPFixture { request in
+            #expect(request.url?.path.hasSuffix("/user") == true)
+            return (200, try Self.wire(session.user))
+        }
+        let stores = AuthTestStores(), auth = try service(fixture, stores: stores)
+        let identity = try seed(session, config: config(fixture), stores: stores)
+        #expect(try await auth.publishingAccessToken(identity) == session.accessToken)
+        #expect(!fixture.requests.contains { $0.url?.path.hasSuffix("/otp") == true || $0.url?.path.hasSuffix("/verify") == true })
+    }
+
     @Test func nativeKeychainMissingItemsAreEmptyAndRemovalIsIdempotent() throws {
         let storage = CheckedAuthStorage(AuthTestStores().keychainStorage("test-\(UUID())"))
         #expect(try storage.retrieve(key: "supabase.session") == nil)

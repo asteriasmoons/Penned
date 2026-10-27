@@ -10,7 +10,7 @@ struct TagBrowserView: View {
     @State private var scope = LibrarySearchScope.keyword
     @State private var snapshot = TagBrowserSnapshot()
     @State private var matchingDocument: TaggedDocument?
-    private let accent = Color(vellixHex: "#B59AD9")
+    private let accent = VellixSurface.lilac
     private var columnCount: Int {
         workspace == nil ? 2 : (availableWidth > 0
             ? PadWorkspaceMetrics.galleryColumns(width: max(0, availableWidth - 32), preferred: preferredColumns) : preferredColumns)
@@ -58,7 +58,7 @@ struct TagBrowserView: View {
                                 }.font(.system(.subheadline, design: .rounded).weight(.black))
                                     .padding(.horizontal, 12).padding(.vertical, 9)
                                     .foregroundStyle(selected ? accent : .primary)
-                                    .background(selected ? accent.opacity(0.18) : .white.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+                                    .background(selected ? accent.opacity(0.18) : VellixSurface.controlInk.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
                             }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
                                 .accessibilityLabel("#" + tag.name)
                                 .accessibilityHint(selected ? "Remove tag filter" : "Filter by this tag")
@@ -87,7 +87,7 @@ struct TagBrowserView: View {
         }
         .scrollPosition($scrollPosition)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { availableWidth = $0 }
-        .background(Color.black).navigationTitle("").navigationBarBackButtonHidden()
+        .background(VellixSurface.workspace).navigationTitle("").navigationBarBackButtonHidden()
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -111,11 +111,12 @@ struct TagBrowserView: View {
     private func card(_ result: TaggedDocument) -> some View {
         ZStack(alignment: .topTrailing) {
             Button { environment.tagNavigationTarget = nil; environment.select(result.document) } label: {
-                LibraryDocumentPreview(document: result.document, showsStar: false, visibleHeightFraction: workspace == nil ? 1 : PadWorkspaceMetrics.galleryPreviewHeightFraction)
+                LibraryDocumentPreview(document: result.document, showsStar: false, visibleHeightFraction: LibraryDocumentPreview.phoneGalleryHeightFraction
+                    ?? (workspace == nil ? 1 : PadWorkspaceMetrics.galleryPreviewHeightFraction))
             }.buttonStyle(.plain).contextMenu { DocumentContextMenu(document: result.document) }
             Button { matchingDocument = result } label: {
                 Text(result.blocks.count > 50 ? "50+" : String(result.blocks.count))
-                    .font(.system(size: 15, weight: .black, design: .rounded)).monospacedDigit().foregroundStyle(.black)
+                    .font(.system(size: 15, weight: .black, design: .rounded)).monospacedDigit().foregroundStyle(VellixSurface.inverseInk)
                     .frame(minWidth: 32, minHeight: 32).padding(.horizontal, 4)
                     .background(accent, in: RoundedRectangle(cornerRadius: 8)).padding(10)
             }.buttonStyle(.plain).accessibilityLabel("\(result.blocks.count) matching blocks in \(result.document.title)")
@@ -185,8 +186,8 @@ private struct MatchingTagBlocksSheet: View {
             var piece = AttributedString(run.text)
             if active {
                 piece.font = .system(.body, design: .rounded).weight(.black)
-                piece.foregroundColor = Color(vellixHex: "#B59AD9")
-                piece.backgroundColor = Color(vellixHex: "#B59AD9").opacity(0.12)
+                piece.foregroundColor = VellixSurface.lilac
+                piece.backgroundColor = VellixSurface.lilac.opacity(0.12)
             }
             text.append(piece)
         }

@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum CalendarStyle {
-    static let accent = Color(vellixHex: "#B59AD9")
+    static let accent = VellixSurface.lilac
 }
 
 extension CalendarEvent {
@@ -67,47 +67,99 @@ struct CalendarTaskRow: View {
     @EnvironmentObject private var environment: AppEnvironment
     @ObservedObject var model: CalendarModel
     let entry: CalendarTaskEntry
+    var showsDocumentBadge = false
     private var isCompleting: Bool { entry.canComplete && model.completingTasks.contains(entry.task.id) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 6) {
-                Button { Task { await model.complete(entry) } } label: {
-                    ZStack {
-                        Circle().stroke(entry.isCompleted ? CalendarStyle.accent : .secondary, lineWidth: 2)
-                        if isCompleting { ProgressView().controlSize(.mini) }
-                        else if entry.isCompleted {
-                            LibraryIcon(name: "checkwavy", size: 19).foregroundStyle(CalendarStyle.accent)
-                        }
-                    }.frame(width: 23, height: 23).frame(width: 44, height: 44, alignment: .top)
-                        .padding(.top, 2).contentShape(Rectangle())
+                TaskCompletionCircle(isChecked: entry.isCompleted, isSkipped: entry.isSkipped,
+                    isEnabled: entry.canComplete && !isCompleting,
+                    alignment: .top) { skipped in
+                    Task { await model.complete(entry, skipped: skipped) }
                 }
-                .buttonStyle(.plain)
-                .disabled(!entry.canComplete || isCompleting)
-                .accessibilityLabel(entry.kind == .completed ? "Completed occurrence" : entry.kind == .projected ? "Future occurrence" : entry.isCompleted ? "Mark task incomplete" : "Complete task")
-                .accessibilityHint(entry.kind == .projected ? "This future occurrence becomes available after the current occurrence is completed." : "")
-                .help(entry.kind == .projected ? "Complete the current occurrence first" : "Toggle task completion")
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(entry.task.text.isEmpty ? "Untitled Task" : entry.task.text)
-                        .font(.system(.body, design: .rounded)).strikethrough(entry.isCompleted)
-                        .foregroundStyle(entry.isCompleted ? Color.secondary : Color.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let date = entry.scheduledDate {
-                        Text(date.formatted(date: .omitted, time: .shortened)).font(.caption).foregroundStyle(.secondary)
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: showsDocumentBadge ? 19 : 44, height: 44, alignment: .top)
+                .padding(.top, 2)
+                .accessibilityHint(entry.kind == .projected ? "Completes this scheduled occurrence without changing earlier unfinished occurrences." : "")
+                .accessibilityIdentifier("calendar-task-completion-\(entry.id)")
+                .help("Click to complete; double-click to skip")
+                taskDetails.frame(maxWidth: .infinity, alignment: .leading)
                 if entry.task.metadata.reminderEnabled {
                     LibraryIcon(name: "clockwavy", size: 17).foregroundStyle(CalendarStyle.accent)
                         .padding(.top, 3).accessibilityLabel("Reminder attached")
                 }
             }
-            if let document = model.documents[entry.task.documentID] {
+            if !showsDocumentBadge, let document = model.documents[entry.task.documentID] {
                 CalendarDocumentPreview(document: document) { environment.openCalendarDocument(document) }
                     .padding(.leading, 50)
             }
         }
         .padding(.vertical, 8)
         .accessibilityIdentifier("calendar-task-\(entry.id)")
+    }
+
+    private var taskTitle: some View {
+        Text(entry.task.text.isEmpty ? "Untitled Task" : entry.task.text)
+            .font(.system(.body, design: .rounded)).strikethrough(entry.isCompleted)
+            .foregroundStyle(entry.isCompleted ? Color.secondary : Color.primary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private var scheduledTime: some View {
+        if let date = entry.scheduledDate {
+            Text(date.formatted(date: .omitted, time: .shortened))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var taskDetails: some View {
+        if !showsDocumentBadge {
+            VStack(alignment: .leading, spacing: 5) { taskTitle; scheduledTime }
+        } else {
+            calendarTaskDetails
+        }
+    }
+
+    @ViewBuilder private var calendarTaskDetails: some View {
+        if let document = model.documents[entry.task.documentID] {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: model.mode == .week ? .firstTextBaseline : .lastTextBaseline, spacing: 10) {
+                    taskTextAndTime.fixedSize(horizontal: true, vertical: true)
+                    documentBadge(document).fixedSize()
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    taskTextAndTime
+                    documentBadge(document)
+                }
+            }
+        } else {
+            taskTextAndTime
+        }
+    }
+
+    private var taskTextAndTime: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            taskTitle
+            scheduledTime
+        }
+    }
+
+    private func documentBadge(_ document: DocumentRecord) -> some View {
+        Button { environment.openCalendarDocument(document, returnToCalendar: true) } label: {
+            HStack(spacing: 6) {
+                LibraryIcon(name: "linedpages", size: 16).foregroundStyle(CalendarStyle.accent)
+                Text(document.title).font(.system(.caption, design: .rounded).weight(.semibold))
+                    .foregroundStyle(VellixSurface.ink).lineLimit(1)
+                LibraryIcon(name: "chevright", size: 10).foregroundStyle(CalendarStyle.accent)
+            }
+            .padding(.horizontal, 9).padding(.vertical, 6)
+            .background(VellixSurface.subtleFill, in: Capsule())
+            .overlay { Capsule().strokeBorder(VellixSurface.hairline, lineWidth: 1) }
+            .frame(minHeight: 44, alignment: .topLeading).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open \(document.title)")
+        .accessibilityIdentifier("calendar-task-document-\(entry.id)-\(document.id)")
     }
 }
 
@@ -131,13 +183,13 @@ struct CalendarDayAgenda: View {
                         .padding(.leading, 15)
                 }
                 if event.id != events.last?.id || !tasks.isEmpty {
-                    Divider().overlay(Color.white.opacity(0.04))
+                    Divider().overlay(VellixSurface.controlInk.opacity(0.04))
                 }
             }
             ForEach(tasks) { entry in
-                CalendarTaskRow(model: model, entry: entry)
+                CalendarTaskRow(model: model, entry: entry, showsDocumentBadge: true)
                 if entry.id != tasks.last?.id {
-                    Divider().overlay(Color.white.opacity(0.04))
+                    Divider().overlay(VellixSurface.controlInk.opacity(0.04))
                 }
             }
             if events.isEmpty && tasks.isEmpty && model.dailyNote(on: day) == nil {

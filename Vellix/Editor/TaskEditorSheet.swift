@@ -98,7 +98,7 @@ struct TaskEditorSheet: View {
         }
         .padding(20)
         .font(.system(.body, design: .rounded))
-        .foregroundStyle(.white)
+        .foregroundStyle(VellixSurface.controlInk)
         .frame(maxWidth: 620, maxHeight: .infinity, alignment: .top)
         .pennedSheet(title: panel.title, closeDisabled: isConfirming, close: { dismiss() }) {
             if panel != .conversion && panel != .scheduling {

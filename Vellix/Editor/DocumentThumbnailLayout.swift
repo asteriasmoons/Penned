@@ -107,10 +107,10 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                 let attrs = node["attrs"] as? [String: Any] ?? [:]
                 let children = node["content"] as? [[String: Any]] ?? []
                 switch type {
-                case "paragraph", "heading":
+                case "paragraph", "caption", "heading":
                     let level = attrs["level"] as? Int ?? 1
                     text(inlineText(node), type: type, x: x, width: width,
-                         thickness: type == "heading" ? max(3.2, 5 - CGFloat(level) * 0.4) : 2.6,
+                         thickness: type == "heading" ? max(3.2, 5 - CGFloat(level) * 0.4) : (type == "caption" ? 2.2 : 2.6),
                          alignment: attrs["textAlign"] as? String)
                     y += listKind == nil ? 4 : 1.5
                 case "bulletList", "orderedList", "taskList":

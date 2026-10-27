@@ -95,6 +95,12 @@ struct DocumentBrowserView: View {
         workspace != nil && availableWidth > 0
             ? PadWorkspaceMetrics.galleryWidth(available: availableWidth, columns: columnCount) : nil
     }
+    private var previewHeightFraction: CGFloat {
+        if let phoneFraction = LibraryDocumentPreview.phoneGalleryHeightFraction {
+            return mode == .all && displayTitle == nil ? 0.7 : phoneFraction
+        }
+        return workspace == nil ? 1 : PadWorkspaceMetrics.galleryPreviewHeightFraction
+    }
 
     var body: some View {
         ScrollView {
@@ -145,7 +151,7 @@ struct DocumentBrowserView: View {
         }
         .scrollPosition($scrollPosition)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { availableWidth = $0 }
-        .background(Color.black)
+        .background(VellixSurface.workspace)
         .navigationTitle(displayTitle ?? mode.title)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -167,6 +173,7 @@ struct DocumentBrowserView: View {
                 Menu {
                     browserOptions
                 } label: { LibraryIcon(name: "dotswavy") }
+                .pennedIconMenuStyle()
                 .accessibilityLabel("Document options")
             }
         }
@@ -277,7 +284,7 @@ struct DocumentBrowserView: View {
                 Task { do { try await workspace.openDocument(document) } catch { environment.report(error) } }
             } else { environment.select(document) }
         } label: {
-            LibraryDocumentPreview(document: document, visibleHeightFraction: workspace == nil ? 1 : PadWorkspaceMetrics.galleryPreviewHeightFraction)
+            LibraryDocumentPreview(document: document, visibleHeightFraction: previewHeightFraction)
                 .overlay(alignment: .bottomTrailing) {
                     if isSelecting {
                         LibraryIcon(name: selectedIDs.contains(document.id) ? "checkwavy" : "selectsparkle", size: 20)

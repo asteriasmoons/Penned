@@ -218,6 +218,13 @@ final class DocumentRepository: @unchecked Sendable {
         return document
     }
 
+    func taskForHistoryPage(id: String) throws -> DocumentTaskRecord? {
+        guard let taskID = DocumentTaskPages.taskID(for: id) else { return nil }
+        let repository = DocumentTaskRepository(database: database)
+        repository.spaceID = spaceID
+        return try repository.all(includeTemplates: true, includeInactive: true).first { $0.id == taskID }
+    }
+
     func recent(limit: Int = 12) throws -> [DocumentRecord] {
         try database.read { db in
             try DocumentRecord.fetchAll(
@@ -335,27 +342,27 @@ final class DocumentRepository: @unchecked Sendable {
     }
 
     func saveEditorJSON(id: String, canonicalJSON: String) throws -> DocumentRecord {
-        try database.write { db in
-            var record = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
-            let analysis = try TipTapContentAnalyzer.analyze(canonicalJSON)
+        try database.write { try saveEditorJSON(id: id, canonicalJSON: canonicalJSON, in: $0) }
+    }
 
-            guard analysis.canonicalJSON != record.tipTapJSON else {
-                return record
-            }
+    func saveEditorJSON(id: String, canonicalJSON: String, in db: Database) throws -> DocumentRecord {
+        var record = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
+        let analysis = try TipTapContentAnalyzer.analyze(canonicalJSON)
 
-            record.tipTapJSON = analysis.canonicalJSON
-            record.plainText = analysis.plainText
-            record.previewText = analysis.previewText
-            record.wordCount = analysis.wordCount
-            record.characterCount = analysis.characterCount
-            record.estimatedReadingMinutes = analysis.estimatedReadingMinutes
-            record.revision += 1
-            record.updatedAt = Date()
+        guard analysis.canonicalJSON != record.tipTapJSON else { return record }
 
-            try record.update(db)
-            try Self.upsertSearchIndex(record, in: db)
-            return record
-        }
+        record.tipTapJSON = analysis.canonicalJSON
+        record.plainText = analysis.plainText
+        record.previewText = analysis.previewText
+        record.wordCount = analysis.wordCount
+        record.characterCount = analysis.characterCount
+        record.estimatedReadingMinutes = analysis.estimatedReadingMinutes
+        record.revision += 1
+        record.updatedAt = Date()
+
+        try record.update(db)
+        try Self.upsertSearchIndex(record, in: db)
+        return record
     }
 
     func setFavorite(id: String, isFavorite: Bool) throws -> DocumentRecord {
@@ -1040,7 +1047,18 @@ final class TemplateRepository: @unchecked Sendable {
             ) SELECT d.* FROM documents d JOIN owned ON d.id = owned.id
             """, arguments: [sourceID])
         guard sources.contains(where: { $0.id == sourceID }) else { throw VellixError.documentNotFound(sourceID) }
-        let ids = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, identities[$0.id] ?? UUID().uuidString) })
+        var taskIDs: [String: String] = [:]
+        for source in sources {
+            for context in try DocumentTaskIndex.contexts(in: source.tipTapJSON) {
+                if let task = context.metadata, taskIDs[task.id] == nil { taskIDs[task.id] = UUID().uuidString }
+            }
+        }
+        let ids = Dictionary(uniqueKeysWithValues: sources.map { source -> (String, String) in
+            if let oldTask = DocumentTaskPages.taskID(for: source.id), let newTask = taskIDs[oldTask] {
+                return (source.id, DocumentTaskPages.isDetail(source.id) ? DocumentTaskPages.detailID(newTask) : DocumentTaskPages.historyID(newTask))
+            }
+            return (source.id, identities[source.id] ?? UUID().uuidString)
+        })
         let batches = Dictionary(uniqueKeysWithValues: Set(sources.compactMap(\.trashBatchID)).map { ($0, UUID().uuidString) })
         var copies: [String: DocumentRecord] = [:]
         // Insert parents before children so every write also works with immediate FK checks.
@@ -1106,7 +1124,8 @@ final class TemplateRepository: @unchecked Sendable {
             copy.appearanceJSON = try StructuredTemplateContent.replacingPaths(copy.appearanceJSON, paths: fileMap)
             copy.cardStyleJSON = try StructuredTemplateContent.replacingPaths(copy.cardStyleJSON, paths: fileMap)
             let mappings = identities.merging(ids) { _, new in new }
-            let analysis = try TipTapContentAnalyzer.analyze(StructuredTemplateContent.independent(source.tipTapJSON, pages: mappings, paths: fileMap, resetsComponentResponses: resetsComponentResponses))
+            let analysis = try TipTapContentAnalyzer.analyze(StructuredTemplateContent.independent(source.tipTapJSON, pages: mappings, paths: fileMap,
+                resetsComponentResponses: resetsComponentResponses, tasks: taskIDs))
             copy.tipTapJSON = analysis.canonicalJSON
             copy.plainText = analysis.plainText
             copy.previewText = analysis.previewText

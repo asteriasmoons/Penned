@@ -12,8 +12,8 @@ struct CollectionSnapshotPreview: View {
                 HStack(spacing: 8) {
                     Text(snapshot.name).font(.system(size: 18, weight: .bold, design: appearance.fontStyle.design))
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(view.name).font(.system(size: 15)).foregroundStyle(Color(vellixHex: "#B59AD9"))
-                    LibraryIcon(name: "chevdown", size: 18).foregroundStyle(Color(vellixHex: "#B59AD9"))
+                    Text(view.name).font(.system(size: 15)).foregroundStyle(Color(vellixHex: appearance.presentationColors.accent))
+                    LibraryIcon(name: "chevdown", size: 18).foregroundStyle(Color(vellixHex: appearance.presentationColors.accent))
                     LibraryIcon(name: "dotswavy", size: 18)
                 }.padding(.horizontal, 8).frame(minHeight: 40)
                 switch view.kind {
@@ -34,7 +34,7 @@ struct CollectionSnapshotPreview: View {
         return GeometryReader { geometry in
             VStack(spacing: 0) {
                 tableRow(title: "Title", fields: fields, entry: nil)
-                    .foregroundStyle(Color(vellixHex: "#B59AD9")).background(.white.opacity(0.02))
+                    .foregroundStyle(Color(vellixHex: appearance.presentationColors.accent)).background(Color(vellixHex: appearance.textColorHex).opacity(0.02))
                 ForEach(entries) { entry in
                     tableRow(title: entry.title, fields: fields, entry: entry)
                 }
@@ -52,7 +52,7 @@ struct CollectionSnapshotPreview: View {
                     .padding(.horizontal, 12).padding(.vertical, 10)
             }
         }.fixedSize(horizontal: true, vertical: false).frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-            .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.09)).frame(height: 1) }
+            .overlay(alignment: .bottom) { Rectangle().fill(Color(vellixHex: appearance.textColorHex).opacity(0.09)).frame(height: 1) }
     }
 
     private func gallery(_ view: CollectionViewRecord) -> some View {
@@ -65,21 +65,21 @@ struct CollectionSnapshotPreview: View {
                         properties(entry, view: view).padding(.horizontal, 10)
                         HStack { Spacer(); LibraryIcon(name: "dotswavy", size: 18) }.padding(8)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .background(.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.09), lineWidth: 1))
+                        .background(Color(vellixHex: appearance.textColorHex).opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(vellixHex: appearance.textColorHex).opacity(0.09), lineWidth: 1))
                 }
             }
-            LibraryIcon(name: "addwavy", size: 20).foregroundStyle(Color(vellixHex: "#B59AD9")).padding(10)
+            LibraryIcon(name: "addwavy", size: 20).foregroundStyle(Color(vellixHex: appearance.presentationColors.accent)).padding(10)
         }.fixedSize(horizontal: false, vertical: true).frame(maxHeight: 420, alignment: .top).clipped()
     }
     private func cover(_ entry: CollectionEntrySummary) -> some View {
-        Color.white.opacity(0.045).aspectRatio(1.78, contentMode: .fit).overlay {
+        Color(vellixHex: appearance.textColorHex).opacity(0.045).aspectRatio(1.78, contentMode: .fit).overlay {
             if entry.appearance.displaysCover {
                 if let image = CardImageLoader.image(path: entry.cover, store: attachments) {
                     Image(decorative: image, scale: 1).resizable().scaledToFill()
                 } else if entry.cover == nil { ThemeCoverArt(theme: entry.appearance.resolvedCoverTheme) }
-                else { LibraryIcon(name: "imagesign", size: 24).foregroundStyle(Color(vellixHex: "#B59AD9")) }
-            } else { LibraryIcon(name: "imagesign", size: 24).foregroundStyle(Color(vellixHex: "#B59AD9")) }
+                else { LibraryIcon(name: "imagesign", size: 24).foregroundStyle(Color(vellixHex: appearance.presentationColors.accent)) }
+            } else { LibraryIcon(name: "imagesign", size: 24).foregroundStyle(Color(vellixHex: appearance.presentationColors.accent)) }
         }.clipped()
     }
 
@@ -98,13 +98,13 @@ struct CollectionSnapshotPreview: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(alignment: .top) {
                                     Text(entry.title).fontWeight(.medium).lineLimit(3)
-                                    Spacer(); LibraryIcon(name: "chevright", size: 11).foregroundStyle(.white.opacity(0.45))
+                                    Spacer(); LibraryIcon(name: "chevright", size: 11).foregroundStyle(Color(vellixHex: appearance.textColorHex).opacity(0.45))
                                 }
                                 properties(entry, view: view)
                             }.padding(11).frame(maxWidth: .infinity, alignment: .leading)
-                                .foregroundStyle(Color(vellixHex: "#E4E6F1"))
-                                .background(Color(vellixHex: "#2C2C2E"), in: RoundedRectangle(cornerRadius: 11))
-                                .overlay(RoundedRectangle(cornerRadius: 11).stroke(.white.opacity(0.1), lineWidth: 1))
+                                .foregroundStyle(Color(vellixHex: appearance.presentationColors.boardText))
+                                .background(Color(vellixHex: appearance.presentationColors.boardPaper), in: RoundedRectangle(cornerRadius: 11))
+                                .overlay(RoundedRectangle(cornerRadius: 11).stroke(Color(vellixHex: appearance.textColorHex).opacity(0.1), lineWidth: 1))
                         }
                         if !group.entries.isEmpty {
                             Image(systemName: "plus").frame(maxWidth: .infinity).frame(height: 34)

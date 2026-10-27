@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import SwiftUI
 
 struct DocumentPreviewContent: Equatable {
     var document: DocumentRecord
@@ -19,6 +20,10 @@ struct DocumentPreviewContent: Equatable {
     }
 
     var cacheKey: String { Self.cacheKey(document, children: children, collections: collections) }
+    func cacheKey(for scheme: ColorScheme) -> String {
+        guard ([document] + children).contains(where: { $0.appearance.isThemeDependent }) else { return cacheKey }
+        return cacheKey + (scheme == .light ? "-appearance-light-v1" : "-appearance-dark-v1")
+    }
     var hasResolvedCollections: Bool {
         TipTapContentAnalyzer.collectionIDs(in: document.tipTapJSON).isSubset(of: Set(collections.map { $0.record.id }))
     }
@@ -39,7 +44,8 @@ struct DocumentPreviewContent: Equatable {
         let attachmentRevision = ([document] + children).contains { !EditorAttachment.paths(in: $0.tipTapJSON).isEmpty }
             ? ["attachment-presentation-v3-video-frame"] : []
         let tagRevision = ([document] + children).contains { TipTapContentAnalyzer.hasInlineTags(in: $0.tipTapJSON) } ? ["inline-tag-presentation-v1"] : []
-        let inputs = [["library-preview-v10-collections", metadata.base64EncodedString()] + content(document) + inlineRevision + calloutRevision + componentRevision + attachmentRevision + tagRevision]
+        let toggleRevision = ([document] + children).contains { TipTapContentAnalyzer.hasToggles(in: $0.tipTapJSON) } ? ["toggle-icon-presentation-v1"] : []
+        let inputs = [["library-preview-v10-collections", metadata.base64EncodedString()] + content(document) + inlineRevision + calloutRevision + componentRevision + attachmentRevision + tagRevision + toggleRevision]
             + children.sorted { $0.id < $1.id }.map { [$0.id] + content($0) }
         let data = (try? encoder.encode(inputs)) ?? Data()
         return document.id + "-" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()

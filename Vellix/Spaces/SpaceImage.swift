@@ -25,9 +25,9 @@ struct SpaceImage: View {
                 Image(decorative: image, scale: 1).resizable().scaledToFill()
             } else {
                 ZStack {
-                    Color.white.opacity(0.10)
+                    VellixSurface.controlInk.opacity(0.10)
                     Text(String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1)).uppercased())
-                        .font(.system(size: size * 0.42, weight: .semibold, design: .rounded)).foregroundStyle(.white)
+                        .font(.system(size: size * 0.42, weight: .semibold, design: .rounded)).foregroundStyle(VellixSurface.controlInk)
                 }
             }
         }

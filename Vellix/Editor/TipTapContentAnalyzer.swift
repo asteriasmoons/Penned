@@ -91,6 +91,10 @@ enum TipTapContentAnalyzer {
     nonisolated static func pageReferenceIDs(in json: String) -> Set<String> {
         var result = Set<String>()
         func visit(_ node: [String: Any]) {
+            if node["type"] as? String == "taskItem", let attrs = node["attrs"] as? [String: Any],
+               let task = DocumentTaskMetadata.decode(attrs["trackedTask"]) {
+                result.insert(DocumentTaskPages.detailID(task.id))
+            }
             if node["type"] as? String == "pageReference",
                let attrs = node["attrs"] as? [String: Any],
                let id = attrs["documentID"] as? String, !id.isEmpty { result.insert(id) }
@@ -119,6 +123,17 @@ enum TipTapContentAnalyzer {
         return contains(documentObject(from: json))
     }
 
+    nonisolated static func removingCollection(_ collectionID: String, from json: String) throws -> String {
+        func remove(_ node: [String: Any]) -> [String: Any]? {
+            if node["type"] as? String == "collection",
+               (node["attrs"] as? [String: Any])?["collectionID"] as? String == collectionID { return nil }
+            var result = node
+            if let children = node["content"] as? [[String: Any]] { result["content"] = children.compactMap(remove) }
+            return result
+        }
+        return try makeDocumentJSON(content: (documentObject(from: json)["content"] as? [[String: Any]] ?? []).compactMap(remove))
+    }
+
     nonisolated static func hasCallouts(in json: String) -> Bool {
         func contains(_ node: [String: Any]) -> Bool {
             ["callout", "plainCallout"].contains(node["type"] as? String ?? "")
@@ -130,6 +145,14 @@ enum TipTapContentAnalyzer {
     nonisolated static func hasInlineTags(in json: String) -> Bool {
         func contains(_ node: [String: Any]) -> Bool {
             node["type"] as? String == "inlineTag"
+                || (node["content"] as? [[String: Any]] ?? []).contains(where: contains)
+        }
+        return contains(documentObject(from: json))
+    }
+
+    nonisolated static func hasToggles(in json: String) -> Bool {
+        func contains(_ node: [String: Any]) -> Bool {
+            node["type"] as? String == "toggleItem"
                 || (node["content"] as? [[String: Any]] ?? []).contains(where: contains)
         }
         return contains(documentObject(from: json))
@@ -210,10 +233,14 @@ enum TipTapContentAnalyzer {
             }
 
             if dictionary["type"] as? String == "doc" {
-                return [
+                var document: [String: Any] = [
                     "type": "doc",
                     "content": normalizeTipTapNodes(dictionary["content"] as? [Any] ?? [])
                 ]
+                if let projection = (dictionary["attrs"] as? [String: Any])?["taskHistoryProjection"] as? [String: Any] {
+                    document["attrs"] = ["taskHistoryProjection": projection]
+                }
+                return document
             }
 
             if let content = dictionary["content"] as? [Any], dictionary["blocks"] == nil {
@@ -574,7 +601,7 @@ enum TipTapContentAnalyzer {
 
     private nonisolated static func isTextBearingBlock(_ type: String?) -> Bool {
         switch type {
-        case "paragraph", "heading", "blockquote", "callout", "plainCallout", "listItem", "taskItem", "toggleItem", "inlineProperty", "templateComponent", "attachment":
+        case "paragraph", "caption", "heading", "blockquote", "callout", "plainCallout", "listItem", "taskItem", "toggleItem", "inlineProperty", "templateComponent", "attachment":
             return true
         default:
             return false

@@ -66,7 +66,6 @@ struct StyleNameAlert: UIViewControllerRepresentable {
             guard controller.isVisible, controller.view.window != nil,
                   controller.presentedViewController == nil else { return }
             let prompt = UIAlertController(title: configuration.title, message: nil, preferredStyle: .alert)
-            prompt.overrideUserInterfaceStyle = .dark
             prompt.addTextField { [weak self] field in
                 guard let self else { return }
                 field.placeholder = "Style name"

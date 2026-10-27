@@ -2,3 +2,7 @@
 [functions.penned-delete-account]
 verify_jwt = false
 entrypoint = "./functions/penned-delete-account/index.ts"
+
+[functions.penned-publishing]
+verify_jwt = false
+entrypoint = "./functions/penned-publishing/index.ts"

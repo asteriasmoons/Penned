@@ -399,6 +399,61 @@ extension DatabaseMigrator {
         migrator.registerMigration("v23_bootstrap_space_provenance") { db in
             try SpaceOwnership.installBootstrapTracking(in: db)
         }
+        migrator.registerMigration("v24_task_history_pages") { db in
+            try db.execute(sql: "INSERT OR IGNORE INTO taskDocumentChanges SELECT id FROM documents")
+            _ = try DocumentTaskIndex.reconcile(in: db)
+        }
+        migrator.registerMigration("v25_publication_queue") { db in
+            try db.execute(sql: """
+                CREATE TABLE publicationJobs (
+                  ownerKey TEXT NOT NULL, libraryID TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE, documentID TEXT NOT NULL,
+                  statusJSON TEXT NOT NULL, intent TEXT NOT NULL DEFAULT 'active',
+                  dirty INTEGER NOT NULL DEFAULT 1, sequence INTEGER NOT NULL DEFAULT 1,
+                  attempts INTEGER NOT NULL DEFAULT 0, retryAt DOUBLE NOT NULL DEFAULT 0,
+                  error TEXT, blocked INTEGER NOT NULL DEFAULT 0,
+                  PRIMARY KEY(ownerKey,libraryID,documentID)
+                );
+                """)
+            // Include dependencies and imports, not just editor body revisions. These
+            // marks commit/roll back with the original save; hashes coalesce no-ops.
+            for table in ["documents", "attachments", "spaces", "documentStyles", "collections", "collectionFields", "collectionViews", "collectionEntries", "collectionValues"] {
+                for event in ["INSERT", "UPDATE", "DELETE"] {
+                    try db.execute(sql: """
+                        CREATE TRIGGER publication_dirty_\(table)_\(event) AFTER \(event) ON \(table)
+                        BEGIN UPDATE publicationJobs SET dirty=1,sequence=sequence+1,retryAt=0
+                        WHERE intent='active' AND (libraryID=penned_library() OR penned_library()='*'); END;
+                        """)
+                }
+            }
+        }
+        migrator.registerMigration("v26_publication_revocations") { db in
+            try db.execute(sql: """
+                CREATE TRIGGER publication_trash AFTER UPDATE OF isTrashed,isArchived ON documents
+                WHEN NEW.isTrashed=1 OR NEW.isArchived=1
+                BEGIN UPDATE publicationJobs SET intent='stop',dirty=1,blocked=0,retryAt=0,sequence=sequence+1
+                WHERE documentID=NEW.id AND intent<>'inactive' AND (libraryID=penned_library() OR penned_library()='*'); END;
+                CREATE TRIGGER publication_delete AFTER DELETE ON documents
+                BEGIN UPDATE publicationJobs SET intent='stop',dirty=1,blocked=0,retryAt=0,sequence=sequence+1
+                WHERE documentID=OLD.id AND intent<>'inactive' AND (libraryID=penned_library() OR penned_library()='*'); END;
+                UPDATE publicationJobs SET intent='stop',dirty=1,blocked=0,retryAt=0
+                WHERE intent='active' AND (NOT EXISTS(SELECT 1 FROM documents WHERE id=documentID)
+                  OR documentID IN (SELECT id FROM documents WHERE isTrashed=1 OR isArchived=1));
+                """)
+        }
+
+        migrator.registerMigration("v27_publication_collection_views") { db in
+            try db.execute(sql: """
+                UPDATE publicationJobs SET dirty=1,sequence=sequence+1,retryAt=0
+                WHERE intent='active' AND blocked=0;
+                """)
+        }
+
+        migrator.registerMigration("v28_publication_author_avatar") { db in
+            try db.execute(sql: "UPDATE publicationJobs SET dirty=1,sequence=sequence+1,retryAt=0 WHERE intent='active' AND blocked=0 AND json_extract(statusJSON,'$.settings.showAuthor')=1")
+        }
+        migrator.registerMigration("v29_publication_linked_pages") { db in
+            try db.execute(sql: "UPDATE publicationJobs SET dirty=1,sequence=sequence+1,retryAt=0 WHERE intent='active' AND blocked=0 AND json_extract(statusJSON,'$.settings.allowFollowLinkedContent')=1")
+        }
 
         return migrator
     }

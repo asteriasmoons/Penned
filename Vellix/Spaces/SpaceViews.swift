@@ -27,6 +27,7 @@ struct SpaceManagementView: View {
                             }.frame(minHeight: 48).contentShape(Rectangle())
                         }.buttonStyle(.plain)
                         Menu { actions(space) } label: { LibraryIcon(name: "dotswavy", size: 21).frame(width: 40, height: 44) }
+                            .pennedIconMenuStyle()
                             .accessibilityLabel("Actions for \(space.title)")
                     }.contextMenu { actions(space) }
                 }.onMove { indices, destination in

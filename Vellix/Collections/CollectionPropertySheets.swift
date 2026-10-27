@@ -79,7 +79,7 @@ struct CollectionValueSheet: View {
                     } catch { self.error = error.localizedDescription }
                 }
             }
-        }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.medium, .large])
+        }.tint(VellixSurface.violet).presentationDetents([.medium, .large])
     }
 }
 
@@ -172,7 +172,7 @@ struct CollectionFieldEditorSheet: View {
             } message: { Text("This removes the field and its values from every view. Documents are not deleted.") }
             .onAppear { focused = field.name.isEmpty }
         }.environment(\.pennedSheetDismiss, { dismiss() })
-            .tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.large])
+            .tint(VellixSurface.violet).presentationDetents([.large])
     }
     private func save(allowClear: Bool = false) {
         var proposed = field

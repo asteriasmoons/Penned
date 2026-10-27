@@ -228,6 +228,28 @@ struct DocumentBackgroundStyle: Codable, Equatable, Hashable {
     }
 }
 
+enum DocumentAppearanceField: String, Codable, Hashable {
+    case backdrop, paper, text
+}
+
+struct DocumentPresentationColors {
+    let backdrop: String
+    let paper: String
+    let text: String
+    let secondary: String
+    let accent: String
+    let tableHeader: String
+    let boardText: String
+    let boardPaper: String
+    var link: String { text == Self.light.text ? "#7833BC" : "#8FE9FF" }
+
+    static let light = Self(backdrop: "#F4F1F8", paper: "#FFFFFF", text: "#211D29", secondary: "#686171",
+                            accent: "#7955A0", tableHeader: "#E7DEF2", boardText: "#211D29", boardPaper: "#FCFAFF")
+    static let dark = Self(backdrop: "#343434", paper: "#242424", text: "#F7F7F7", secondary: "#9B9B9F",
+                           accent: "#B59AD9", tableHeader: "#066DB0", boardText: "#E4E6F1", boardPaper: "#2C2C2E")
+    static func resolve(_ scheme: ColorScheme) -> Self { scheme == .light ? .light : .dark }
+}
+
 struct DocumentAppearance: Codable, Equatable, Hashable {
     var themeID: DocumentThemeID?
     var editorBackground: DocumentBackgroundStyle
@@ -237,6 +259,57 @@ struct DocumentAppearance: Codable, Equatable, Hashable {
     var showsCover: Bool?
     var coverPhoto: CardRemotePhoto?
     var coverThemeID: DocumentThemeID?
+    // Absent in legacy records. Only explicit choices are persisted, never resolved theme colors.
+    var customizedFields: Set<DocumentAppearanceField>?
+
+    private func isDefaultSurface(_ background: DocumentBackgroundStyle, matching baseline: DocumentBackgroundStyle) -> Bool {
+        background.kind == .solid && background.colorHex.caseInsensitiveCompare(baseline.colorHex) == .orderedSame
+            && background.effect != .faded
+    }
+
+    private var hasCustomSurface: Bool {
+        themeID != nil || !isDefaultSurface(editorBackground, matching: Self.plain.editorBackground)
+            || !isDefaultSurface(innerPageBackground, matching: Self.plain.innerPageBackground)
+            || customizedFields?.contains(.backdrop) == true || customizedFields?.contains(.paper) == true
+    }
+
+    func followsApplicationAppearance(_ field: DocumentAppearanceField) -> Bool {
+        guard !hasCustomSurface, customizedFields?.contains(field) != true else { return false }
+        switch field {
+        case .backdrop, .paper: return true
+        case .text: return textColorHex.caseInsensitiveCompare(Self.plain.textColorHex) == .orderedSame
+        }
+    }
+
+    var isThemeDependent: Bool {
+        followsApplicationAppearance(.backdrop) || followsApplicationAppearance(.paper) || followsApplicationAppearance(.text)
+    }
+
+    mutating func markCustomized(_ field: DocumentAppearanceField) {
+        if customizedFields == nil { customizedFields = [] }
+        customizedFields?.insert(field)
+    }
+
+    /// A display-only copy. Never pass this value to document/style persistence.
+    func resolved(for scheme: ColorScheme) -> Self {
+        guard scheme == .light else { return self }
+        var result = self
+        let colors = DocumentPresentationColors.resolve(scheme)
+        if followsApplicationAppearance(.backdrop) { result.editorBackground = .solid(colors.backdrop) }
+        if followsApplicationAppearance(.paper) { result.innerPageBackground = .solid(colors.paper) }
+        if followsApplicationAppearance(.text) { result.textColorHex = colors.text }
+        return result
+    }
+
+    var presentationColorScheme: ColorScheme {
+        let background = themeID == nil ? editorBackground : innerPageBackground
+        let hex = background.colorHex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        let value = UInt64(hex.prefix(6), radix: 16) ?? 0
+        let brightness = Double((value >> 16) & 255) * 0.2126 + Double((value >> 8) & 255) * 0.7152 + Double(value & 255) * 0.0722
+        return brightness > 140 ? .light : .dark
+    }
+
+    var presentationColors: DocumentPresentationColors { .resolve(presentationColorScheme) }
 
     var displaysCover: Bool { showsCover ?? (themeID != nil) }
     var resolvedCoverTheme: DocumentThemeID { coverThemeID ?? themeID ?? .custom }

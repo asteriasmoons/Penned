@@ -67,14 +67,20 @@ final class AuthService {
     private let session: any AccountSessionStoring
     private let credentialState: (String) async throws -> ASAuthorizationAppleIDProvider.CredentialState
     private let email: any EmailAuthenticating
+    private let publishingApple: PublishingAppleAuth
+    private let publishingOwnerDeletion: ((AccountIdentity) async throws -> Void)?
 
     init(session: (any AccountSessionStoring)? = nil,
          email: (any EmailAuthenticating)? = nil,
+         publishingOwnerDeletion: ((AccountIdentity) async throws -> Void)? = nil,
+         publishingApple: PublishingAppleAuth? = nil,
          credentialState: @escaping (String) async throws -> ASAuthorizationAppleIDProvider.CredentialState = {
              try await ASAuthorizationAppleIDProvider().credentialState(forUserID: $0)
          }) {
         self.session = session ?? KeychainAccountSessionStore()
         self.email = email ?? SupabaseEmailAuth()
+        self.publishingOwnerDeletion = publishingOwnerDeletion
+        self.publishingApple = publishingApple ?? PublishingAppleAuth()
         self.credentialState = credentialState
     }
 
@@ -109,8 +115,12 @@ final class AuthService {
     func signInWithApple(
         credential: ASAuthorizationAppleIDCredential,
         existingUsers: [AuthUser],
-        modelContext: ModelContext
+        modelContext: ModelContext,
+        nonce: PublishingAppleNonce? = nil
     ) throws -> AuthUser {
+        if let nonce, let token = credential.identityToken {
+            try publishingApple.stage(identity: .apple(credential.user), identityToken: token, nonce: nonce)
+        }
         let fullNameParts = [
             credential.fullName?.givenName,
             credential.fullName?.familyName
@@ -198,6 +208,7 @@ final class AuthService {
 
     func activate(_ user: AuthUser) async throws {
         guard let identity = user.identity else { throw AuthServiceError.invalidCredential }
+        if let previous = try session.currentIdentity(), previous != identity { publishingApple.cancelPendingConnection(for: previous) }
         if !user.remoteAuthDeleted { try await validate(user, clearSessionOnRevocation: false) }
         try Task.checkCancellation()
         try session.setCurrentIdentity(identity)
@@ -209,8 +220,47 @@ final class AuthService {
 
     func signOutActive() async throws {
         guard let identity = try session.currentIdentity() else { return }
+        publishingApple.cancelPendingConnection(for: identity)
         if case .email = identity { try await email.signOut(identity) }
+        if case .apple = identity { try? await publishingApple.signOut(identity) }
         if try session.currentIdentity() == identity { try session.clear() }
+    }
+
+    func authorizePublishing(credential: ASAuthorizationAppleIDCredential, nonce: PublishingAppleNonce) async throws {
+        let identity = AccountIdentity.apple(credential.user)
+        guard try session.currentIdentity() == identity, let token = credential.identityToken else { throw PublishingFailure.appleAuthorizationRequired }
+        try await publishingApple.authorize(identity: identity, identityToken: token, nonce: nonce)
+        guard try session.currentIdentity() == identity else {
+            try publishingApple.forget(identity)
+            throw CancellationError()
+        }
+    }
+
+    func publishingAccessToken(for identity: AccountIdentity) async throws -> String {
+        guard try session.currentIdentity() == identity else { throw PublishingFailure.authenticationRequired }
+        let token: String
+        switch identity {
+        case .apple(let subject):
+            try await validateAppleCredentialState(for: subject)
+            token = try await publishingApple.accessToken(for: identity)
+        case .email: token = try await email.publishingAccessToken(identity)
+        }
+        guard try session.currentIdentity() == identity else { throw CancellationError() }
+        return token
+    }
+
+    func cancelAccountConnection(for identity: AccountIdentity) { publishingApple.cancelPendingConnection(for: identity) }
+
+    func deleteApplePublishingOwner(_ identity: AccountIdentity) async throws {
+        guard case .apple = identity, try session.currentIdentity() == identity else { throw PublishingFailure.authenticationRequired }
+        if let publishingOwnerDeletion { try await publishingOwnerDeletion(identity); return }
+        let token = try await publishingAccessToken(for: identity)
+        let client = PublishingClient(configuration: try .load())
+        try await client.revokeOwner(token: token)
+    }
+
+    func forgetPublishingSession(_ identity: AccountIdentity) throws {
+        try publishingApple.forget(identity)
     }
 
     func requestEmailCode(_ address: String, attempt: UUID) async throws -> String {

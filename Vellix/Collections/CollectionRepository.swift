@@ -350,6 +350,25 @@ final class CollectionRepository {
         }
     }
 
+    @discardableResult
+    func deleteCollection(id: String) throws -> Set<String> {
+        try database.write { db in
+            try checkScope(id, in: db)
+            let collection = try Self.requireCollection(id, in: db)
+            let owner = try documents.requireDocumentInDatabase(collection.documentID, db: db)
+            let pages = try DocumentRecord.fetchAll(db, sql: "SELECT * FROM documents WHERE spaceID = ?", arguments: [owner.spaceID])
+            var changed = Set<String>()
+            for page in pages where TipTapContentAnalyzer.collectionIDs(in: page.tipTapJSON).contains(id) {
+                let json = try TipTapContentAnalyzer.removingCollection(id, from: page.tipTapJSON)
+                _ = try documents.saveEditorJSON(id: page.id, canonicalJSON: json, in: db)
+                changed.insert(page.id)
+            }
+            // Foreign keys remove the collection configuration and membership, not its documents.
+            try db.execute(sql: "DELETE FROM collections WHERE id = ?", arguments: [id])
+            return changed
+        }
+    }
+
     func reorder(collectionID: String, table: String, ids: [String]) throws {
         guard ["collectionViews", "collectionFields", "collectionEntries"].contains(table) else { return }
         try database.write { db in

@@ -51,7 +51,7 @@ final class DocumentEditorCache: ObservableObject {
     @discardableResult
     func prepare(_ document: DocumentRecord) -> DocumentEditorModel {
         if let model = modelsByDocumentID[document.id] {
-            if model.document?.title != document.title || model.document?.cover != document.cover
+            if DocumentTaskPages.isManaged(document.id) || model.document?.title != document.title || model.document?.cover != document.cover
                 || model.document?.icon != document.icon || model.document?.appearanceJSON != document.appearanceJSON {
                 model.refreshLibraryContext()
             }

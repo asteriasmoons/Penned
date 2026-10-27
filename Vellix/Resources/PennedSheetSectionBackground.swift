@@ -270,7 +270,6 @@ final class PennedSheetSectionBackgroundOwner {
             // Host one canonical material per group, with no cell margins or sizing.
             materialView = UIHostingConfiguration {
                 PennedFrostedMaterial(tint: PennedSheetStyle.fieldTint, cornerRadius: 0)
-                    .environment(\.colorScheme, .dark)
                     .allowsHitTesting(false).accessibilityHidden(true)
             }
             .margins(.all, 0)

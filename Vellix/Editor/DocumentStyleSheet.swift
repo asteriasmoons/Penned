@@ -31,6 +31,7 @@ private enum DocumentStyleColor: String, Identifiable {
 
 struct DocumentStyleSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var environment: AppEnvironment
     let documentID: String
     let onChange: (DocumentStyleDefinition) -> Void
@@ -92,7 +93,7 @@ struct DocumentStyleSheet: View {
         }
         .padding(16)
         .frame(maxWidth: 620, maxHeight: .infinity, alignment: .top)
-        .foregroundStyle(.white)
+        .foregroundStyle(VellixSurface.controlInk)
         .pennedSheet(title: panel == .font ? nil : panel.title, close: { dismiss() }) {
             if panel != .overview {
                 Button("Back") { panel = .overview }
@@ -207,7 +208,7 @@ struct DocumentStyleSheet: View {
                         VStack {
                             Text("Text Color").font(.system(size: 19, weight: .bold, design: .rounded))
                             LibraryIcon(name: "paintdrop", size: 46)
-                        }.foregroundStyle(Color(vellixHex: definition.appearance.textColorHex))
+                        }.foregroundStyle(Color(vellixHex: definition.appearance.resolved(for: colorScheme).textColorHex))
                     } action: { colorTarget = .text }
                     styleTile(title: "Font", width: unit * 2 + 8) {
                         VStack(spacing: 4) {
@@ -229,8 +230,8 @@ struct DocumentStyleSheet: View {
                     } action: { panel = .backdrop }
                     styleTile(title: "Paper", width: unit) {
                         ZStack(alignment: .topLeading) {
-                            DocumentStyleSurface(style: definition.appearance.innerPageBackground, store: environment.attachmentStore)
-                            Text("Paper").foregroundStyle(Color(vellixHex: definition.appearance.textColorHex))
+                            DocumentStyleSurface(style: definition.appearance.resolved(for: colorScheme).innerPageBackground, store: environment.attachmentStore)
+                            Text("Paper").foregroundStyle(Color(vellixHex: definition.appearance.resolved(for: colorScheme).textColorHex))
                                 .font(.subheadline.weight(.semibold)).padding(10)
                         }
                     } action: { colorTarget = .paper }
@@ -276,7 +277,7 @@ struct DocumentStyleSheet: View {
                     }
                     .frame(maxWidth: selected ? .infinity : nil)
                     .frame(minWidth: 48, minHeight: 48)
-                    .foregroundStyle(selected ? accent : .white.opacity(0.8))
+                    .foregroundStyle(selected ? accent : VellixSurface.controlInk.opacity(0.8))
                     .background(selected ? accent.opacity(0.09) : .clear, in: Capsule())
                     .pennedSheetField(cornerRadius: 24)
                 }.buttonStyle(.plain).accessibilityLabel(font.title)
@@ -307,7 +308,7 @@ struct DocumentStyleSheet: View {
                             ForEach(DocumentGradientDirection.allCases) { direction in
                                 Text(direction.title).tag(direction)
                             }
-                        }.labelsHidden().pickerStyle(.menu).tint(.white)
+                        }.labelsHidden().pickerStyle(.menu).tint(VellixSurface.controlInk)
                     }.padding(12).pennedSheetField()
                 case .image:
                     photoGrid
@@ -328,7 +329,7 @@ struct DocumentStyleSheet: View {
                             let selected = (definition.appearance.editorBackground.effect ?? .immersive) == effect
                             Button { customizeBackdrop(); definition.appearance.editorBackground.effect = effect } label: {
                                 Text(effect.title).font(.headline).frame(maxWidth: .infinity).frame(height: 44)
-                                    .foregroundStyle(selected ? accent : .white.opacity(0.7))
+                                    .foregroundStyle(selected ? accent : VellixSurface.controlInk.opacity(0.7))
                                     .background(selected ? accent.opacity(0.10) : .clear, in: Capsule())
                                     .pennedSheetField(cornerRadius: 22)
                             }.buttonStyle(.plain)
@@ -352,7 +353,7 @@ struct DocumentStyleSheet: View {
                     LibraryIcon(name: modeIcon(kind), size: 23)
                         .foregroundStyle(Color(vellixHex: definition.appearance.textColorHex))
                         .frame(maxWidth: .infinity).frame(height: 40)
-                        .background(selected ? .black : .clear, in: Capsule())
+                        .background(selected ? VellixSurface.activeTab : .clear, in: Capsule())
                 }.buttonStyle(.plain).accessibilityLabel(kind.title)
                     .accessibilityAddTraits(selected ? .isSelected : [])
             }
@@ -408,7 +409,7 @@ struct DocumentStyleSheet: View {
 
     private func swatch<Content: View>(selected: Bool, @ViewBuilder content: () -> Content) -> some View {
         content().aspectRatio(1, contentMode: .fit).clipShape(Circle())
-            .overlay(Circle().strokeBorder(selected ? accent : .white.opacity(0.08), lineWidth: selected ? 3 : 1))
+            .overlay(Circle().strokeBorder(selected ? accent : VellixSurface.controlInk.opacity(0.08), lineWidth: selected ? 3 : 1))
             .padding(3)
             .overlay(Circle().stroke(selected ? accent.opacity(0.7) : .clear, lineWidth: 2))
     }
@@ -491,7 +492,7 @@ struct DocumentStyleSheet: View {
                         GeometryReader { geometry in
                             AsyncImage(url: URL(string: photo.thumbURL)) { image in
                                 image.resizable().scaledToFill()
-                            } placeholder: { Color.white.opacity(0.04) }
+                            } placeholder: { VellixSurface.controlInk.opacity(0.04) }
                             .frame(width: geometry.size.width, height: 78).clipped()
                         }.frame(height: 78).clipShape(RoundedRectangle(cornerRadius: 8))
                     }.buttonStyle(.plain).disabled(importing)
@@ -517,7 +518,7 @@ struct DocumentStyleSheet: View {
     }
 
     private var backdropSurface: some View {
-        DocumentStyleSurface(style: definition.appearance.editorBackground, store: environment.attachmentStore,
+        DocumentStyleSurface(style: definition.appearance.resolved(for: colorScheme).editorBackground, store: environment.attachmentStore,
             theme: definition.appearance.themeID)
     }
 
@@ -525,18 +526,20 @@ struct DocumentStyleSheet: View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
                 if definition.appearance.editorBackground.kind == .none {
-                    Color(vellixHex: "#303033")
-                    LibraryIcon(name: modeIcon(.none), size: 30).foregroundStyle(.white.opacity(0.5))
+                    VellixSurface.previewPlaceholder
+                    LibraryIcon(name: modeIcon(.none), size: 30).foregroundStyle(VellixSurface.controlInk.opacity(0.5))
                         .frame(width: geometry.size.width, height: geometry.size.height)
                 } else {
                     backdropSurface.frame(width: geometry.size.width, height: geometry.size.height)
                 }
                 Text("Backdrop").font(.subheadline.weight(.semibold)).padding(10)
+                    .foregroundStyle(definition.appearance.editorBackground.kind == .none ? VellixSurface.controlInk
+                        : Color(vellixHex: definition.appearance.resolved(for: colorScheme).textColorHex))
                     .shadow(color: .black.opacity(0.8), radius: 2, y: 1)
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
-            .background(Color(vellixHex: "#303033"))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+            .background(VellixSurface.previewPlaceholder)
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(VellixSurface.controlInk.opacity(0.08), lineWidth: 1))
         }
     }
 
@@ -549,6 +552,17 @@ struct DocumentStyleSheet: View {
                 .padding(.bottom, 16)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    Button {
+                        cancelImport()
+                        definition = DocumentStyleDefinition(appearance: .plain)
+                    } label: {
+                        HStack {
+                            Text("Default Appearance")
+                            Spacer()
+                            if definition.appearance == .plain { LibraryIcon(name: "checkwavy", size: 20) }
+                        }.padding(14).pennedSheetField()
+                    }.buttonStyle(.plain).foregroundStyle(accent)
+                        .accessibilityLabel("Use default application appearance")
                     Text("YOUR STYLES").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 18) {
                         ForEach(styles.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }) { style in
@@ -576,7 +590,7 @@ struct DocumentStyleSheet: View {
                 DocumentStyleThumbnail(title: style.title, definition: value, store: environment.attachmentStore)
                     .aspectRatio(0.9, contentMode: .fit)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? accent : .clear, lineWidth: 2))
-                Text(style.title).font(.subheadline).foregroundStyle(selected ? accent : .white.opacity(0.65))
+                Text(style.title).font(.subheadline).foregroundStyle(selected ? accent : VellixSurface.controlInk.opacity(0.65))
                     .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
             }.contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
@@ -600,7 +614,9 @@ struct DocumentStyleSheet: View {
         }, set: { color in
             let hex = color.vellixHexString(fallback: "#FFFFFF")
             switch target {
-            case .text: definition.appearance.textColorHex = hex
+            case .text:
+                definition.appearance.markCustomized(.text)
+                definition.appearance.textColorHex = hex
             case .paper:
                 definition.appearance.enableCustomLayout()
                 definition.appearance.innerPageBackground = .solid(hex)
@@ -711,11 +727,13 @@ struct DocumentStyleSheet: View {
 }
 
 struct DocumentStyleThumbnail: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let definition: DocumentStyleDefinition
     let store: AttachmentStore
 
     var body: some View {
+        let appearance = definition.appearance.resolved(for: colorScheme)
         GeometryReader { geometry in
             let width = geometry.size.width
             let height = geometry.size.height
@@ -724,8 +742,8 @@ struct DocumentStyleThumbnail: View {
             let inset = max(5, width * 0.045)
             let contentWidth = max(1, pageWidth - inset * 2)
             ZStack {
-                DocumentStyleSurface(style: definition.appearance.editorBackground, store: store,
-                    theme: definition.appearance.themeID)
+                DocumentStyleSurface(style: appearance.editorBackground, store: store,
+                    theme: appearance.themeID)
                 VStack(alignment: .leading, spacing: 7) {
                     if definition.appearance.displaysCover {
                         Group {
@@ -736,8 +754,8 @@ struct DocumentStyleThumbnail: View {
                             .clipped().clipShape(RoundedRectangle(cornerRadius: 3))
                     }
                     Text(title).font(.system(size: width > 120 ? 14 : 8, weight: .black,
-                                             design: definition.appearance.fontStyle.design))
-                        .foregroundStyle(Color(vellixHex: definition.appearance.textColorHex))
+                                             design: appearance.fontStyle.design))
+                        .foregroundStyle(Color(vellixHex: appearance.textColorHex))
                         .lineLimit(4).minimumScaleFactor(0.75)
                         .frame(width: contentWidth, alignment: .leading)
                     Spacer(minLength: 0)
@@ -746,10 +764,10 @@ struct DocumentStyleThumbnail: View {
                 .padding(inset)
                 .frame(width: pageWidth, height: pageHeight, alignment: .topLeading)
                 .background {
-                    DocumentStyleSurface(style: definition.appearance.innerPageBackground, store: store)
+                    DocumentStyleSurface(style: appearance.innerPageBackground, store: store)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(.white.opacity(0.18), lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(VellixSurface.controlInk.opacity(0.18), lineWidth: 1))
                 .shadow(color: .black.opacity(0.4), radius: 3, x: 0, y: 2)
             }.frame(width: width, height: height).clipShape(RoundedRectangle(cornerRadius: 8))
         }

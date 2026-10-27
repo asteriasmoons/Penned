@@ -5,6 +5,7 @@
 
 import Foundation
 import CoreGraphics
+import SwiftUI
 
 enum TipTapEditorEvent: Equatable {
     case tagRequest(InlineTagRequest)
@@ -20,6 +21,7 @@ enum TipTapEditorEvent: Equatable {
     case editorError(String)
     case focusChanged(Bool)
     case formattingStateChanged(TipTapFormattingState)
+    case textConversionStateChanged(TipTapTextConversionState)
     case statisticsChanged(wordCount: Int, characterCount: Int)
     case contentHeightChanged(height: CGFloat, visualContentBottom: CGFloat)
     case caretChanged(TipTapCaretUpdate)
@@ -49,12 +51,14 @@ enum TipTapEditorEvent: Equatable {
     case tableDocumentSnapshot(String)
     case taskStateChanged(DocumentTaskContext?)
     case requestTaskMenu(DocumentTaskContext)
-    case requestTaskCompletion(DocumentTaskContext, completed: Bool)
+    case requestTaskCompletion(DocumentTaskContext, completed: Bool, skipped: Bool)
     case taskDocumentSnapshot(String)
     case unknown(String)
 
     init(kind: String, payload: [String: Any]) throws {
         switch kind {
+        case "textConversionState":
+            self = .textConversionStateChanged(TipTapTextConversionState.decode(payload))
         case "tagRequest":
             self = InlineTagRequest.decode(payload).map(Self.tagRequest) ?? .unknown(kind)
         case "attachmentClipboard":
@@ -100,7 +104,8 @@ enum TipTapEditorEvent: Equatable {
         case "taskMenuRequest", "taskCompletionRequest":
             guard let context = DocumentTaskContext.decode(payload) else { self = .unknown(kind); return }
             self = kind == "taskMenuRequest" ? .requestTaskMenu(context)
-                : .requestTaskCompletion(context, completed: payload["completed"] as? Bool ?? false)
+                : .requestTaskCompletion(context, completed: payload["completed"] as? Bool ?? false,
+                                         skipped: payload["skipped"] as? Bool ?? false)
         case "taskSnapshot": self = .taskDocumentSnapshot(try Self.documentJSON(from: payload))
         case "tableCreateRequest": self = .requestTableCreation
         case "tableMenuRequest":
@@ -327,6 +332,10 @@ nonisolated struct TipTapFormattingState: Equatable {
     var checklist = false
     var bulletList = false
     var numberList = false
+    var hasTextSelection = false
+    var textColor: InlineTextColor?
+    var canColorText = false
+    var textColorToken: String?
 
     static func decode(_ payload: [String: Any]) -> Self {
         let alignment = payload["alignment"] as? String
@@ -338,7 +347,11 @@ nonisolated struct TipTapFormattingState: Equatable {
             alignment: alignment.flatMap { ["left", "center", "right", "justify"].contains($0) ? $0 : nil },
             checklist: payload["checklist"] as? Bool ?? false,
             bulletList: payload["bulletList"] as? Bool ?? false,
-            numberList: payload["numberList"] as? Bool ?? false)
+            numberList: payload["numberList"] as? Bool ?? false,
+            hasTextSelection: payload["hasTextSelection"] as? Bool ?? false,
+            textColor: InlineTextColor.decode(payload["textColor"]),
+            canColorText: payload["canColorText"] as? Bool ?? (payload["hasTextSelection"] as? Bool ?? false),
+            textColorToken: payload["textColorToken"] as? String)
     }
 }
 
@@ -481,13 +494,15 @@ struct TipTapEditorCommand {
         TipTapEditorCommand("setTheme", args: ["theme": theme])
     }
 
-    static func setAppearance(_ appearance: DocumentAppearance) -> TipTapEditorCommand {
+    static func setAppearance(_ appearance: DocumentAppearance, interfaceScheme: ColorScheme = .dark) -> TipTapEditorCommand {
         TipTapEditorCommand(
             "setAppearance",
             args: [
                 "textColor": appearance.textColorHex,
                 "fontFamily": appearance.fontStyle.cssFamily,
-                "pageBackground": "transparent"
+                "pageBackground": "transparent",
+                "colorScheme": appearance.presentationColorScheme == .light ? "light" : "dark",
+                "interfaceScheme": interfaceScheme == .light ? "light" : "dark"
             ]
         )
     }

@@ -1,0 +1,627 @@
+{
+  "approvedCollectionDeletionUpdate": "2026-10-19: CollectionViewSheets, CollectionRepository, TipTapContentAnalyzer, DocumentRepositories and CollectionTests updated for the requested cross-platform Delete Collection action. Existing tests are retained. Editor hosting and session baselines are unchanged.",
+  "approvedMobileEditorUpdate": "2026-10-20: Only DocumentEditorView, TipTapWebView, TipTapEditorSession, CollectionKanbanView and CollectionDocumentIntegration baselines changed for the requested iPhone/iPad single-line page titles, divider insertion, slash dismissal and quote Backspace fixes. Mac implementations, shared editor resources, persistence, WebView ownership and teardown remain unchanged.",
+  "approvedPhoneGalleryLoadingUpdate": "2026-10-20: DocumentBrowserView, TagBrowserView and LibraryDocumentPreview apply a 0.6 height fraction only on iPhone; existing iPad and Mac preview sizing and rendering are retained. VellixApp replaces library startup ProgressView with purple circular-dot loading on both iPhone and iPad. No persistence or startup behavior changes.",
+  "approvedMobileBlockSelectionUpdate": "2026-10-20: TipTapWebView injects the iOS-only ProseMirror block-swipe extension before editor initialization; DocumentEditorView waits for authoritative mode acknowledgements. The existing editor artifact gains optional integration hooks mirrored in maintained backend source, without a build or bundler. Absent-provider Mac behavior, WebView ownership, loading, persistence and teardown are retained.",
+  "approvedMobileBlockSelectionCorrections": "2026-10-20: Only the editor artifact baseline advances for optional iOS nested-deletion and transformation/snapshot hooks, mechanically mirrored from maintained source. The revised mobile plugin owns contact/input mapping, hierarchical selection, persistent ranges and aligned/table-visible painting. Native WebView ownership/lifecycle, Mac fallback, schemas, persistence and synchronization are unchanged; no build or bundler was run.",
+  "approvedNativeNestedPageSpacing": "2026-10-20: Only DocumentEditorView advances for 12 points of top padding inside the nonempty native unplacedPages list, shared by plain and themed mobile layouts and by nested rows/cards. WebView ownership/lifecycle and Mac implementations are unchanged. The separately changed editor-bundle hash is not rebased by this spacing fix.",
+  "approvedPhoneAllDocsPreviewHeight": "2026-10-20: Only DocumentBrowserView advances to restore ten percent of original preview height in the default iPhone All Docs gallery (0.6 to 0.7). Named Collections galleries, other browser modes, Tags, iPad and Mac sizing are unchanged. Preview rendering, top anchoring and widths are unchanged; no build was run.",
+  "files": [
+    {
+      "path": "Vellix/Editor/PageReferencePresentation.swift",
+      "sha256": "6bfc952841b3de4b4fcbfe281811f32ef225762c92cc13688bc7063e8fd0ca7b"
+    },
+    {
+      "path": "Vellix/Editor/NestedPageThumbnail.swift",
+      "sha256": "8b73139329735d9fa8bd45a3c8d2764ced27c71cc38458e8adc1f4098ddcdda3"
+    },
+    {
+      "path": "Vellix/Editor/DocumentPresentationState.swift",
+      "sha256": "d042013f9784767a3d33d1234b2ada3add197bf6753437ff022e1e5afcf704cc"
+    },
+    {
+      "path": "Vellix/Editor/DocumentEditorWarmupPolicy.swift",
+      "sha256": "655ab6921dec79b5715ab172f9c54bbb5103f083ec6c868659edd855ffd895eb"
+    },
+    {
+      "path": "Vellix/Editor/PageCardView.swift",
+      "sha256": "61f99fd8e9965138bba908394248a662ba3c5d04e94bd2ad29d195e86eccedba"
+    },
+    {
+      "path": "Vellix/Editor/PrecomputedTipTapIconData.swift",
+      "sha256": "9fce476a3edfd26bccd6af7517f6ca8b8fd789e6c260ce3ac681f0232ed8920c"
+    },
+    {
+      "path": "Vellix/Editor/DocumentEditorCache.swift",
+      "sha256": "2c7a63fd0c81e6675fa0e56e56b4424d277b3b14b6194e0cae532a81cdccb16e"
+    },
+    {
+      "path": "Vellix/Editor/CardPhotoSearchSheet.swift",
+      "sha256": "8e85edee5b743fe3ae73d9d6e254235ff131da66d0578e0b58115abc26cb4129"
+    },
+    {
+      "path": "Vellix/Editor/TipTapWebView.swift",
+      "sha256": "f942b22d24faacdbda16b48ae38c9c4c6b79aacc26bafe185b0f833c357aa3b8"
+    },
+    {
+      "path": "Vellix/Editor/TableEditorTypes.swift",
+      "sha256": "f4580243de0c39e49f6eb75c9ce838b28d74dc69c75f1c81cef3a7e287a8ae6d"
+    },
+    {
+      "path": "Vellix/Editor/TipTapEditorSession.swift",
+      "sha256": "3aa819290744d568b138003e374c447b4ce82151c639bf12f19ed2f8077e9634"
+    },
+    {
+      "path": "Vellix/Editor/CardThreeModeColorPicker.swift",
+      "sha256": "318b29f7ced1cf8affe852d01e40a1ad9ee723254822d80362da043b6a863d20"
+    },
+    {
+      "path": "Vellix/Editor/NestedPageRow.swift",
+      "sha256": "0b101d380ae39ee8d06209b0216484a43276d6c3881d0185e9514beb4d223357"
+    },
+    {
+      "path": "Vellix/Editor/CardPhotoService.swift",
+      "sha256": "c05bbb3b4934424de55d7981200cb0f619139d4a7ce1ea1b18305a53177f709b"
+    },
+    {
+      "path": "Vellix/Editor/InlinePropertyEditorSheet.swift",
+      "sha256": "6f68edc1f220ff88a94af7ec786e751bacceb6c2559fb77eb74f8aa8418267fb"
+    },
+    {
+      "path": "Vellix/Editor/TipTapBridgeTypes.swift",
+      "sha256": "bf94c1f5574c6ac87f6c889d8f328bb3eaf47b9045d0322582dac354ccc1d03c"
+    },
+    {
+      "path": "Vellix/Editor/DocumentStyleSheet.swift",
+      "sha256": "409f167a5e3df07e9af7b21b2abca4c22e3d0f7c539576edfd65a433c2d00e6e"
+    },
+    {
+      "path": "Vellix/Editor/PageCardStyle.swift",
+      "sha256": "8e14ea3ba3c54fb8e82d35db62aa8b69f63ee9f42e94687c785cca7d5a99d234"
+    },
+    {
+      "path": "Vellix/Editor/TaskEditorSheet.swift",
+      "sha256": "a76461cca2870e641f63ef5025f52d95e62df56c1a648c805ad53b1e027c4a90"
+    },
+    {
+      "path": "Vellix/Editor/CardBackdropSheet.swift",
+      "sha256": "85151cde2c253b6a75fee64fd32f10101f8df45ff085e4e97b7a9e092260cf57"
+    },
+    {
+      "path": "Vellix/Editor/InlineProperty.swift",
+      "sha256": "761309140aa8a36ac070351ba5e6f748d43ce07152c9a33b84a18fc97af437a5"
+    },
+    {
+      "path": "Vellix/Editor/TableEditorSheet.swift",
+      "sha256": "823083c77976bd0137034bb386f4471d040e90065d92229bb0d92a3cf00c9a06"
+    },
+    {
+      "path": "Vellix/Editor/StyleNameAlert.swift",
+      "sha256": "4262e13aa138a46de7e34e2e9218bc34fb415d3f62b0ae9203d7dddfded93bf7"
+    },
+    {
+      "path": "Vellix/Editor/DocumentEditorView.swift",
+      "sha256": "581812e98a3f961889be4faba53db34f6dcb606d3dfc4af1f5e58f08a7383a3b"
+    },
+    {
+      "path": "Vellix/Editor/PageCardEditorSheet.swift",
+      "sha256": "ea0c3ec5edf0646203a77702e27a6a81f2fce2a6d57910eb24c696d59de014ef"
+    },
+    {
+      "path": "Vellix/Editor/DocumentThumbnailLayout.swift",
+      "sha256": "3c361802e3bbeaf99853c9b5cef52ecbf5cf72d5e2629a6886e775c590ff91fa"
+    },
+    {
+      "path": "Vellix/Editor/TipTapContentAnalyzer.swift",
+      "sha256": "25e217636a9fd8e4a5b17a7c803f2f92e8f8c808364c05e80a35bd13ec800f6b"
+    },
+    {
+      "path": "Vellix/Services/SupabaseEmailAuth.swift",
+      "sha256": "b642449425238775d575b1f2cd8980674b664c8d75ef72876ec358887dee8bef"
+    },
+    {
+      "path": "Vellix/Services/AuthService.swift",
+      "sha256": "260d800cf1a993b0f47e69a891d7450c0d61ee83e2dd6d264b34942e7198536f"
+    },
+    {
+      "path": "Vellix/Services/EmailAuthentication.swift",
+      "sha256": "fa6868d90ccee16cae1f234ed4aa1c650e2705d102c9d6ca0efc067d389a7599"
+    },
+    {
+      "path": "Vellix/Services/AccountCloudStore.swift",
+      "sha256": "3732dd0c1ade877f44a116ad088e33b903d152efdc9bbe9e803380e4b895790c"
+    },
+    {
+      "path": "Vellix/ContentView.swift",
+      "sha256": "37248b57ff5e0af6df47525b0a88976d89643bc1e072703951b48e9e49bfb88c"
+    },
+    {
+      "path": "Vellix/Data/KeychainHelper.swift",
+      "sha256": "bb05fbb89b6a860a28722475dbba6ca431a19ae77265e62c11f463b1a41d9bbc"
+    },
+    {
+      "path": "Vellix/Data/AppState.swift",
+      "sha256": "447e9303d2a993f726872a28f25d368c37600e2393ba35f9d6e981be76b8f1cc"
+    },
+    {
+      "path": "Vellix/Collections/CollectionCoverSchemeHandler.swift",
+      "sha256": "1b1c37ccc281950d81d48e706a67bdba60f440cae2053338e45e6785c6923273"
+    },
+    {
+      "path": "Vellix/Collections/CollectionPropertySheets.swift",
+      "sha256": "35ab7199ba14067b8896dbae12e94740a1474b11fe4d0b1493c6bebaa02b9667"
+    },
+    {
+      "path": "Vellix/Collections/CollectionModels.swift",
+      "sha256": "f634f8de489382f8cba39f072640318a0f1e0c9b2dc36eb42f23365c75bb05fd"
+    },
+    {
+      "path": "Vellix/Collections/CollectionKanbanView.swift",
+      "sha256": "2678f25b8786158d0949f9fef797cebcc77bcfc7eaa503cf705b760bc570e649"
+    },
+    {
+      "path": "Vellix/Collections/CollectionDocumentIntegration.swift",
+      "sha256": "29746121169cb7f60645f039432c85080119c1c99f98cc7b31c2b7ac318210d3"
+    },
+    {
+      "path": "Vellix/Collections/CollectionSnapshotPreview.swift",
+      "sha256": "ca1d449a7cb1dc076ce63b9afac372c4121c20a7f3ce01e5e1673fbd3cd04f92"
+    },
+    {
+      "path": "Vellix/Collections/CollectionMigration.swift",
+      "sha256": "1c3a25c726f8d30d84b974e4cccfb297928724f737c7d0a5434140ec81c163e8"
+    },
+    {
+      "path": "Vellix/Collections/CollectionStore.swift",
+      "sha256": "a548f30b3d71bc82ab2615f6ee4f2881a091d677b290366cf230f455b887c39b"
+    },
+    {
+      "path": "Vellix/Collections/CollectionRepository.swift",
+      "sha256": "92314938564f6a32e6c21cf4a0a73c564fafea99a3935d14e1620d29b0cc1f54"
+    },
+    {
+      "path": "Vellix/Collections/CollectionViewSheets.swift",
+      "sha256": "5f4c665efb11767139a283da67f0984d24280e3deb516972bcceb2785832266c"
+    },
+    {
+      "path": "Vellix/Attachments/AttachmentMedia.swift",
+      "sha256": "4035eaab0641e15e60550c8332aa5392db81378b0ad21f0850d0f75599c474b3"
+    },
+    {
+      "path": "Vellix/Attachments/AttachmentStore.swift",
+      "sha256": "354978336a5da84be441c035a70e63955143c42db6c3b1a701d3e626283df25d"
+    },
+    {
+      "path": "Vellix/Attachments/AttachmentEditorSheet.swift",
+      "sha256": "edf20e5fb6895e322fa9caa49adbeb37a4f40c43d89f87fca859960e6357a7d9"
+    },
+    {
+      "path": "Vellix/Attachments/AttachmentBlockPreview.swift",
+      "sha256": "9353f0cfe8311414ac95c96261a746592c36d36b507e19d4448777261686a0b6"
+    },
+    {
+      "path": "Vellix/Attachments/AttachmentSchemeHandler.swift",
+      "sha256": "3487f7e781957d389eb079904e4815b8eec41115e7d935e6c6afbd6e0de37141"
+    },
+    {
+      "path": "Vellix/Sync/PennedSyncNotifications.swift",
+      "sha256": "bd2ac0d1550a73bf6f67bbfefb9792979bcfee849899f107aeebdbdd2488453b"
+    },
+    {
+      "path": "Vellix/Sync/LibrarySyncRecords.swift",
+      "sha256": "51c931ec5462abf43ac9be103b7d99bcd9475af906205554bdb593004bfac919"
+    },
+    {
+      "path": "Vellix/Sync/LibrarySyncEngine.swift",
+      "sha256": "8c1795abed689e8d046386a6c7987a049a93b2ab4eed21366e2e429dd15c91b2"
+    },
+    {
+      "path": "Vellix/Sync/LibrarySyncImport.swift",
+      "sha256": "e6ed8b96d5aa3ba85c7bedbfcd310ffa77104cc263588e84a80469f2668f85be"
+    },
+    {
+      "path": "Vellix/Sync/LibrarySyncStore.swift",
+      "sha256": "afdbe90d3eeb4fac864def226c0973a8cc51299b3ad36c759def1d92ed205559"
+    },
+    {
+      "path": "Vellix/Sync/LibrarySyncSchema.swift",
+      "sha256": "7cc94b9de626770f66d8628c8f41ed71482745f84ae96ed0226d92c93aefdc56"
+    },
+    {
+      "path": "Vellix/Documents/InlinePropertyPreview.swift",
+      "sha256": "6d789c4ad831ce56d7af4c9c431c540550cf4fdfdd6732ef915309b7542063af"
+    },
+    {
+      "path": "Vellix/Documents/DocumentRecords.swift",
+      "sha256": "6921217fef2adaa65defb05dd33721d5375cb962ea23c4f73fda51c969e9ca84"
+    },
+    {
+      "path": "Vellix/Documents/LibraryChrome.swift",
+      "sha256": "dc009510ddeaf02fe91506411b9d9ab0378d5139718595db4ec6e497d0c1dc16"
+    },
+    {
+      "path": "Vellix/Documents/FolderLibraryViews.swift",
+      "sha256": "e2bd9bd8a9c0fdf83316045a02605dc09f77c9ed14532b241151121840c20f29"
+    },
+    {
+      "path": "Vellix/Documents/DocumentBackgroundFill.swift",
+      "sha256": "7945c3b61857374b491a7785fec81b17bff160f3060fadeedf7218fc567d7bbd"
+    },
+    {
+      "path": "Vellix/Documents/FolderHierarchy.swift",
+      "sha256": "4f0b437c957829fa62107f11955b705aaf13931d4f15de2d532118f518c3488b"
+    },
+    {
+      "path": "Vellix/Documents/DocumentBrowserView.swift",
+      "sha256": "ad34c87288c62b74f4092fd5ebcfb1db56625155b5ba55c91bed2ba1733033af"
+    },
+    {
+      "path": "Vellix/Documents/DocumentAppearance.swift",
+      "sha256": "84e0009c00f2f8bfb4d9bc63a9fbb10f3fc40410c52837d692215cc3470c8005"
+    },
+    {
+      "path": "Vellix/Documents/StructuredTemplateContent.swift",
+      "sha256": "86261a4e20a76196b376b6bdf8a77153f3ebc128981e0ba2cb5296109e7d9821"
+    },
+    {
+      "path": "Vellix/Documents/ImmediateDocumentPreview.swift",
+      "sha256": "c947e3579d02703197d8c742885943fae8c60448103e8986d31390cb2d6e8ebd"
+    },
+    {
+      "path": "Vellix/Documents/HomeView.swift",
+      "sha256": "f6d233ffaa41a42af7c10125f66b727a79173a713d065de6c52e281d801e879f"
+    },
+    {
+      "path": "Vellix/Documents/LibraryDocumentPreview.swift",
+      "sha256": "ad1f06753c0879a4d771345af424533eb69ab724922a4517bf6984dbf6b7e8a8"
+    },
+    {
+      "path": "Vellix/Documents/DocumentRepositories.swift",
+      "sha256": "a69c6bb7df27c0f7ee53c5e35fa6cea16e6ee5c9bb89029f2e2f0c7a0da7c5a0"
+    },
+    {
+      "path": "Vellix/Documents/DocumentPreviewContent.swift",
+      "sha256": "6e05b1200f398786927317e9c679c88a3833f9704c9d3db3ef7de8afe1029fa3"
+    },
+    {
+      "path": "Vellix/Documents/DocumentPreviewCache.swift",
+      "sha256": "e679d1285bc130621b2250c48c78e2e664212ba2b0d595f094b6767c37f987a7"
+    },
+    {
+      "path": "Vellix/Documents/DocumentPreviewPresentation.swift",
+      "sha256": "7881a707a2fc42815baac7b887ff484f005bb7aa34ac5cbac3c04c476e018229"
+    },
+    {
+      "path": "Vellix/Documents/ImmediateTablePreview.swift",
+      "sha256": "3b4961f7a56245b72810febbef0054cbd2784cf7249e91db983da027cb7310d8"
+    },
+    {
+      "path": "Vellix/Documents/DocumentStyleRepository.swift",
+      "sha256": "33f1da0d177068a1882542076ac665cf3dc5f3f12a26f872ea3101290dfcc2d4"
+    },
+    {
+      "path": "Vellix/VellixUITests/VellixUITestsLaunchTests.swift",
+      "sha256": "10021cf9fc4abc8929458c81903a12a986b156529386e0e1fb3af72aa7b8e043"
+    },
+    {
+      "path": "Vellix/VellixUITests/VellixUITests.swift",
+      "sha256": "b4dcb9ecb03dce501ca5c20c45c5539c111157a53e50016bdde96bf8df5af7d8"
+    },
+    {
+      "path": "Vellix/Persistence/LibraryAccess.swift",
+      "sha256": "11ead8f54a288222eef0ff04802dd713cb29d789cc4a4307ec8eacd713ce795a"
+    },
+    {
+      "path": "Vellix/VellixApp.swift",
+      "sha256": "6015f108fcef947d625d5c8fb15a151992b965fea5e12e00117009d4ea49d5e8"
+    },
+    {
+      "path": "Vellix/Persistence/LibraryOwnership.swift",
+      "sha256": "95d4f701658ccbe4b52f29008a8c280ac5f88e943de45bd01243b60e45654207"
+    },
+    {
+      "path": "Vellix/Persistence/AppDatabase.swift",
+      "sha256": "a3ea48bf48b83d1d0d55e25858d760f7025007df6c9ef991c4ce403d4840e1ea"
+    },
+    {
+      "path": "Vellix/Accounts/AccountLibrarySheet.swift",
+      "sha256": "53190e97141f3a404a636676e6e4b42f14e35d0f7a44b3232c57036cf4d73593"
+    },
+    {
+      "path": "Vellix/Accounts/AccountPersistence.swift",
+      "sha256": "234b19c664a214fefb2abd199d2e574c31262aa376ad187f43e1fd2e6921e7a0"
+    },
+    {
+      "path": "Vellix/Accounts/SignInView.swift",
+      "sha256": "56316d354d560492ff4bf24edecaa28be37c4b6500aa3c52f8f18cb881e6d612"
+    },
+    {
+      "path": "Vellix/Accounts/AccountSettingsView.swift",
+      "sha256": "3ee03ab44492e05f568095cf642ab1234eecb196da149b6bdb46132b2f35fae0"
+    },
+    {
+      "path": "Vellix/Accounts/SupabaseConfiguration.swift",
+      "sha256": "00596bd32dcc9a49477278b9358cbd9e13a8f971877e621470a91e2de92b6bde"
+    },
+    {
+      "path": "Vellix/Accounts/AccountIdentity.swift",
+      "sha256": "254170e9cfa6bdfdb18e9d1a07a80780f5ebd7c43093d0fc11508d457c66e0e9"
+    },
+    {
+      "path": "Vellix/Accounts/LibraryWorkspace.swift",
+      "sha256": "2e735bb879d543b64d220de08bbc99ec4ca25134c10422988d8a76c047f5a1ea"
+    },
+    {
+      "path": "Vellix/Resources/PennedSheetSectionBackground.swift",
+      "sha256": "a8588a36c9c30e7ff7ca9454614cadb1c1aca5f2813d7ed5dce05c3bd828ae7d"
+    },
+    {
+      "path": "Vellix/Resources/VellixSymbolCatalog.swift",
+      "sha256": "6b06806c2c4fac39001ecfaba5ccdc4be04767a6879461f9b2337eb795f8e6d8"
+    },
+    {
+      "path": "Vellix/Resources/VellixAssetIconLibrary.swift",
+      "sha256": "77e5b55c5bc63fc7773f4d7cd75c5cd9a43d9eb8a51d0a8a2c768c9c5b06e840"
+    },
+    {
+      "path": "Vellix/Resources/PennedAppearance.swift",
+      "sha256": "a1489f780702bc71e3dd485c30a652eacb396aa7ad14a2c1d3cdb9e4bf50aa2a"
+    },
+    {
+      "path": "Vellix/Resources/PennedFrostedCard.swift",
+      "sha256": "19d89e05fe636750c98ae1da440925bea7ed2b8b93b9335ab2a8a7514467a0ea"
+    },
+    {
+      "path": "Vellix/Resources/PennedSheetStyle.swift",
+      "sha256": "74bf603d2e88c0a26302e77782e969d4d36d892b3c6d9e65a55014ce85a7b56f"
+    },
+    {
+      "path": "Vellix/Resources/VellixDesignSystem.swift",
+      "sha256": "78f0653a311b9640443cf149b35dce238a420b9377170eeebf15bd690ee15b7d"
+    },
+    {
+      "path": "Vellix/Calendar/CalendarView.swift",
+      "sha256": "974fbeb8fade4261b28ea653084a05fa2134939dd0bd52e96405a415f96d89ef"
+    },
+    {
+      "path": "Vellix/Calendar/CalendarAgenda.swift",
+      "sha256": "8a7b5834638b9d25fa9e48e019e491cfd5eb8099485243e067e386cf04b86bba"
+    },
+    {
+      "path": "Vellix/Calendar/CalendarAgendaRows.swift",
+      "sha256": "f6b7c7e3066a77ffb52fb19a55c68db508b81c7b6e19452fb63a9e117b4565c3"
+    },
+    {
+      "path": "Vellix/Calendar/CalendarEventDetailSheet.swift",
+      "sha256": "0330a1abcdc0a1bfba5293f026101aa1deabd6a39ae6c667c32d182ad4d504f7"
+    },
+    {
+      "path": "Vellix/Calendar/CalendarEventNoteRepository.swift",
+      "sha256": "53720c6362b7c62f320d8e29ac5cbfe5b85249c138f26070f00de71ab87a4574"
+    },
+    {
+      "path": "Vellix/Calendar/AppleCalendarService.swift",
+      "sha256": "dcb9c4325d9dec0d6d341ccefd36678930449f479f7bc5ac91a72e2eb8b8fdc1"
+    },
+    {
+      "path": "Vellix/Calendar/CalendarModel.swift",
+      "sha256": "e1f1b00d70e9fb7b7ddcba94d014c964f238353caaefbdb03dc20ea7e04fc933"
+    },
+    {
+      "path": "Vellix/VellixTests/AppAppearanceTests.swift",
+      "sha256": "11b89ae2421fa55d0b1f25f714f26bfee4ad61a8bb2c79b4e7fabd26abea581e"
+    },
+    {
+      "path": "Vellix/VellixTests/SupabaseAuthTests.swift",
+      "sha256": "f490e1d860778b95015e6f09f3ae93177dc230034f3c756a5f8515a70293ad5b"
+    },
+    {
+      "path": "Vellix/VellixTests/DocumentTagTests.swift",
+      "sha256": "eed755da89607e8aa9bdd2e15b98edd96ab2f86d48dc6585ac51b3893cebe6f0"
+    },
+    {
+      "path": "Vellix/VellixTests/LibrarySyncTests.swift",
+      "sha256": "eda4be5b3b9013cfea6b990939aa4e0ce1c23910b60af245e9c322cbacc634f9"
+    },
+    {
+      "path": "Vellix/VellixTests/PageCardTests.swift",
+      "sha256": "1a39780528fdb2e5de54cb118889c385bb83688c250768eb00c3083f4954ab8b"
+    },
+    {
+      "path": "Vellix/VellixTests/SpaceEnvironmentTests.swift",
+      "sha256": "220f4f95aa178b27d768f546499a2cf9727655397b072334619c509dee0f4e5a"
+    },
+    {
+      "path": "Vellix/VellixTests/CollectionTests.swift",
+      "sha256": "110cebdcf2734237030d255aa0554f132e1bb6ddfa0dad2b26fe51ac63896edc"
+    },
+    {
+      "path": "Vellix/Tasks/DocumentTask.swift",
+      "sha256": "af6eb8dde0ce81152e411dd17cf5578cd8188f4befcd72e7258741dc2aa5c84b"
+    },
+    {
+      "path": "Vellix/Tasks/TaskNotificationsManager.swift",
+      "sha256": "cceebde8e1803c45cbda4ac93a0687061f313064f10615f5e1c99766b1b58ca2"
+    },
+    {
+      "path": "Vellix/Tasks/DocumentTaskRepository.swift",
+      "sha256": "774935e229a82f0411fb47bbecec09c02df1f4148e621e59483afa5a19016654"
+    },
+    {
+      "path": "Vellix/App/AppEnvironment.swift",
+      "sha256": "a477dda4a055428904289415987eed4b9de3ead2ecf1f0da1792192846a9c0f3"
+    },
+    {
+      "path": "Vellix/DailyNotes/DailyNoteRepository.swift",
+      "sha256": "2fe66d789c6691d1e9692812ac1f69b633fb9719d827092617983a4ff18dc75f"
+    },
+    {
+      "path": "Vellix/DailyNotes/TemplateComponent.swift",
+      "sha256": "82b61bb1544ffbcb266b3f7b21ab66da6b5d9a6c3d8dc4cb83b131b8df1b97a7"
+    },
+    {
+      "path": "Vellix/DailyNotes/TemplateComponentEditorSheet.swift",
+      "sha256": "5c147d150bf08cd95edfe0b093a0bacfe4bf769f6542aa197e3c535d6259cc71"
+    },
+    {
+      "path": "Vellix/DailyNotes/DailyNotesSettingsView.swift",
+      "sha256": "1e5795f1a232a0cf8c5c545160274a0ff1d364a3729e2237aabd4f5de145fa36"
+    },
+    {
+      "path": "Vellix/App/PadWorkspaceSidebar.swift",
+      "sha256": "a63d431b260a51e4c9af1679af4325066e607de2535ec02906dd21dd0d42a196"
+    },
+    {
+      "path": "Vellix/App/VellixShellView.swift",
+      "sha256": "162da86716178aa724dae36510315ce790fa387bef7f12c9b9a9d22ccab78aec"
+    },
+    {
+      "path": "Vellix/App/PadWorkspaceView.swift",
+      "sha256": "b38f331dc5969a31112ef86ac1ab5efdfc8b81f604b474d401eb9d00b0b1d564"
+    },
+    {
+      "path": "Vellix/App/VellixCommands.swift",
+      "sha256": "62bc173b1c6316b16e0e9730fb13234dad71c6254e48fd5f86c9197fba70272f"
+    },
+    {
+      "path": "Vellix/App/PadWorkspaceModel.swift",
+      "sha256": "0271ec48639984adfc6ee36b6932d754c8c07f1d7c145a9a05207e4362b69937"
+    },
+    {
+      "path": "Vellix/App/PadSettingsView.swift",
+      "sha256": "c57cd97daf85564fd3844346efcc93bad2a2c49d943cbcde911da6b8a60e6357"
+    },
+    {
+      "path": "Vellix/VellixTests/TagBridgeTests.swift",
+      "sha256": "4d964f9134071c81b0c84ef5377798924a741866d76c87a9c3b8bd6139095458"
+    },
+    {
+      "path": "Vellix/Models/AuthUser.swift",
+      "sha256": "893efa145210ef4a5d766909cfb05beceb30b2f74d3f94d1e84a7f684e2f900f"
+    },
+    {
+      "path": "Vellix/VellixTests/SpaceTests.swift",
+      "sha256": "21b9f816bb0af917e5292ccd79ef37cecfc5ff9f0404fed00f5eb4b28b34e010"
+    },
+    {
+      "path": "Vellix/VellixTests/AttachmentBridgeTests.swift",
+      "sha256": "be21565954780c5a5f46d6a6615ffe686b4b1cc054da1995596887099592d8ee"
+    },
+    {
+      "path": "Vellix/VellixTests/VellixTests.swift",
+      "sha256": "8b09c3a88c2c480ddb0eef7b3a8e804b43bd67987c7c6593f512dc5eec7e4fd3"
+    },
+    {
+      "path": "Vellix/VellixTests/DocumentTaskTests.swift",
+      "sha256": "ab6d118419fd39745cd13bf1d71f48f1b68056bbf8cd169e9fdc033449929a8c"
+    },
+    {
+      "path": "Vellix/VellixTests/DocumentPreviewTests.swift",
+      "sha256": "bb9c16cad75bfb0f3dd0541a3f42649a349f65a3e87de8c3e726b48045c25293"
+    },
+    {
+      "path": "Vellix/VellixTests/AccountTests.swift",
+      "sha256": "fe715b93f7fc519b286289524d5573278fa4f739495a5261284b6d32bdd28b7d"
+    },
+    {
+      "path": "Vellix/VellixTests/PadWorkspaceTests.swift",
+      "sha256": "0fac218af2797da380db6aab22b14ca30a2fe318a962dbff89792f520f880722"
+    },
+    {
+      "path": "Vellix/VellixTests/LibraryWorkspaceTests.swift",
+      "sha256": "ad9e070d0c518a1452cf4d8fcd6579881575427e61a080895b761942deef91bc"
+    },
+    {
+      "path": "Vellix/VellixTests/AttachmentTests.swift",
+      "sha256": "cba2aefd3de33079b9dfb1794742e29a761223496cd1e2125d31b3c3f10f3a05"
+    },
+    {
+      "path": "Vellix/VellixTests/FolderLibraryTests.swift",
+      "sha256": "3a56a85f66169a9f4c4cfd2779da384c9c3a2fedf3cb2e1a78161e627354e2a0"
+    },
+    {
+      "path": "Vellix/VellixTests/DocumentLaunchTests.swift",
+      "sha256": "e674ef2010b4d09f853de5ca3b8fa10a23cf36b8ffdb6b7dfc87db1b6c0f361b"
+    },
+    {
+      "path": "Vellix/VellixTests/LibraryOwnershipTests.swift",
+      "sha256": "f34b38d9ca2592ac8dcaca287ce84e859df0bdae66e5fabde0bd3885ed0f29d5"
+    },
+    {
+      "path": "Vellix/VellixTests/CalendarTests.swift",
+      "sha256": "297a728f59be1c8dd1918b4ebf916cf0700000724b61757f80da7644b5487d2c"
+    },
+    {
+      "path": "Vellix/Tags/TagEditorIntegration.swift",
+      "sha256": "5b3bd2d1c35f43891016b9e3ba04102118747908534f37f4df4d1bc1f521383b"
+    },
+    {
+      "path": "Vellix/Tags/TagBrowserView.swift",
+      "sha256": "8d496646d84af8fe0ae56d57f3a8770efddcc525c956cdc4847dfb4b3709a18c"
+    },
+    {
+      "path": "Vellix/Tags/DocumentTagRepository.swift",
+      "sha256": "a84e36e11d2342942b27d3e19128ae3d5ad6c2efb2ac54e21a410d8203fa1103"
+    },
+    {
+      "path": "Vellix/Search/DocumentSearchService.swift",
+      "sha256": "4e9effcbf33ea7112f669f88285e662c146571f94af8a8e4624927d784921352"
+    },
+    {
+      "path": "Vellix/Search/SearchView.swift",
+      "sha256": "2f0332cde0de6125566c6e16b36480b847bbfbd7e941c2171a270e963e095cdf"
+    },
+    {
+      "path": "Vellix/VellixEditor.bundle/vellix-tables.css",
+      "sha256": "c99fca0000427432a6221b3c669bd5d1ac7865f74b01d9670acb2a4e08ec517e"
+    },
+    {
+      "path": "Vellix/VellixEditor.bundle/vellix-tables.js",
+      "sha256": "99caaaea3c52b325fc5309c8b37ea0b552a4afc226c2eb32a9a8cc0a6e8e5934"
+    },
+    {
+      "path": "Vellix/VellixEditor.bundle/tiptap.bundle.js",
+      "sha256": "156023b5ac6ec155112a222af080bef41d6a0fab89131627f70b6f8e89c392e0"
+    },
+    {
+      "path": "Vellix/VellixEditor.bundle/tiptap.html",
+      "sha256": "60ed14b5c88938ab6f470c96d28034546131e101ae5753975865a524e57ff6ab"
+    },
+    {
+      "path": "Vellix/VellixEditor.bundle/table-formulas.js",
+      "sha256": "13de7cdf115860bb1996f42ed77b35209a84810848eda646f12896b1e4efe5b6"
+    },
+    {
+      "path": "Vellix/Spaces/SpaceOwnership.swift",
+      "sha256": "872d94b78882c04e3bf7fe277a497e3cee4745358b41eabb538252b44be8ab20"
+    },
+    {
+      "path": "Vellix/Spaces/PennedAppearanceSettingsView.swift",
+      "sha256": "98845f4d49de910a6c92a0c8f046d40754731b84937091e6ff898b964b4a1f54"
+    },
+    {
+      "path": "Vellix/Spaces/SpaceViews.swift",
+      "sha256": "e2dbf0ed58c4d981f4b24c3a2b6f6179942b7ebc813dcf6f1af8f1b11b40d839"
+    },
+    {
+      "path": "Vellix/Spaces/SpaceOperations.swift",
+      "sha256": "db4d46e9c75d9f5b6fec7a3ec0d74a723ba505e74fcb0a6f922af34443b82f94"
+    },
+    {
+      "path": "Vellix/Spaces/SpaceImage.swift",
+      "sha256": "1404de44c47892697b5589083d3afc4f5a27862c5d3cffdb0655ccbee2d2032d"
+    },
+    {
+      "path": "Vellix/Spaces/PennedSettingsView.swift",
+      "sha256": "eb363198417c8bb7857c0a5e17ef7aa2b903e0c4400245188f731b1eb0e3f30b"
+    },
+    {
+      "path": "Vellix/VellixEditor.bundle/vendor/table-library.js",
+      "sha256": "1d65b1331dbe4625f04851c35aa32c14cfe098428f10cc5e20d7efe016a7e945"
+    },
+    {
+      "path": "Vellix/VellixEditor.bundle/vendor/formula-parser.min.js",
+      "sha256": "687035c3607cc995c5edc4fbc33075946e0fee6a410812afec564235509b5416"
+    }
+  ]
+}

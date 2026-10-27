@@ -44,7 +44,7 @@ struct InlinePropertyEditorSheet: View {
                             }
                             .propertyConfigurationSurface()
                         }
-                        .buttonStyle(.plain)
+                        .pennedIconMenuStyle()
                         .accessibilityLabel("Property type")
                         .accessibilityValue(property.kind.title)
                     }
@@ -128,7 +128,6 @@ struct InlinePropertyEditorSheet: View {
         }
         .environment(\.pennedSheetDismiss, { dismiss() })
         .tint(VellixSurface.violet)
-        .preferredColorScheme(.dark)
     }
 
     private var optionsSection: some View {
@@ -248,7 +247,7 @@ struct InlinePropertyEditorSheet: View {
                 }
                 .propertyConfigurationSurface()
             }
-            .buttonStyle(.plain)
+            .pennedIconMenuStyle()
             .accessibilityLabel("Property value")
         }
     }
@@ -391,7 +390,7 @@ private extension View {
             .padding(16)
             .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
             .pennedSheetField(cornerRadius: 16)
-            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.10)))
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(VellixSurface.controlInk.opacity(0.10)))
     }
 
     @ViewBuilder func propertyNumericKeyboard() -> some View {

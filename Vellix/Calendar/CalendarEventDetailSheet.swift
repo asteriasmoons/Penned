@@ -75,7 +75,7 @@ struct CalendarEventDetailSheet: View {
                             .padding(.horizontal, 16).padding(.vertical, 8)
                             .frame(maxWidth: .infinity, minHeight: 44)
                             .background(CalendarStyle.accent, in: Capsule())
-                        }.buttonStyle(.plain).foregroundStyle(.black)
+                        }.buttonStyle(.plain).foregroundStyle(VellixSurface.inverseInk)
                             .disabled(creatingNote || !isAvailable)
                     }
                 }.padding(20)
@@ -86,7 +86,6 @@ struct CalendarEventDetailSheet: View {
         .pennedSheet(close: { dismiss() })
         .presentationDragIndicator(.visible)
         .presentationDetents([.medium, .large])
-        .preferredColorScheme(.dark)
         .alert("Calendar", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") { errorMessage = nil }
         } message: { Text(errorMessage ?? "") }

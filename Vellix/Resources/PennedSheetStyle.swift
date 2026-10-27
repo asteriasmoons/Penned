@@ -5,7 +5,7 @@ import UIKit
 
 enum PennedSheetStyle {
     static let accent = VellixSurface.violet
-    static let fieldTint = Color(white: 0.2)
+    static let fieldTint = VellixSurface.input
     static let cornerRadius: CGFloat = 32
     static let blurIntensity: CGFloat = 0.35
     static let compactRowVerticalInset: CGFloat = 9
@@ -36,14 +36,14 @@ private struct PennedSheetPresentation: ViewModifier {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .scrollContentBackground(.hidden)
-            .preferredColorScheme(.dark)
+            .pennedApplicationAppearance()
             .tint(PennedSheetStyle.accent)
             .toggleStyle(PennedSheetToggleStyle())
             .pennedSheetBackdrop()
             .presentationCornerRadius(PennedSheetStyle.cornerRadius)
             .overlay {
                 RoundedRectangle(cornerRadius: PennedSheetStyle.cornerRadius, style: .continuous)
-                    .strokeBorder(.white.opacity(0.10))
+                    .strokeBorder(VellixSurface.controlInk.opacity(0.10))
                     .ignoresSafeArea(.container)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
@@ -211,7 +211,11 @@ struct PennedSheetBlurSurface: UIViewControllerRepresentable {
         override func didMoveToWindow() {
             super.didMoveToWindow()
             if window == nil { endPresentation() }
-            else { updateBlur(force: true) }
+            else {
+                // Presentation backgrounds can reattach without another controller appearance callback.
+                isPresentationReady = true
+                updateBlur(force: true)
+            }
         }
 
         override func layoutSubviews() {
@@ -442,8 +446,8 @@ struct PennedSheetToggleStyle: ToggleStyle {
             HStack(spacing: 16) {
                 configuration.label.frame(maxWidth: .infinity, alignment: .leading)
                 ZStack(alignment: configuration.isOn ? .trailing : .leading) {
-                    Capsule().fill(configuration.isOn ? PennedSheetStyle.accent.opacity(0.38) : .white.opacity(0.10))
-                        .overlay(Capsule().strokeBorder(.white.opacity(0.16)))
+                    Capsule().fill(configuration.isOn ? PennedSheetStyle.accent.opacity(0.38) : VellixSurface.controlInk.opacity(0.10))
+                        .overlay(Capsule().strokeBorder(VellixSurface.controlInk.opacity(0.16)))
                     LibraryIcon(name: configuration.isOn ? "checkwavy" : "xmarkwavy", size: 15)
                         .foregroundStyle(configuration.isOn ? PennedSheetStyle.accent : Color.secondary)
                         .frame(width: 28, height: 28).background(.white.opacity(0.94), in: Circle())

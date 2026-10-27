@@ -20,7 +20,7 @@ struct VellixApp: App {
     #endif
     @StateObject private var startup = LibraryWorkspace()
     @StateObject private var accounts = AppState()
-    @State private var recoverySignIn = false
+    @State private var recoveryAccountSettings = false
     @Environment(\.scenePhase) private var scenePhase
 
     private var workspaceSessionKey: String {
@@ -35,7 +35,7 @@ struct VellixApp: App {
                     ContentView().environmentObject(environment).environmentObject(accounts)
                         .environmentObject(startup).id(environment.database.libraryID + (accounts.currentAccountIdentity?.libraryOwnerKey ?? "signed-out"))
                 } else if startup.isSwitching || startup.errorMessage == nil {
-                    ProgressView("Opening library")
+                    PennedLibraryLoadingView()
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
@@ -51,7 +51,7 @@ struct VellixApp: App {
                                 }
                             }
                             if accounts.accountContainer != nil {
-                                Button("Account Sign In") { recoverySignIn = true }
+                                Button("Account Settings") { recoveryAccountSettings = true }
                             }
                             if let error = accounts.errorMessage { Text(error).font(.footnote).foregroundStyle(VellixSurface.coral) }
                             DisclosureGroup("Details") {
@@ -63,9 +63,11 @@ struct VellixApp: App {
                     }
                 }
             }
-            .preferredColorScheme(.dark)
-            .sheet(isPresented: $recoverySignIn) {
-                if let container = accounts.accountContainer { SignInView().environmentObject(accounts).modelContainer(container) }
+            .foregroundStyle(VellixSurface.ink)
+            .background { VellixSurface.appBackground.ignoresSafeArea() }
+            .pennedApplicationAppearance()
+            .sheet(isPresented: $recoveryAccountSettings) {
+                if let container = accounts.accountContainer { AccountSettingsView().environmentObject(accounts).environmentObject(startup).modelContainer(container) }
             }
             .task { await accounts.bootstrap()?.value }
             .task(id: workspaceSessionKey) {

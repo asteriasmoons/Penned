@@ -26,7 +26,7 @@ struct LibraryFolderTile: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 16)
         .frame(maxWidth: .infinity).frame(height: 112)
-        .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(VellixSurface.controlInk.opacity(0.09), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
             if isSelected { RoundedRectangle(cornerRadius: 14).strokeBorder(VellixSurface.accent, lineWidth: 2) }
         }

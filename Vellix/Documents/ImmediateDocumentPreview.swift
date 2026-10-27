@@ -3,7 +3,9 @@ import SwiftUI
 // The saved document is available immediately, even before a first WebKit snapshot exists.
 struct ImmediateDocumentPreview: View {
     @EnvironmentObject private var environment: AppEnvironment
+    @Environment(\.colorScheme) private var colorScheme
     let document: DocumentRecord
+    private var appearance: DocumentAppearance { document.appearance.resolved(for: colorScheme) }
     private var savedContent: DocumentPreviewContent { environment.documentPreviews.content(for: document) }
 
     private var sheets: [[[String: Any]]] {
@@ -17,7 +19,7 @@ struct ImmediateDocumentPreview: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            LibrarySnapshotSurface(style: document.isThemed ? document.appearance.editorBackground : DocumentAppearance.plain.editorBackground,
+            LibrarySnapshotSurface(style: appearance.editorBackground,
                 photo: document.isThemed ? CardImageLoader.image(path: document.appearance.editorBackground.imagePath, store: environment.attachmentStore) : nil)
             if let theme = document.appearance.editorBackground.patternTheme(for: document.appearance.themeID) {
                 ThemePatternOverlay(theme: theme)
@@ -28,21 +30,22 @@ struct ImmediateDocumentPreview: View {
                     VStack(alignment: .leading, spacing: 18) {
                         if index == 0 {
                             LibrarySnapshotHeader(document: document,
-                                cover: CardImageLoader.image(path: document.cover, store: environment.attachmentStore))
+                                cover: CardImageLoader.image(path: document.cover, store: environment.attachmentStore), appearance: appearance)
                             if let (collection, entry) = savedContent.entryContext {
-                                CollectionFieldsSnapshotPreview(snapshot: collection, entry: entry, appearance: document.appearance)
+                                CollectionFieldsSnapshotPreview(snapshot: collection, entry: entry, appearance: appearance)
                             }
                         }
-                        ImmediatePreviewBlocks(nodes: nodes, appearance: document.appearance, depth: 0,
+                        ImmediatePreviewBlocks(nodes: nodes, appearance: appearance, depth: 0,
                             collections: savedContent.collections, referencedDocuments: savedContent.children, spacing: 18)
                     }
                     .padding(20).frame(maxWidth: .infinity, alignment: .topLeading)
                     .background {
                         if document.isThemed {
-                            LibrarySnapshotSurface(style: document.appearance.innerPageBackground,
+                            LibrarySnapshotSurface(style: appearance.innerPageBackground,
                                 photo: CardImageLoader.image(path: document.appearance.innerPageBackground.imagePath, store: environment.attachmentStore))
                         } else {
-                            Color(vellixHex: DocumentAppearance.plain.editorBackground.colorHex).overlay(.black.opacity(0.30))
+                            Color(vellixHex: appearance.editorBackground.colorHex)
+                                .overlay { if appearance.presentationColorScheme == .dark { Color.black.opacity(0.30) } }
                         }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 15))
@@ -50,7 +53,8 @@ struct ImmediateDocumentPreview: View {
             }
             .padding(document.isThemed ? 8 : 0)
         }
-        .foregroundStyle(Color(vellixHex: document.appearance.textColorHex))
+        .foregroundStyle(Color(vellixHex: appearance.textColorHex))
+        .environment(\.colorScheme, appearance.presentationColorScheme)
         .allowsHitTesting(false)
         .clipped()
     }
@@ -58,14 +62,17 @@ struct ImmediateDocumentPreview: View {
 
 struct ImmediateDocumentBodyPreview: View {
     @EnvironmentObject private var environment: AppEnvironment
+    @Environment(\.colorScheme) private var colorScheme
     let document: DocumentRecord
     var body: some View {
         let saved = environment.documentPreviews.content(for: document)
+        let appearance = document.appearance.resolved(for: colorScheme)
         let nodes = TipTapContentAnalyzer.documentObject(from: document.tipTapJSON)["content"] as? [[String: Any]] ?? []
-        ImmediatePreviewBlocks(nodes: nodes, appearance: document.appearance, depth: 0,
+        ImmediatePreviewBlocks(nodes: nodes, appearance: appearance, depth: 0,
             collections: saved.collections, referencedDocuments: saved.children, spacing: 8)
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .foregroundStyle(Color(vellixHex: document.appearance.textColorHex))
+            .foregroundStyle(Color(vellixHex: appearance.textColorHex))
+            .environment(\.colorScheme, appearance.presentationColorScheme)
             .allowsHitTesting(false)
     }
 }
@@ -135,15 +142,15 @@ private struct ImmediatePreviewBlock: View {
                     .padding(.vertical, 16)
             }
         case "table": ImmediateTablePreview(node: node, appearance: appearance)
-        case "paragraph", "heading", "codeBlock":
+        case "paragraph", "caption", "heading", "codeBlock":
             let guided = nodes.isEmpty && attrs["placeholderEnabled"] as? Bool == true
             let inline = guided ? (attrs["placeholderGuidance"] as? [[String: Any]] ?? []) : nodes
             let level = attrs["level"] as? Int ?? 1
-            let size: CGFloat = type == "heading" ? [34, 28, 23, 20, 18][max(0, min(4, level - 1))] : 16
+            let size: CGFloat = type == "heading" ? [34, 28, 23, 20, 18][max(0, min(4, level - 1))] : (type == "caption" ? 13.6 : 16)
             let alignment: TextAlignment = attrs["textAlign"] as? String == "center" ? .center : (attrs["textAlign"] as? String == "right" ? .trailing : .leading)
             richText(inline).font(.system(size: size, weight: type == "heading" ? .bold : .regular,
                 design: type == "codeBlock" ? .monospaced : appearance.fontStyle.design))
-                .opacity(guided ? 0.38 : 1).multilineTextAlignment(alignment)
+                .opacity(guided ? 0.38 : (type == "caption" ? 0.75 : 1)).multilineTextAlignment(alignment)
                 .frame(maxWidth: .infinity, minHeight: inline.isEmpty ? 20 : nil,
                     alignment: alignment == .center ? .center : (alignment == .trailing ? .trailing : .leading))
         case "callout", "plainCallout":
@@ -216,22 +223,7 @@ private struct ImmediatePreviewBlock: View {
     }
 
     private func richText(_ values: [[String: Any]]) -> Text {
-        values.reduce(Text("")) { result, item in
-            let tag = item["type"] as? String == "inlineTag" ? (item["attrs"] as? [String: Any])?["name"] as? String : nil
-            var text = Text(tag.map { "#" + $0 } ?? (item["type"] as? String == "hardBreak" ? "\n" : (item["text"] as? String ?? "")))
-            if tag != nil { text = text.foregroundColor(Color(vellixHex: "#B59AD9")).bold() }
-            for mark in item["marks"] as? [[String: Any]] ?? [] {
-                switch mark["type"] as? String {
-                case "bold": text = text.bold()
-                case "italic": text = text.italic()
-                case "underline": text = text.underline()
-                case "strike": text = text.strikethrough()
-                case "code": text = text.monospaced()
-                default: break
-                }
-            }
-            return result + text
-        }
+        InlineTextPreview.text(values, appearance: appearance)
     }
 }
 
@@ -265,13 +257,15 @@ private struct TemplateComponentPreview: View {
                 }
             case .slider:
                 let value = (response as? NSNumber)?.doubleValue
-                if let value { Text(value.formatted()).fontWeight(.bold).frame(maxWidth: .infinity, alignment: .trailing) }
                 Slider(value: .constant(max(definition.minimum, min(definition.maximum, value ?? definition.minimum))), in: definition.minimum...definition.maximum, step: definition.step).tint(ink)
-                HStack {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Text(definition.minimumLabel.isEmpty ? definition.minimum.formatted() : definition.minimumLabel)
-                    Spacer()
+                        .font(.caption).opacity(0.65).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    if let value { Text(value.formatted()).fontWeight(.bold).fixedSize() }
                     Text(definition.maximumLabel.isEmpty ? definition.maximum.formatted() : definition.maximumLabel)
-                }.font(.caption).opacity(0.65)
+                        .font(.caption).opacity(0.65).multilineTextAlignment(.trailing)
+                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .trailing)
+                }.frame(maxWidth: .infinity)
             }
         }.font(.system(size: 16, design: appearance.fontStyle.design)).foregroundStyle(ink)
     }

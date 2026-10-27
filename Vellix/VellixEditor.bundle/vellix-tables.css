@@ -6,7 +6,7 @@
   border-bottom: 1px solid color-mix(in srgb,var(--vellix-primary-text) 15%,transparent);
   background: transparent; font-size: inherit; line-height: 1.4; text-align: left;
 }
-.vellix-table-wrapper th { background-color: #066db0; font-weight: 700; color: var(--vellix-primary-text); }
+.vellix-table-wrapper th { background-color: var(--vellix-table-default-header, #066db0); font-weight: 700; color: var(--vellix-primary-text); }
 .vellix-table-wrapper td:first-child, .vellix-table-wrapper th:first-child { border-left: 1px solid color-mix(in srgb,var(--vellix-primary-text) 15%,transparent); }
 .vellix-table-wrapper tr:first-child>* { border-top: 1px solid color-mix(in srgb,var(--vellix-primary-text) 15%,transparent); }
 .vellix-table-wrapper tr:first-child>*:first-child { border-top-left-radius: 7px; }

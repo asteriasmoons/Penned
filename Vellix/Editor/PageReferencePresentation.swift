@@ -8,7 +8,7 @@ import AppKit
 
 @MainActor
 enum PageReferencePresentation {
-    static func bridgeObject(_ document: DocumentRecord, attachmentStore: AttachmentStore? = nil) -> [String: Any] {
+    static func bridgeObject(_ document: DocumentRecord, attachmentStore: AttachmentStore? = nil, colorScheme: ColorScheme = .dark) -> [String: Any] {
         var result: [String: Any] = [
             "documentID": document.id,
             "title": document.title,
@@ -18,7 +18,7 @@ enum PageReferencePresentation {
             let remote = style.backdrop == .photo ? style.remotePhoto : nil
             result["cardImage"] = png(PageCardView(document: document, style: style,
                 photo: CardImageLoader.image(path: style.imagePath, store: attachmentStore), includeBackdrop: remote == nil,
-                attachmentStore: attachmentStore))
+                attachmentStore: attachmentStore).environment(\.colorScheme, colorScheme))
             result["cardWidth"] = style.size.size.width
             result["cardHeight"] = style.size.size.height
             result["cardFullWidth"] = style.size.fillsDocumentWidth
@@ -29,8 +29,8 @@ enum PageReferencePresentation {
                 result["sourceURL"] = remote.sourceURL
             }
         } else {
-            result["thumbnail"] = png(NestedPageThumbnail(json: document.tipTapJSON, title: document.title, appearance: document.appearance,
-                cover: document.cover, attachmentStore: attachmentStore))
+            result["thumbnail"] = png(NestedPageThumbnail(json: document.tipTapJSON, title: document.title, appearance: document.appearance.resolved(for: colorScheme),
+                cover: document.cover, attachmentStore: attachmentStore).environment(\.colorScheme, colorScheme))
         }
         return result
     }

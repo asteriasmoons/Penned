@@ -12,6 +12,57 @@ import AppKit
 
 @MainActor
 struct CollectionTests {
+    @Test func deletingCollectionRemovesConfigurationAndKeepsDocumentContent() throws {
+        let f = try Fixture(), id = f.collection.record.id
+        let field = try f.field("Priority", kind: .text)
+        let entry = try f.repository.addEntry(collectionID: id, title: "Keep this page")
+        let entryJSON = TipTapContentAnalyzer.starterDocument(title: "", lines: ["Saved entry body"])
+        let savedEntry = try f.documents.saveEditorJSON(id: entry.id, canonicalJSON: entryJSON)
+        try f.repository.saveValue(collectionID: id, documentID: entry.id, fieldID: field.id, value: CollectionValue(text: "High"))
+        let block = TipTapContentAnalyzer.documentObject(from: f.owner.tipTapJSON)["content"] as! [Any]
+        let marked: [String: Any] = ["type": "paragraph", "content": [["type": "text", "text": "Keep purple text", "marks": [["type": "textStyle", "attrs": ["color": "#AA44FF"]]]]]]
+        _ = try f.documents.saveEditorJSON(id: f.owner.id, canonicalJSON: TipTapContentAnalyzer.makeDocumentJSON(content: [marked] + block))
+        let changed = try f.repository.deleteCollection(id: id)
+        #expect(changed.contains(f.owner.id))
+        let owner = try f.documents.requireDocument(id: f.owner.id)
+        #expect(!owner.isTrashed && owner.tipTapJSON.contains("#AA44FF") && owner.plainText.contains("Keep purple text"))
+        #expect(TipTapContentAnalyzer.collectionIDs(in: owner.tipTapJSON).isEmpty)
+        #expect(try f.documents.requireDocument(id: entry.id).tipTapJSON == savedEntry.tipTapJSON)
+        #expect(try f.documents.requireDocument(id: entry.id).parentDocumentID == f.owner.id)
+        #expect(try f.repository.collectionID(forEntry: entry.id) == nil)
+        for table in ["collections", "collectionViews", "collectionFields", "collectionEntries", "collectionValues"] {
+            #expect(try f.database.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM \(table)") } == 0)
+        }
+    }
+
+    @Test func deletingCollectionRollsBackContentWhenMetadataDeletionFails() throws {
+        let f = try Fixture(), before = try f.documents.requireDocument(id: f.owner.id)
+        try f.database.write { try $0.execute(sql: "CREATE TRIGGER fail_collection_delete BEFORE DELETE ON collections BEGIN SELECT RAISE(ABORT, 'Test failure'); END") }
+        #expect(throws: (any Error).self) { try f.repository.deleteCollection(id: f.collection.record.id) }
+        #expect(try f.documents.requireDocument(id: f.owner.id).tipTapJSON == before.tipTapJSON)
+        #expect(try f.repository.snapshot(id: f.collection.record.id).views.count == 1)
+    }
+
+    @Test func deletingCollectionRejectsAnotherSpace() throws {
+        let f = try Fixture()
+        let other = try SpaceRepository(database: f.database).create(title: "Other")
+        f.documents.spaceID = other.id
+        #expect(throws: (any Error).self) { try f.repository.deleteCollection(id: f.collection.record.id) }
+        f.documents.spaceID = nil
+        #expect(try f.repository.snapshot(id: f.collection.record.id).views.count == 1)
+    }
+
+    @Test func deletingCollectionRejectsAnotherAccountLibrary() throws {
+        let root = try AppDatabase.makeInMemory(), libraries = LibraryRepository(database: root)
+        let first = try libraries.accountLibrary(ownerKey: "apple:collection-a")
+        let second = try libraries.accountLibrary(ownerKey: "apple:collection-b")
+        let f = try Fixture(database: root.scoped(to: first.id))
+        let otherDocuments = DocumentRepository(database: root.scoped(to: second.id))
+        let otherRepository = CollectionRepository(database: root.scoped(to: second.id), documents: otherDocuments)
+        #expect(throws: (any Error).self) { try otherRepository.deleteCollection(id: f.collection.record.id) }
+        #expect(try f.repository.snapshot(id: f.collection.record.id).views.count == 1)
+    }
+
     @Test func nativeCollectionPreviewImagesContainPersistedViewsAndColumnColors() throws {
         guard let directory = ProcessInfo.processInfo.environment["PENNED_COLLECTION_PREVIEW_IMAGES_DIR"] else { return }
         #if canImport(AppKit)

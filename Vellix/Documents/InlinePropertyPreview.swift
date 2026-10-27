@@ -4,8 +4,8 @@ import SwiftUI
 struct InlinePropertyPreview: View {
     let property: InlinePropertyDefinition
     let appearance: DocumentAppearance
-    private let secondary = Color(vellixHex: "#9B9B9F")
-    private let accent = Color(vellixHex: "#B59AD9")
+    private var secondary: Color { Color(vellixHex: appearance.presentationColors.secondary) }
+    private var accent: Color { Color(vellixHex: appearance.presentationColors.accent) }
 
     var body: some View {
         InlinePropertyPreviewRowLayout {

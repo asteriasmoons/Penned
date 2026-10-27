@@ -1,6 +1,7 @@
 import SwiftUI
 
 nonisolated struct NestedPageThumbnail: View, Equatable {
+    @Environment(\.colorScheme) private var colorScheme
     var json: String
     var title: String
     var appearance: DocumentAppearance
@@ -10,6 +11,7 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
     var cover: String? = nil
     var attachmentStore: AttachmentStore? = nil
     var includesCover = true
+    @MainActor private var displayedAppearance: DocumentAppearance { appearance.resolved(for: colorScheme) }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.json == rhs.json && lhs.title == rhs.title && lhs.appearance == rhs.appearance &&
@@ -18,11 +20,11 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
     }
 
     @MainActor var body: some View {
-        let showsCover = includesCover && !isStylePreview && appearance.displaysCover
+        let showsCover = includesCover && !isStylePreview && displayedAppearance.displaysCover
         let layout: DocumentThumbnailLayout? = isStylePreview ? nil : DocumentThumbnailLayout(json: json,
-            title: title, monospaced: appearance.fontStyle == .mono, showsCover: showsCover)
+            title: title, monospaced: displayedAppearance.fontStyle == .mono, showsCover: showsCover)
         let image = showsCover ? (CardImageLoader.image(path: cover, store: attachmentStore)
-            ?? NestedPageThemeCovers.image(for: appearance.resolvedCoverTheme)) : nil
+            ?? NestedPageThemeCovers.image(for: displayedAppearance.resolvedCoverTheme)) : nil
         Canvas { context, size in
             context.scaleBy(x: size.width / DocumentThumbnailLayout.size.width,
                             y: size.height / DocumentThumbnailLayout.size.height)
@@ -65,8 +67,8 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
     }
 
     @MainActor private func drawCardLine(_ rect: CGRect, heading: Bool, in context: inout GraphicsContext) {
-        let ink = Color(vellixHex: appearance.textColorHex)
-        let dark = appearance.nestedPageTintHex == "#FFFFFF"
+        let ink = Color(vellixHex: displayedAppearance.textColorHex)
+        let dark = displayedAppearance.nestedPageTintHex == "#FFFFFF"
         let opacity: Double = dark ? (heading ? 0.12 : 0.08) : (heading ? 0.30 : 0.20)
         context.fill(Path(roundedRect: rect, cornerRadius: rect.height / 2), with: .linearGradient(
             Gradient(colors: [ink.opacity(opacity), ink.opacity(opacity * 0.8)]),
@@ -74,12 +76,12 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
     }
 
     @MainActor private func drawCardSheet(in context: inout GraphicsContext) -> Path {
-        let dark = appearance.nestedPageTintHex == "#FFFFFF"
+        let dark = displayedAppearance.nestedPageTintHex == "#FFFFFF"
         let top = CGPoint(x: 0, y: 0)
         let bottom = CGPoint(x: 100, y: 130)
         let base = Gradient(colors: [
-            Color(vellixHex: appearance.innerPageBackground.colorHex),
-            Color(vellixHex: appearance.innerPageBackground.secondaryColorHex)
+            Color(vellixHex: displayedAppearance.innerPageBackground.colorHex),
+            Color(vellixHex: displayedAppearance.innerPageBackground.secondaryColorHex)
         ])
         // Thin leaves beneath the face create paper thickness without a padded bevel.
         for offset in [CGFloat(2.4), CGFloat(1.2)] {
@@ -150,9 +152,9 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
     }
 
     @MainActor private func drawPage(in context: inout GraphicsContext) -> Path {
-        let dark = appearance.nestedPageTintHex == "#FFFFFF"
-        let base = Gradient(colors: [Color(vellixHex: appearance.innerPageBackground.colorHex),
-                                     Color(vellixHex: appearance.innerPageBackground.secondaryColorHex)])
+        let dark = displayedAppearance.nestedPageTintHex == "#FFFFFF"
+        let base = Gradient(colors: [Color(vellixHex: displayedAppearance.innerPageBackground.colorHex),
+                                     Color(vellixHex: displayedAppearance.innerPageBackground.secondaryColorHex)])
         let top = CGPoint(x: 0, y: 0)
         let bottom = CGPoint(x: 100, y: 130)
         let body = Path(roundedRect: CGRect(x: 1, y: 1, width: 98, height: 128), cornerRadius: 11)
@@ -184,7 +186,7 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
     }
 
     @MainActor private func draw(_ mark: DocumentThumbnailLayout.Mark, in context: inout GraphicsContext) {
-        let ink = Color(vellixHex: appearance.textColorHex)
+        let ink = Color(vellixHex: displayedAppearance.textColorHex)
         let tint = mark.colorHex.map { Color(vellixHex: $0) } ?? ink
         let rect = mark.rect
         let rounded = Path(roundedRect: rect, cornerRadius: 2)

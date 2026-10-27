@@ -5,6 +5,12 @@
 
 import SwiftUI
 
+extension Menu {
+    func pennedIconMenuStyle() -> some View {
+        menuStyle(.button).buttonStyle(.borderless)
+    }
+}
+
 enum VellixSpacing {
     static let xs: CGFloat = 6
     static let sm: CGFloat = 10
@@ -21,25 +27,58 @@ enum VellixRadius {
 }
 
 enum VellixSurface {
-    static let appBackground = Color(red: 10 / 255, green: 11 / 255, blue: 11 / 255)
-    static let sidebar = Color(red: 0.055, green: 0.06, blue: 0.06)
-    static let paper = Color(red: 0.105, green: 0.108, blue: 0.108)
-    static let paperLifted = Color(red: 0.145, green: 0.148, blue: 0.148)
-    static let ink = Color(red: 0.965, green: 0.965, blue: 0.945)
-    static let secondaryInk = Color(red: 0.56, green: 0.57, blue: 0.55)
-    static let hairline = Color.white.opacity(0.09)
-    static let accent = Color(red: 0.55, green: 0.86, blue: 1.0)
-    static let teal = Color(red: 0.25, green: 0.94, blue: 0.82)
-    static let coral = Color(red: 0.94, green: 0.46, blue: 0.58)
-    static let gold = Color(red: 1.0, green: 0.78, blue: 0.32)
-    static let violet = Color(red: 0.72, green: 0.44, blue: 1.0)
+    static func secondaryControlInk(opacity: Double) -> Color {
+        .penned(light: Color(vellixHex: "#686171"), dark: .white.opacity(opacity))
+    }
+
+    static func elevationShadow(opacity: Double) -> Color {
+        .penned(light: .black.opacity(opacity * 0.28), dark: .black.opacity(opacity))
+    }
+    static let workspace = Color.penned(light: Color(vellixHex: "#FAF9FC"), dark: .black)
+    static let activeTab = Color.penned(light: .white, dark: .black)
+    static let previewPlaceholder = Color.penned(light: Color(vellixHex: "#F0ECF5"), dark: Color(vellixHex: "#303033"))
+    static let lilac = Color.penned(light: Color(vellixHex: "#7955A0"), dark: Color(vellixHex: "#B59AD9"))
+    static let kanbanPaper = Color.penned(light: Color(vellixHex: "#FCFAFF"), dark: Color(vellixHex: "#2C2C2E"))
+    static let appBackground = Color.penned(light: Color(vellixHex: "#FAF9FC"), dark: Color(red: 10 / 255, green: 11 / 255, blue: 11 / 255))
+    static let sidebar = Color.penned(light: Color(vellixHex: "#F1EFF6"), dark: Color(red: 0.055, green: 0.06, blue: 0.06))
+    static let paper = Color.penned(light: .white, dark: Color(red: 0.105, green: 0.108, blue: 0.108))
+    static let paperLifted = Color.penned(light: Color(vellixHex: "#F0EDF5"), dark: Color(red: 0.145, green: 0.148, blue: 0.148))
+    static let ink = Color.penned(light: Color(vellixHex: "#211D29"), dark: Color(red: 0.965, green: 0.965, blue: 0.945))
+    static let secondaryInk = Color.penned(light: Color(vellixHex: "#686171"), dark: Color(red: 0.56, green: 0.57, blue: 0.55))
+    static let controlInk = Color.penned(light: Color(vellixHex: "#272130"), dark: .white)
+    static let inverseInk = Color.penned(light: .white, dark: .black)
+    static let tertiaryInk = Color.penned(light: Color(vellixHex: "#777080"), dark: Color(vellixHex: "#99949F"))
+    static let disabledInk = controlInk.opacity(0.38)
+    static let hairline = controlInk.opacity(0.09)
+    static let subtleFill = controlInk.opacity(0.06)
+    static let selection = Color.penned(light: Color(vellixHex: "#E9DDF8"), dark: .white.opacity(0.08))
+    static let input = Color.penned(light: Color(vellixHex: "#F0ECF5"), dark: Color(white: 0.2))
+    static let toolbar = Color.penned(light: Color(vellixHex: "#F5F2F9"), dark: Color(red: 0.118, green: 0.118, blue: 0.118))
+    static let shadow = Color.penned(light: .black.opacity(0.10), dark: .black.opacity(0.38))
+    static let overlay = Color.black.opacity(0.48)
+    static let accent = Color.penned(light: Color(vellixHex: "#096E91"), dark: Color(red: 0.55, green: 0.86, blue: 1.0))
+    static let teal = Color.penned(light: Color(vellixHex: "#087966"), dark: Color(red: 0.25, green: 0.94, blue: 0.82))
+    static let coral = Color.penned(light: Color(vellixHex: "#BD274B"), dark: Color(red: 0.94, green: 0.46, blue: 0.58))
+    static let gold = Color.penned(light: Color(vellixHex: "#8D6500"), dark: Color(red: 1.0, green: 0.78, blue: 0.32))
+    static let violet = Color.penned(light: Color(vellixHex: "#7833BC"), dark: Color(red: 0.72, green: 0.44, blue: 1.0))
+    static let formattingAccent = Color.penned(light: Color(vellixHex: "#7833BC"), dark: Color(red: 0.94, green: 0.67, blue: 1.0))
+    static let groupingAccent = Color.penned(light: Color(vellixHex: "#087966"), dark: Color(red: 0.25, green: 0.98, blue: 0.78))
+    static let reactionAccent = Color.penned(light: Color(vellixHex: "#9C481A"), dark: Color(red: 0.95, green: 0.68, blue: 0.50))
+    static let commentAccent = Color.penned(light: Color(vellixHex: "#856100"), dark: Color(red: 0.98, green: 0.95, blue: 0.54))
+    static let assistantAccent = Color.penned(light: Color(vellixHex: "#A12680"), dark: Color(red: 1.0, green: 0.42, blue: 0.86))
+    static let writingAccent = Color.penned(light: Color(vellixHex: "#7833BC"), dark: Color(red: 0.94, green: 0.72, blue: 1.0))
+    static let editingAccent = Color.penned(light: Color(vellixHex: "#096E91"), dark: Color(red: 0.76, green: 0.86, blue: 1.0))
+    static let destructiveAccessory = Color.penned(light: Color(vellixHex: "#BD274B"), dark: Color(red: 1.0, green: 0.55, blue: 0.62))
+    static let destructiveLabel = Color.penned(light: Color(vellixHex: "#BD274B"), dark: Color(red: 1.0, green: 0.45, blue: 0.52))
+    static let destructiveAction = Color.penned(light: Color(vellixHex: "#BD274B"), dark: Color(vellixHex: "#FF4874"))
 }
 
 struct VellixBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         ZStack {
             VellixSurface.appBackground
-            LinearGradient(
+            if colorScheme == .dark { LinearGradient(
                 colors: [
                     Color(red: 0.02, green: 0.03, blue: 0.03).opacity(0.85),
                     VellixSurface.appBackground,
@@ -47,7 +86,7 @@ struct VellixBackground: View {
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
-            )
+            ) }
         }
         .ignoresSafeArea()
     }
@@ -210,10 +249,10 @@ struct VellixEmptyState: View {
                             .frame(width: 18, height: 18)
                         Text(actionTitle)
                     }
-                    .foregroundStyle(.black)
+                    .foregroundStyle(VellixSurface.inverseInk)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.white)
+                .tint(VellixSurface.controlInk)
                 .controlSize(.large)
             }
         }
@@ -257,7 +296,7 @@ struct MetadataTile: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(VellixSpacing.md)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: VellixRadius.sm, style: .continuous))
+        .background(VellixSurface.subtleFill, in: RoundedRectangle(cornerRadius: VellixRadius.sm, style: .continuous))
     }
 }
 
@@ -268,6 +307,6 @@ extension View {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(VellixSurface.hairline, lineWidth: 1)
             }
-            .shadow(color: Color.black.opacity(0.38), radius: 18, x: 0, y: 10)
+            .shadow(color: VellixSurface.shadow, radius: 18, x: 0, y: 10)
     }
 }

@@ -247,6 +247,14 @@ final class SupabaseEmailAuth: EmailAuthenticating {
         catch { throw EmailAuthError.deletionFailed }
     }
 
+    func publishingAccessToken(_ identity: AccountIdentity) async throws -> String {
+        _ = try await restore(identity)
+        let account = try entry(for: identity)
+        let session = try await account.client.auth.session
+        try ensurePersisted(session, entry: account, identity: identity)
+        return session.accessToken
+    }
+
     static func translate(_ error: Error, verification: Bool) -> Error {
         if error is CancellationError { return error }
         if let url = error as? URLError { return url.code == .cancelled ? CancellationError() : EmailAuthError.network }

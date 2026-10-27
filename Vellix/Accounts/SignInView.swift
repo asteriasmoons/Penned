@@ -22,6 +22,7 @@ struct SignInView: View {
     @State private var attempt = UUID()
     @State private var emailTask: Task<Void, Never>?
     @State private var codeResent = false
+    @State private var publishingNonce: PublishingAppleNonce?
 
     var body: some View {
         ScrollView {
@@ -62,6 +63,8 @@ struct SignInView: View {
             errorText = nil
             isSigningIn = true
             request.requestedScopes = [.fullName, .email]
+            publishingNonce = try? PublishingAppleNonce()
+            request.nonce = publishingNonce?.hashedValue
         } onCompletion: { result in
             handleAppleSignIn(result)
         }
@@ -169,7 +172,8 @@ struct SignInView: View {
                 try appState.signInWithApple(
                     credential: credential,
                     existingUsers: authUsers,
-                    modelContext: modelContext
+                    modelContext: modelContext,
+                    nonce: publishingNonce
                 )
 
                 isSigningIn = false

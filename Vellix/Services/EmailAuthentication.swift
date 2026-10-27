@@ -14,6 +14,11 @@ protocol EmailAuthenticating {
     func signOut(_ identity: AccountIdentity) async throws
     func forget(_ identity: AccountIdentity) throws
     func deleteAccount(_ identity: AccountIdentity) async throws
+    func publishingAccessToken(_ identity: AccountIdentity) async throws -> String
+}
+
+extension EmailAuthenticating {
+    func publishingAccessToken(_ identity: AccountIdentity) async throws -> String { throw PublishingFailure.authenticationRequired }
 }
 
 enum EmailAuthError: LocalizedError, Equatable {

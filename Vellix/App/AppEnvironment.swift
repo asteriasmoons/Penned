@@ -107,14 +107,19 @@ final class AppEnvironment: ObservableObject {
     let calendarEventNotes: CalendarEventNoteRepository
     let calendar: CalendarModel
     let collections: CollectionStore
+    lazy var publishing = PublishingQueue(database: database, store: attachmentStore)
     @Published private(set) var pendingDocumentID: String?
     private var pendingDocumentPresentation: AnyCancellable?
     private var pendingDocumentTimeout: Task<Void, Never>?
     private var pendingDocumentRequestID = UUID()
 
     @Published var overview = LibraryOverview()
+    @Published var calendarDocumentReturnID: String?
     @Published var selectedDestination: AppDestination = .home {
-        didSet { if oldValue != selectedDestination { cancelDocumentOpening() } }
+        didSet {
+            if oldValue != selectedDestination { cancelDocumentOpening() }
+            if selectedDestination != .calendar { calendarDocumentReturnID = nil }
+        }
     }
     @Published var selectedDocumentID: String? {
         didSet {
@@ -123,6 +128,7 @@ final class AppEnvironment: ObservableObject {
             pendingDocumentTimeout = nil
             pendingDocumentID = nil
             pendingDocumentRequestID = UUID()
+            if selectedDocumentID == nil { calendarDocumentReturnID = nil }
             if let id = selectedDocumentID {
                 collections.watchDocument(id)
                 editorCache.model(for: id)?.session.setCollections(collections.payloads(for: id))
@@ -230,9 +236,9 @@ final class AppEnvironment: ObservableObject {
                 catch { self?.report(error) }
             }
         }
-        calendar.completeTask = { [weak self] id, occurrenceID, completed in
+        calendar.completeTask = { [weak self] id, occurrenceID, completed, skipped in
             guard let self else { throw DocumentTaskError.missingTask }
-            try await self.setTaskCompleted(id: id, completed: completed, expectedOccurrenceID: occurrenceID)
+            try await self.setTaskCompleted(id: id, completed: completed, expectedOccurrenceID: occurrenceID, skipped: skipped)
         }
         let preferred = persistsSpaceSelection ? self.preferences.string(forKey: spaceSelectionKey) : nil
         do {
@@ -514,6 +520,7 @@ final class AppEnvironment: ObservableObject {
             print("VELLIX-OPEN select BAIL document(id:) nil-or-trashed")
             return
         }
+        if selectedDocumentID == nil { calendarDocumentReturnID = nil }
         let model = editorCache.prepare(current)
         print("VELLIX-OPEN select id=\(document.id) alreadyReady=\(model.session.isPresentationReady) preparedCount=\(editorCache.preparedModels.count)")
         if !model.session.isPresentationReady { model.session.bridgeErrorMessage = nil }
@@ -546,6 +553,7 @@ final class AppEnvironment: ObservableObject {
         }
         if model.session.isPresentationReady {
             print("VELLIX-OPEN finishDocumentOpening READY -> show id=\(document.id)")
+            cancelDocumentOpening()
             selectedDocumentID = document.id
             let documents = documents, documentID = document.id
             Task.detached(priority: .utility) { try? documents.markOpened(id: documentID) }
@@ -573,7 +581,7 @@ final class AppEnvironment: ObservableObject {
         pendingDocumentRequestID = UUID()
     }
 
-    func setTaskCompleted(id: String, completed: Bool, expectedOccurrenceID: String? = nil) async throws {
+    func setTaskCompleted(id: String, completed: Bool, expectedOccurrenceID: String? = nil, skipped: Bool = false) async throws {
         let generation = workspaceGeneration
         guard let task = try tasks.all(includeTemplates: true).first(where: { $0.id == id }) else {
             throw DocumentTaskError.missingTask
@@ -583,23 +591,34 @@ final class AppEnvironment: ObservableObject {
             if model.session.isLoadingDocument { try model.saveCurrentContent() }
             else { try await model.captureAndSave() }
         }
+        for id in [DocumentTaskPages.detailID(id), DocumentTaskPages.historyID(id)] {
+            if let page = editorCache.model(for: id) {
+                if page.session.isLoadingDocument { try page.saveCurrentContent() }
+                else { try await page.captureAndSave() }
+            }
+        }
         guard generation == workspaceGeneration, !isSwitchingSpace else { throw VellixError.impossibleMove("The active Space changed. Reopen the task.") }
         guard let current = try tasks.all(includeTemplates: true).first(where: { $0.id == id }) else {
             throw DocumentTaskError.missingTask
         }
-        if let expectedOccurrenceID, expectedOccurrenceID != current.metadata.occurrenceID { throw DocumentTaskError.staleOccurrence }
-        let saved = try tasks.setCompleted(taskID: id, occurrenceID: current.metadata.occurrenceID, completed: completed)
+        let occurrenceID = expectedOccurrenceID ?? current.metadata.occurrenceID
+        let saved = try tasks.setCompleted(taskID: id, occurrenceID: occurrenceID, completed: completed, skipped: skipped)
         editorCache.model(for: current.documentID)?.receiveExternalTaskChange(saved)
         refresh()
         await taskNotifications.flush()
     }
 
-    func openCalendarDocument(_ document: DocumentRecord) {
+    func openCalendarDocument(_ document: DocumentRecord, returnToCalendar: Bool = false) {
         do {
             let current = try documents.requireDocument(id: document.id)
             guard !current.isTrashed else { throw VellixError.impossibleMove("Restore this event note from Trash before opening it.") }
+            guard !isSwitchingSpace, current.spaceID == selectedSpaceID else { throw LibraryError.staleWorkspace }
             editorCache.prepare(current)
             select(current)
+            if returnToCalendar, selectedDestination == .calendar,
+               pendingDocumentID == current.id || selectedDocumentID == current.id {
+                calendarDocumentReturnID = current.id
+            }
         } catch { report(error) }
     }
 
@@ -612,7 +631,10 @@ final class AppEnvironment: ObservableObject {
     }
 
     func returnFromDocument(_ document: DocumentRecord) {
-        if let parentID = document.parentDocumentID,
+        if selectedDestination == .calendar, calendarDocumentReturnID == document.id {
+            selectedDocumentID = nil
+            refresh()
+        } else if let parentID = document.parentDocumentID,
            let parent = editorCache.model(for: parentID)?.document ?? (try? documents.document(id: parentID)),
            !parent.isTrashed {
             select(parent)
@@ -792,6 +814,7 @@ final class AppEnvironment: ObservableObject {
     }
 
     func closeLibrary() async throws {
+        publishing.stop()
         await waitForWorkspace()
         guard database.isAccessible else { return }
         isSwitchingSpace = true

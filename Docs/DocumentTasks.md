@@ -64,7 +64,7 @@ No Calendar UI, EventKit event synchronization, or unrelated editor redesign was
 | `Vellix/VellixEditor.bundle/tiptap.bundle.js`, `tiptap.html` | Rebuilt and synchronized web editor runtime. |
 | `Docs/DocumentTasks.md` | Integration and verification report. |
 
-## Verification Boundary
+## Earlier Verification Boundary
 
 The web editor bundle is rebuilt and synchronized. The 40-test focused suite, including generated-bundle bridge round trips, passes, exercising conversion, scheduling metadata, completion, reloading, ordinary checklist behavior, rich-text preservation, task copying, splitting, read-only external completion, and undo/redo. A separate SQLite schema check passed for the change queue and task/history deletion cascades.
 
@@ -73,3 +73,84 @@ Previous headless Chrome checks at 390 x 640 and 1280 x 720 verified the custom 
 Swift source parsing and isolated non-build type checks cover the new task domain, repository, notification manager, and scheduling sheet. The isolated checks use signature stand-ins for surrounding application types, not an application build. Native regression tests were added but not executed.
 
 The existing table tests have five pre-existing failures unrelated to the new task extension; table runtime files were intentionally left unchanged. No iOS/Xcode build, app launch, simulator run, or iPhone notification/keyboard/layout test was performed.
+
+## Earlier Editable Task History Pages (October 20, 2026)
+
+Explicit checklist-to-task conversion now creates real persisted child documents:
+
+1. The task's text becomes the initial title of a nested task page. The source task has a green-dot **Completed Tasks** link that opens this page.
+2. The task page retains the custom circular completion control and displays the repeat and reminder assets with their schedule labels.
+3. A nested **Completed Tasks** page holds completion and skip records with scheduled date, original task text, outcome, and event date/time. Times explicitly use `h:mm a` (AM/PM), including reminder labels.
+
+Both pages, their titles, and the recorded entries are editable. Additional notes and nested pages are supported. The source task's occurrence history is still authoritative for recurrence and reminders; editing a recorded checklist entry does not complete the source task again. A document-level `taskHistoryProjection` watermark records which occurrence IDs have already been appended, so subsequent completions preserve edits and do not resurrect manually deleted entries. Source undo retracts its recorded occurrences without deleting unrelated notes. Customized page titles are preserved; otherwise the task title follows source text changes.
+
+Single taps wait 300 ms to distinguish the gesture from a double tap. Double tapping the source or task-page completion circle records one **skipped** occurrence, without first recording a completion. Recurring skips advance the existing calendar-based recurrence rule once; nonrecurring skips stay closed and stop outstanding reminders. Records retain their original task text and time zone. Legacy history decodes as completed events.
+
+Page creation and appending happen within the existing document/task-index transaction, using stable task-derived document IDs. Migration `v24_task_history_pages` backfills existing tracked tasks. The normal document search, parent hierarchy, library ownership, and synchronization paths carry the pages and editable content. Copies/templates remap task/page identities, clear inherited occurrence records, and retain authored notes and nested pages. Live editor updates append/retract only occurrence nodes and update the watermark through ProseMirror transactions, preserving current typing, marks, and selection. No WebView ownership/lifecycle changes were made.
+
+### Files Changed for This Addition
+
+| File | Change |
+| --- | --- |
+| `Vellix/Tasks/DocumentTask.swift` | Backward-compatible outcome/text/time-zone history, skip transitions, AM/PM reminder labels. |
+| `Vellix/Tasks/DocumentTaskRepository.swift` | Transactional, idempotent editable page projection; occurrence outcomes in repository queries/actions. |
+| `Vellix/Tasks/TaskHistoryPageHeader.swift` | Editable task-page title, custom completion circle, double-tap skip, repeat/reminder labels. |
+| `Vellix/Persistence/AppDatabase.swift` | Existing-task history-page backfill migration. |
+| `Vellix/Documents/DocumentRepositories.swift` | Scoped page/task lookup and consistent identity mapping for cloned task/page trees. |
+| `Vellix/Documents/StructuredTemplateContent.swift` | Independent copied tasks/pages while retaining authored notes and clearing inherited occurrences. |
+| `Vellix/Editor/TipTapContentAnalyzer.swift` | Persist projection metadata and recognize the source's inline task-page link. |
+| `Vellix/Editor/TipTapBridgeTypes.swift` | Explicit skip outcome and task text in completion events. |
+| `Vellix/Editor/TipTapEditorSession.swift` | Complete/skip handling, live history updates, nested-page refresh/navigation. |
+| `PennedMac/Editor/MacTipTapEditorSession.swift` | Equivalent integration in the existing separate Mac adapter. |
+| `Vellix/Editor/DocumentEditorCache.swift` | Refresh cached task/history pages on reopening. |
+| `PennedMac/Editor/MacDocumentEditorCache.swift` | Equivalent cached-page refresh on Mac. |
+| `Vellix/Editor/DocumentEditorView.swift` | Shared task-page header and main-thread history update observation on iPhone/iPad. |
+| `PennedMac/Editor/MacDocumentEditorContainer.swift` | Shared header and update observation in the Mac document surface. |
+| `Vellix/App/AppEnvironment.swift` | Preserve pending task-page/history edits before external complete/skip actions. |
+| `Vellix-backend/src/document-tasks.js` | Single/double-tap lifecycle, green-dot link, AM/PM labels, schema metadata, incremental history refresh. |
+| `Vellix-backend/src/editor.js` | Preserve/load document-level projection metadata in the existing editor load transaction. |
+| `Vellix-backend/src/tiptap.html` | Green-dot history-link styling. |
+| `Vellix/VellixEditor.bundle/tiptap.bundle.js` | Mechanically synchronized task functions and metadata-load hooks in the existing artifact, without rebuilding. |
+| `Vellix/VellixEditor.bundle/tiptap.html` | Matching history-link styling in the shipping resource. |
+| `Scripts/install-task-history-hooks.mjs` | AST-scoped artifact synchronization with dependency/shape assertions; no compiler or bundler. |
+| `Scripts/test-task-history.mjs` | Shipping-editor regressions for gestures, navigation, editing, watermark round trips, incremental updates, and retraction. |
+| `Vellix-backend/tests/document-tasks.test.js` | Maintained-source single/double-tap, link, text, and timestamp checks. |
+| `Vellix-backend/tests/document-task-runtime.test.js` | Account for the single-tap recognition window in the existing runtime test. |
+| `Vellix/VellixTests/DocumentTaskTests.swift` | Added native tests for migration-compatible history, skip recurrence, hierarchy, editing/deletion, copies, and independent notes/pages. |
+| `Docs/DocumentTasks.md` | Behavior, file inventory, and current verification boundary. |
+
+### Current Verification
+
+- **111 passed**: `node --test Scripts/test-task-history.mjs Scripts/test-mobile-editor-interactions.mjs Scripts/test-block-swipe-selection.mjs Scripts/test-phone-gallery-loading.mjs Scripts/test-mac-editor-navigation.mjs Scripts/test-mac-document-scrolling.mjs`.
+- **11 passed**: `node --test tests/document-tasks.test.js` in `Vellix-backend`.
+- JavaScript syntax checks passed for maintained task/editor source and the mechanically updated shipping artifact; scoped `git diff --check` passed.
+- No build, bundling, Swift compilation, app launch, or simulator run was performed. New native tests were added but not executed. The existing source-lock fixture was not rebaselined.
+
+Physical iPhone/iPad/Mac verification remains necessary for the native title/circle layout, single/double-tap feel with the keyboard, page navigation, disk reopening, recurrence/reminder delivery, and two-device synchronization of editable history. Existing iPad WebView ownership, unrelated styling/settings, and Mac navigation/scrolling architecture were intentionally left unchanged.
+
+## Read-Only History Sheet (October 21, 2026)
+
+The current history interface supersedes the page-navigation/editing interface described above. Tapping the source task's green-dot link opens a **non-editable sheet**, not a nested document. The sheet header uses the task's actual current text, not a generic "Task History" heading or a customized legacy document title.
+
+The sheet uses the existing `pennedSheet` chrome, frosted `pennedSheetField` surfaces, rounded black typography, violet/coral semantic colors, and `clockfill`, `checkwavy`, and `xmarkwavy` assets. The timeline shows newest events first, with a stable ID tie-break for equal timestamps, completion/skip counts, each event's date and weekday, and an explicit AM/PM time in its recorded time zone. Original task text is retained on entries when it differs from the current task name. Empty, unavailable, and load-error states use actual repository results rather than sample records.
+
+There are no text fields, completion actions, editing gestures, delete controls, or embedded editors in the history sheet. Its only actions are dismissal and retrying a failed read. Ordinary document editing and the source task's single-tap completion/double-tap skip behavior are unchanged. Existing stored task/history documents, prior edits, and notes are retained without a destructive migration; the sheet reads the authoritative task occurrence history. Legacy `pageOpenRequest` task-page IDs are intercepted natively for both source links and links from existing task pages. Ordinary nested-page navigation keeps its original parent-scoped path.
+
+The open sheet refreshes when task data changes and dismisses on Space, document, or Mac-tab transitions. Presenting it dismisses the iPhone/iPad keyboard without replacing or reparenting the existing editor WebView. Both platform adapters use the same shared sheet.
+
+### Files Changed for the Sheet
+
+| File | Change |
+| --- | --- |
+| `Vellix/Tasks/TaskHistorySheet.swift` | New shared, read-only timeline sheet, typed request, live scoped reads, counts/status/empty/error states, and time-zone-aware AM/PM display. |
+| `Vellix/Editor/TipTapEditorSession.swift` | Scoped history request routing and request reset in the mobile editor model. |
+| `PennedMac/Editor/MacTipTapEditorSession.swift` | Equivalent routing/reset in the existing Mac model adapter. |
+| `Vellix/Editor/DocumentEditorView.swift` | Present the history sheet on iPhone/iPad, dismiss the keyboard, and clear requests when leaving the document. |
+| `PennedMac/Editor/MacEditorPresentations.swift` | Present the shared sheet on Mac and clear requests on document/tab changes. |
+| `Scripts/test-task-history.mjs` | Shared-design, task-name title, no-editing-controls, scoped routing, and timeline/read-refresh source checks alongside shipping-editor regressions. |
+| `Vellix/VellixTests/DocumentTaskTests.swift` | Added native sheet-routing, foreign-task rejection, ordinary-page preservation, event-zone, weekday/date, and AM/PM tests. |
+| `Docs/DocumentTasks.md` | Current read-only-sheet behavior and per-file verification report. |
+
+### Sheet Verification Boundary
+
+**114 checks passed** with `node --test Scripts/test-task-history.mjs Scripts/test-mobile-editor-interactions.mjs Scripts/test-block-swipe-selection.mjs Scripts/test-phone-gallery-loading.mjs Scripts/test-mac-editor-navigation.mjs Scripts/test-mac-document-scrolling.mjs`. Scoped `git diff --check` and JavaScript syntax checks also passed. No compiler, bundler, app launch, or simulator was run. Native regression tests were added but not executed. Rendered sheet layout, Dynamic Type sizing, native presentation/dismissal, and physical iPhone/iPad/Mac behavior remain unverified until an authorized native run. Persistence, synchronization, recurrence, notifications, existing saved content, and WebView ownership/lifecycle architecture were intentionally left unchanged for this presentation change.

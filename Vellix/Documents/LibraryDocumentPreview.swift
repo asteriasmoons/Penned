@@ -1,8 +1,20 @@
 import SwiftUI
 import Combine
+#if os(iOS)
+import UIKit
+#endif
 
 struct LibraryDocumentPreview: View {
+    static var phoneGalleryHeightFraction: CGFloat? {
+        #if os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .phone ? 0.6 : nil
+        #else
+        return nil
+        #endif
+    }
+
     @EnvironmentObject private var environment: AppEnvironment
+    @Environment(\.colorScheme) private var colorScheme
     let document: DocumentRecord
     var fixedAspectRatio: CGFloat?
     var showsStar = true
@@ -14,7 +26,7 @@ struct LibraryDocumentPreview: View {
     @State private var collectionRevision = 0
 
     private var current: DocumentRecord { latestDocument ?? document }
-    private var currentKey: String { environment.documentPreviews.content(for: current).cacheKey }
+    private var currentKey: String { environment.documentPreviews.content(for: current).cacheKey(for: colorScheme) }
     private var presentationKey: String { currentKey + ":" + String(environment.documentPreviews.presentationEpoch) }
     private var availableSnapshot: CGImage? {
         if presentation.key == presentationKey, let image = presentation.image { return image }
@@ -22,9 +34,9 @@ struct LibraryDocumentPreview: View {
     }
 
     private func preparedImage() -> CGImage? {
-        environment.documentPreviews.presentationImage(for: current) {
+        environment.documentPreviews.presentationImage(for: current, colorScheme: colorScheme) {
             let renderer = ImageRenderer(content: ImmediateDocumentPreview(document: current)
-                .environmentObject(environment).environment(\.colorScheme, .dark)
+                .environmentObject(environment).environment(\.colorScheme, colorScheme)
                 .frame(width: current.isThemed ? 376 : 360, height: 740, alignment: .topLeading))
             renderer.scale = 2
             return renderer.cgImage
@@ -52,7 +64,7 @@ struct LibraryDocumentPreview: View {
             }
         }
         .overlay {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 0.75)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(VellixSurface.controlInk.opacity(0.08), lineWidth: 0.75)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(current.title + (document.isFavorite ? ", starred" : ""))
@@ -72,7 +84,7 @@ struct LibraryDocumentPreview: View {
         .onChange(of: presentationKey) { _, _ in preparePresentation() }
         .task(id: requestKey) {
             // Persist the next accurate rendering without changing an already-visible frame.
-            _ = await environment.documentPreviews.image(for: current)
+            _ = await environment.documentPreviews.image(for: current, colorScheme: colorScheme)
         }
     }
 

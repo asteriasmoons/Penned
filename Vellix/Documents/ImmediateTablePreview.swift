@@ -67,11 +67,11 @@ struct ImmediateTablePreview: View {
                 let attrs = cell.value["attrs"] as? [String: Any] ?? [:]
                 let isHeader = cell.value["type"] as? String == "tableHeader"
                 let fill = attrs["fillColor"] as? String
-                    ?? (isHeader ? "#066DB0" : (cell.row % 2 == 1 ? tableAttrs["stripeColor"] as? String : nil))
+                    ?? (isHeader ? appearance.presentationColors.tableHeader : (cell.row % 2 == 1 ? tableAttrs["stripeColor"] as? String : nil))
                 let style = DocumentFontStyle(rawValue: attrs["font"] as? String ?? "") ?? appearance.fontStyle
                 let width = widths[cell.column..<(cell.column + cell.columns)].reduce(0, +)
                 let height = heights[cell.row..<(cell.row + cell.rows)].reduce(0, +)
-                Text(cellText(cell.value))
+                styledCellText(cell.value)
                     .font(.system(size: 16, weight: (attrs["bold"] as? Bool ?? isHeader) ? .bold : .regular,
                                   design: attrs["code"] as? Bool == true ? .monospaced : style.design))
                     .italic(attrs["italic"] as? Bool == true)
@@ -98,5 +98,16 @@ struct ImmediateTablePreview: View {
             return (attrs["placeholderGuidance"] as? [[String: Any]] ?? []).map(cellText).joined()
         }
         return children.map(cellText).joined(separator: node["type"] as? String == "paragraph" ? "" : "\n")
+    }
+
+    private func styledCellText(_ node: [String: Any]) -> Text {
+        let attrs = node["attrs"] as? [String: Any] ?? [:]
+        if let calculated = attrs["calculated"] as? String { return Text(calculated) }
+        let children = node["content"] as? [[String: Any]] ?? []
+        if node["type"] as? String == "paragraph" { return InlineTextPreview.text(children, appearance: appearance) }
+        if children.isEmpty { return Text(cellText(node)) }
+        return children.enumerated().reduce(Text("")) { result, item in
+            result + Text(item.offset == 0 ? "" : "\n") + styledCellText(item.element)
+        }
     }
 }

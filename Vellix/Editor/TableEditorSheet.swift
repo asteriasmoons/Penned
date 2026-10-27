@@ -82,7 +82,7 @@ struct TableEditorSheet: View {
         .padding(18)
         .frame(maxWidth: 620, maxHeight: .infinity, alignment: .top)
         .font(.system(.body, design: .rounded))
-        .foregroundStyle(.white)
+        .foregroundStyle(VellixSurface.controlInk)
         .pennedSheet(title: panel.title, close: { dismiss() }) {
             if panel != .overview && panel != .create {
                 Button("Back") { panel = .overview }
@@ -256,7 +256,7 @@ struct TableEditorSheet: View {
                     Button { style(["font": font.rawValue]) } label: {
                         Text(font.sample).font(.system(size: 23, design: font.design))
                             .frame(maxWidth: .infinity).frame(height: 54)
-                            .foregroundStyle(selected ? accent : .white)
+                            .foregroundStyle(selected ? accent : VellixSurface.controlInk)
                             .background(selected ? accent.opacity(0.15) : .clear, in: Capsule())
                             .pennedSheetField(cornerRadius: 27)
                     }.buttonStyle(.plain).accessibilityLabel(font.title)
@@ -278,7 +278,7 @@ struct TableEditorSheet: View {
             if context?.format == "currency" {
                 Picker("Currency", selection: Binding(get: { context?.currency ?? "USD" }, set: { style(["currency": $0]) })) {
                     ForEach(["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "INR"], id: \.self) { Text($0).tag($0) }
-                }.pickerStyle(.menu).tint(.white).padding(12).pennedSheetField()
+                }.pickerStyle(.menu).tint(VellixSurface.controlInk).padding(12).pennedSheetField()
             }
         }
     }
@@ -352,7 +352,7 @@ struct TableEditorSheet: View {
                 Spacer()
                 if chevron { LibraryIcon(name: "chevright", size: 14).foregroundStyle(.secondary) }
             }.frame(minHeight: 40).contentShape(Rectangle())
-                .foregroundStyle(destructive ? Color(vellixHex: "#FF4874") : .white)
+                .foregroundStyle(destructive ? VellixSurface.destructiveAction : VellixSurface.controlInk)
                 .opacity(enabled ? 1 : 0.3)
         }.buttonStyle(.plain).pennedSheetField().disabled(!enabled)
     }
@@ -375,7 +375,7 @@ struct TableEditorSheet: View {
                 Spacer()
                 RoundedRectangle(cornerRadius: 6).fill(colorBinding(target).wrappedValue)
                     .frame(width: 24, height: 24).overlay(RoundedRectangle(cornerRadius: 6).stroke(accent.opacity(0.5), lineWidth: 2))
-                    .overlay(LibraryIcon(name: "chevdown", size: 10).foregroundStyle(.white.opacity(0.7)))
+                    .overlay(LibraryIcon(name: "chevdown", size: 10).foregroundStyle(VellixSurface.controlInk.opacity(0.7)))
             }.frame(minHeight: 38).contentShape(Rectangle())
         }.buttonStyle(.plain).pennedSheetField()
     }

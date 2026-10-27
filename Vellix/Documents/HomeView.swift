@@ -46,7 +46,7 @@ struct HomeView: View {
             }
             .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 100)
         }
-        .background(Color.black)
+        .background(VellixSurface.workspace)
         .navigationTitle("")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { LibraryBrandMark() }
@@ -57,6 +57,7 @@ struct HomeView: View {
                     Button("Templates") { open(.templates) }
                     Button("Trash") { open(.trash) }
                 } label: { LibraryIcon(name: "dotswavy") }
+                .pennedIconMenuStyle()
                 .accessibilityLabel("Home options")
             }
         }
@@ -208,6 +209,7 @@ struct HomeView: View {
                     Button(expandedStarred ? "Show Fewer" : "Show All") { expandedStarred.toggle() }
                     Button("Open Starred") { open(.favorites) }
                 } label: { LibraryIcon(name: "dotswavy", size: 18).foregroundStyle(.secondary) }
+                .pennedIconMenuStyle()
                 .accessibilityLabel("Starred options")
             }
             .padding(.horizontal, 8)
@@ -250,6 +252,7 @@ struct HomeView: View {
                 Menu {
                     Button("New Folder") { environment.requestFolderCreation(parentFolderID: nil) }
                 } label: { LibraryIcon(name: "dotswavy", size: 18).foregroundStyle(.secondary) }
+                .pennedIconMenuStyle()
                 .accessibilityLabel("Folder options")
             }
             .padding(.horizontal, 8)

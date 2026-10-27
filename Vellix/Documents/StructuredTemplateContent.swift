@@ -16,9 +16,22 @@ nonisolated enum StructuredTemplateContent {
         }
     }
 
-    static func independent(_ json: String, pages: [String: String], paths: [String: String] = [:], resetsComponentResponses: Bool = false) throws -> String {
+    static func independent(_ json: String, pages: [String: String], paths: [String: String] = [:], resetsComponentResponses: Bool = false,
+                            tasks: [String: String] = [:]) throws -> String {
         try transform(canonical(json)) { node in
             var result = node
+            if node["type"] as? String == "doc", var attrs = node["attrs"] as? [String: Any] {
+                if var projection = attrs["taskHistoryProjection"] as? [String: Any],
+                   let old = projection["taskID"] as? String, let id = tasks[old] {
+                    result["content"] = DocumentTaskPages.removingOccurrences(node["content"] as? [[String: Any]] ?? [],
+                        ids: Set(projection["occurrences"] as? [String] ?? []))
+                    projection["taskID"] = id; projection["occurrences"] = [String]()
+                    attrs["taskHistoryProjection"] = projection
+                } else {
+                    attrs.removeValue(forKey: "taskHistoryProjection")
+                }
+                result["attrs"] = attrs
+            }
             if node["type"] as? String != "text", node["type"] as? String != "doc" {
                 var attrs = node["attrs"] as? [String: Any] ?? [:]
                 attrs["id"] = UUID().uuidString
@@ -27,7 +40,9 @@ nonisolated enum StructuredTemplateContent {
                     attrs["response"] = NSNull()
                 }
                 if let task = DocumentTaskMetadata.decode(attrs["trackedTask"]) {
-                    attrs["trackedTask"] = task.independent().object
+                    var independent = task.independent()
+                    independent.id = tasks[task.id] ?? independent.id
+                    attrs["trackedTask"] = independent.object
                 }
                 if node["type"] as? String == "pageReference", let old = attrs["documentID"] as? String {
                     // Never leave a cloned template pointing at an editable source page.

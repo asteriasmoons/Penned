@@ -131,6 +131,7 @@ struct PadWorkspaceView: View {
                 }
                 Button("Close Tab") { perform { try await workspace.closeTab(workspace.activeID) } }
             } label: { LibraryIcon(name: "dotswavy", size: 23).frame(width: 40, height: 40) }
+                .pennedIconMenuStyle()
                 .accessibilityLabel("Workspace actions").help("Workspace actions")
         }
         .padding(.horizontal, 16).frame(minHeight: 60)
@@ -194,8 +195,9 @@ private struct PadWorkspacePane: View {
     private static func makeCalendar(_ environment: AppEnvironment) -> CalendarModel {
         let calendar = CalendarModel(tasks: environment.tasks, documents: environment.documents,
             notes: environment.calendarEventNotes, database: environment.database, dailyNotes: environment.dailyNotes)
-        calendar.completeTask = { [weak environment] id, occurrence, completed in
-            try await environment?.setTaskCompleted(id: id, completed: completed, expectedOccurrenceID: occurrence)
+        calendar.completeTask = { [weak environment] id, occurrence, completed, skipped in
+            guard let environment else { throw DocumentTaskError.missingTask }
+            try await environment.setTaskCompleted(id: id, completed: completed, expectedOccurrenceID: occurrence, skipped: skipped)
         }
         return calendar
     }

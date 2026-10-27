@@ -101,10 +101,10 @@ private final class TestEmailAuth: EmailAuthenticating {
 
 @Suite @MainActor
 struct AccountTests {
-    private func fixture() throws -> (ModelContainer, TestAccountSession, AuthService, TestAccountCloud, AppState) {
+    private func fixture(publishingDeletion: @escaping (AccountIdentity) async throws -> Void = { _ in }) throws -> (ModelContainer, TestAccountSession, AuthService, TestAccountCloud, AppState) {
         let container = try AccountPersistence.makeContainer(inMemory: true)
         let session = TestAccountSession()
-        let auth = AuthService(session: session, credentialState: { _ in .authorized })
+        let auth = AuthService(session: session, publishingOwnerDeletion: publishingDeletion, credentialState: { _ in .authorized })
         let cloud = TestAccountCloud()
         let state = AppState(container: container, auth: auth, cloud: cloud)
         return (container, session, auth, cloud, state)
@@ -250,6 +250,7 @@ struct AccountTests {
         let (container, session, auth, cloud, state) = try fixture()
         let first = try signIn("first", container: container, auth: auth)
         _ = try signIn("second", container: container, auth: auth)
+        try await auth.activate(first)
         state.setSignedIn(first); await state.waitForProfileSync()
         cloud.profiles["second"] = AccountProfile(name: "Other", email: nil, imageData: nil)
         try await state.deleteCurrentAccount()
@@ -269,6 +270,33 @@ struct AccountTests {
         #expect(state.currentUser === user)
         #expect(session.id == "first")
         #expect(try container.mainContext.fetchCount(FetchDescriptor<AuthUser>()) == 1)
+    }
+
+    @Test func failedPublishingRevocationKeepsTheAppleAccountAndCloudProfile() async throws {
+        let (container, session, auth, cloud, state) = try fixture(publishingDeletion: { _ in throw PublishingFailure.unavailable("Server unavailable") })
+        let user = try signIn("first", container: container, auth: auth)
+        state.setSignedIn(user); await state.waitForProfileSync()
+        await #expect(throws: (any Error).self) { try await state.deleteCurrentAccount() }
+        #expect(state.currentUser === user)
+        #expect(session.id == "first")
+        #expect(cloud.deleted.isEmpty)
+        #expect(!user.remoteAuthDeleted)
+    }
+
+    @Test func applePublishingRevocationIsDurableAcrossCloudCleanupRetries() async throws {
+        var revoked: [AccountIdentity] = []
+        let (container, _, auth, cloud, state) = try fixture(publishingDeletion: { revoked.append($0) })
+        let user = try signIn("first", container: container, auth: auth)
+        state.setSignedIn(user); await state.waitForProfileSync()
+        cloud.deletionFails = true
+        await #expect(throws: AccountError.iCloudUnavailable) { try await state.deleteCurrentAccount() }
+        #expect(user.remoteAuthDeleted)
+        let restored = AppState(container: container, auth: auth, cloud: cloud)
+        await restored.bootstrap()?.value
+        cloud.deletionFails = false
+        try await restored.deleteCurrentAccount()
+        #expect(revoked == [.apple("first")])
+        #expect(restored.currentUser == nil)
     }
 
     @Test func deletionOnAnotherDeviceCannotBeResurrectedByCachedProfileSync() async throws {

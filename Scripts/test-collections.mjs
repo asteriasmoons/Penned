@@ -21,7 +21,9 @@ const workspace = await mkdtemp(join(tmpdir(), "penned-collection-checks-"));
 await mkdir(join(workspace, "Sources/Vellix"), { recursive: true });
 await mkdir(join(workspace, "Tests/CollectionTests"), { recursive: true });
 const fullApp = process.env.PENNED_FULL_APP_TESTS === "1";
+const publishing = process.env.PENNED_PUBLISHING_TESTS === "1";
 const files = [
+  "Resources/PennedAppearance.swift",
   "Persistence/AppDatabase.swift", "Persistence/LibraryOwnership.swift", "Persistence/LibraryAccess.swift", "Documents/DocumentRecords.swift", "Documents/DocumentRepositories.swift",
   "Sync/LibrarySyncSchema.swift",
   "Sync/LibrarySyncStore.swift",
@@ -39,7 +41,11 @@ const files = [
   "Collections/CollectionModels.swift", "Collections/CollectionRepository.swift", "Collections/CollectionMigration.swift", "Collections/CollectionStore.swift",
   "Collections/CollectionSnapshotPreview.swift"
 ];
+if (publishing) files.push("Publishing/PublishingQueue.swift", "Publishing/PublishingTypes.swift", "Publishing/PublishingProjection.swift", "Publishing/PublishingDocumentBuilder.swift", "Publishing/PublishingVisibleContent.swift",
+  "Publishing/PublishingClient.swift", "Publishing/PublishingService.swift", "Accounts/SupabaseConfiguration.swift", "Services/EmailAuthentication.swift");
+if (publishing && !fullApp) files.push("Accounts/AccountIdentity.swift");
 if (fullApp) files.push(
+  "Collections/CollectionDeletion.swift",
   "Accounts/LibraryWorkspace.swift", "Accounts/AccountIdentity.swift", "Accounts/AccountPersistence.swift",
   "Services/AccountCloudStore.swift", "Models/AuthUser.swift",
   "Attachments/AttachmentSchemeHandler.swift", "Attachments/AttachmentBlockPreview.swift", "Attachments/AttachmentEditorSheet.swift",
@@ -50,7 +56,7 @@ if (fullApp) files.push(
   "Documents/ImmediateDocumentPreview.swift", "Documents/ImmediateTablePreview.swift", "Documents/DocumentBackgroundFill.swift", "Documents/LibraryDocumentPreview.swift",
   "Search/SearchView.swift", "Tasks/TaskNotificationsManager.swift", "Collections/CollectionCoverSchemeHandler.swift",
   "Resources/VellixDesignSystem.swift", "Resources/VellixAssetIconLibrary.swift", "Resources/VellixSymbolCatalog.swift",
-  "Resources/PennedSheetStyle.swift", "Resources/PennedFrostedCard.swift"
+  "Resources/PennedSheetStyle.swift", "Resources/PennedFrostedCard.swift", "Spaces/PennedAppearanceSettingsView.swift"
 );
 for (const path of files) await symlink(join(root, "Vellix", path), join(workspace, "Sources/Vellix", path.replaceAll("/", "_")));
 const cardSource = await readFile(join(root, "Vellix/Editor/PageCardView.swift"), "utf8");
@@ -74,6 +80,11 @@ await writeFile(join(workspace, "Sources/Vellix/NativePreviewHelpers.swift"), "i
   (fullApp ? declaration(editor, "struct ThemePatternOverlay:", "struct ThemeCoverArt:") : "") +
   declaration(properties, "struct CollectionOptionChip:", "\nextension View {") +
   declaration(editor, "struct ThemeCoverArt:", "\nprivate struct StoredAttachmentImage:"));
+if (publishing) {
+  await symlink(join(root, "Tests/Publishing/PublishingDocumentTests.swift"), join(workspace, "Tests/CollectionTests/PublishingDocumentTests.swift"));
+  await symlink(join(root, "Tests/Publishing/PublishingViewerTests.swift"), join(workspace, "Tests/CollectionTests/PublishingViewerTests.swift"));
+  await symlink(join(root, "Tests/Publishing/PublishingQueueTests.swift"), join(workspace, "Tests/CollectionTests/PublishingQueueTests.swift"));
+} else {
 await symlink(join(root, "Vellix/VellixTests/CollectionTests.swift"), join(workspace, "Tests/CollectionTests/CollectionTests.swift"));
 await symlink(join(root, "Vellix/VellixTests/DocumentLaunchTests.swift"), join(workspace, "Tests/CollectionTests/DocumentLaunchTests.swift"));
 for (const file of ["SpaceTests", "CalendarTests", "DocumentTaskTests", "AttachmentTests", "DocumentTagTests"]) {
@@ -81,8 +92,9 @@ for (const file of ["SpaceTests", "CalendarTests", "DocumentTaskTests", "Attachm
 }
 await symlink(join(root, "Vellix/VellixTests/LibraryOwnershipTests.swift"), join(workspace, "Tests/CollectionTests/LibraryOwnershipTests.swift"));
 await symlink(join(root, "Vellix/VellixTests/LibrarySyncTests.swift"), join(workspace, "Tests/CollectionTests/LibrarySyncTests.swift"));
-if (fullApp) for (const file of ["SpaceEnvironmentTests", "FolderLibraryTests", "AttachmentBridgeTests", "TagBridgeTests", "LibraryWorkspaceTests", "PadWorkspaceTests"]) {
+if (fullApp) for (const file of ["SpaceEnvironmentTests", "FolderLibraryTests", "AttachmentBridgeTests", "TagBridgeTests", "LibraryWorkspaceTests", "PadWorkspaceTests", "AppAppearanceTests", "DocumentPreviewTests"]) {
   await symlink(join(root, `Vellix/VellixTests/${file}.swift`), join(workspace, `Tests/CollectionTests/${file}.swift`));
+}
 }
 await writeFile(join(workspace, "Package.swift"), `// swift-tools-version:6.4
 import PackageDescription

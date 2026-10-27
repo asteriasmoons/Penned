@@ -33,7 +33,8 @@ struct CollectionKanbanView: View {
         var kind: Kind
     }
     private var snapshot: CollectionSnapshot? { store.snapshots[collectionID] ?? savedSnapshot }
-    private let ink = Color(vellixHex: "#E4E6F1")
+    private var ink: Color { Color(vellixHex: appearance.presentationColors.boardText) }
+    private var cardPaper: Color { Color(vellixHex: appearance.presentationColors.boardPaper) }
 
     var body: some View {
         if let snapshot, let view = snapshot.activeView, view.kind == .kanban {
@@ -129,9 +130,9 @@ struct CollectionKanbanView: View {
                     Text(view.name).font(.subheadline).lineLimit(1)
                     LibraryIcon(name: "chevdown", size: 12)
                 }.font(.system(size: 15, design: appearance.fontStyle.design))
-                    .foregroundStyle(Color(vellixHex: "#B59AD9"))
+                    .foregroundStyle(Color(vellixHex: appearance.presentationColors.accent))
                     .padding(.vertical, 8).padding(.horizontal, 8)
-            }.disabled(!editable).accessibilityLabel("Collection views")
+            }.pennedIconMenuStyle().disabled(!editable).accessibilityLabel("Collection views")
             Button { request("configure") } label: {
                 LibraryIcon(name: "dotswavy", size: 18).frame(width: 32, height: 40)
             }.disabled(!editable).accessibilityLabel("Configure collection")
@@ -193,7 +194,7 @@ struct CollectionKanbanView: View {
                 HStack(alignment: .top, spacing: 8) {
                     Text(entry.title).font(.system(.subheadline, design: .rounded).weight(.medium)).lineLimit(3).multilineTextAlignment(.leading)
                     Spacer(minLength: 0)
-                    Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(.white.opacity(0.45)).padding(.top, 3)
+                    Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(ink.opacity(0.45)).padding(.top, 3)
                 }.contentShape(Rectangle())
             }.accessibilityLabel("Open \(entry.title)")
             CollectionChipLayout {
@@ -213,8 +214,8 @@ struct CollectionKanbanView: View {
         .padding(11)
         .foregroundStyle(ink)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(vellixHex: "#2C2C2E"), in: RoundedRectangle(cornerRadius: 11))
-        .overlay(RoundedRectangle(cornerRadius: 11).stroke(.white.opacity(0.1), lineWidth: 1))
+        .background(cardPaper, in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).stroke(ink.opacity(0.1), lineWidth: 1))
         .contextMenu {
             Button("Open", systemImage: "doc.text") { request("openEntry", documentID: entry.id) }
             if editable {
@@ -260,11 +261,19 @@ struct CollectionKanbanView: View {
     private func cancelAdding() { titleFocused = false; addingColumnID = nil; newTitle = "" }
     private func entryComposer(_ column: CollectionKanbanColumn, view: CollectionViewRecord, ink: Color) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            #if os(iOS)
+            TextField("New entry title", text: $newTitle.singleLinePageTitle)
+                .focused($titleFocused).lineLimit(1).font(.subheadline)
+                .padding(10).background(.black.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(ink.opacity(0.25), lineWidth: 1))
+                .onSubmit { createEntry(view: view, columnID: column.id) }
+            #else
             TextField("New entry title", text: $newTitle, axis: .vertical)
                 .focused($titleFocused).lineLimit(1...3).font(.subheadline)
                 .padding(10).background(.black.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(ink.opacity(0.25), lineWidth: 1))
                 .onSubmit { createEntry(view: view, columnID: column.id) }
+            #endif
             HStack(spacing: 18) {
                 Button("Add Entry") { createEntry(view: view, columnID: column.id) }.fontWeight(.semibold).disabled(newTitle.trimmedNonEmpty == nil)
                 Button("Cancel") { cancelAdding() }
@@ -346,7 +355,7 @@ struct CollectionKanbanColumnsSheet: View {
                 .sheet(item: $target) { target in
                     CollectionKanbanColumnEditor(store: store, collectionID: collectionID, viewID: viewID, column: target.column)
                 }
-        }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.medium, .large])
+        }.tint(VellixSurface.violet).presentationDetents([.medium, .large])
     }
 }
 
@@ -379,7 +388,7 @@ struct CollectionKanbanColumnEditor: View {
                             Text("Choose Color")
                             Spacer()
                             RoundedRectangle(cornerRadius: 6).fill(Color(vellixHex: hex)).frame(width: 46, height: 30)
-                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.white.opacity(0.25), lineWidth: 1))
+                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(VellixSurface.controlInk.opacity(0.25), lineWidth: 1))
                         }
                     }.collectionFormRows(showsSeparator: true)
                     TextField("#RRGGBB", text: $hex).autocorrectionDisabled()
@@ -409,7 +418,7 @@ struct CollectionKanbanColumnEditor: View {
                         catch { self.error = error.localizedDescription }
                     }
                 }
-        }.tint(VellixSurface.violet).preferredColorScheme(.dark).presentationDetents([.medium, .large])
+        }.tint(VellixSurface.violet).presentationDetents([.medium, .large])
     }
     private func save() {
         do {

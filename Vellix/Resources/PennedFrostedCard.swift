@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Shared frosted-glass recipe, ported from Voxiverse without content sizing.
 struct PennedFrostedMaterial: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let tint: Color
     var cornerRadius: CGFloat = 17
 
@@ -11,12 +12,14 @@ struct PennedFrostedMaterial: View {
 
     var body: some View {
         ZStack {
+            if reduceTransparency { shape.fill(tint) } else {
             coloredField
 
             Color.clear
                 .glassEffect(.regular.tint(tint.opacity(0.22)), in: shape)
 
             frostClouds
+            }
         }
         .clipShape(shape)
     }
