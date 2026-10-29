@@ -15,7 +15,7 @@
     return { widths, offset };
   }
   const color = value => /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(value || "") ? value : null;
-  const fonts = { system: "system-ui,sans-serif", rounded: "ui-rounded,system-ui,sans-serif", serif: "ui-serif,Georgia,serif", mono: "ui-monospace,monospace" };
+  const fonts = { system: "system-ui,sans-serif", rounded: "ui-rounded,system-ui,sans-serif", serif: "ui-serif,Georgia,serif", mono: "ui-monospace,monospace", hachiMaruPop: '"HachiMaruPop",cursive' };
   let api, T;
   let availableFunctions;
   function functions() {
@@ -154,7 +154,7 @@
     if (attrs.bold != null) styles.push(`font-weight:${attrs.bold ? 700 : 400}`);
     if (attrs.italic) styles.push("font-style:italic");
     if (attrs.strike) styles.push("text-decoration:line-through");
-    if (attrs.code) styles.push("font-family:ui-monospace,monospace");
+    if (attrs.code) styles.push(`font-family:${attrs.font === "hachiMaruPop" ? fonts.hachiMaruPop : "var(--vellix-code-font-family,ui-monospace),monospace"}`);
     if (["left", "center", "right", "justify"].includes(attrs.align)) styles.push(`text-align:${attrs.align}`);
     return styles.join(";");
   }

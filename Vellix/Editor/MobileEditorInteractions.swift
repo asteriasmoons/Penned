@@ -10,15 +10,35 @@ enum MobileEditorInteractions {
   spacing.textContent = `
     .tiptap-editor .vellix-table-wrapper:has(+ .vellix-page-reference:not([hidden])) { margin-bottom: 26px; }
     .tiptap-editor .vellix-page-reference:not([hidden]) + .vellix-table-wrapper { margin-top: 26px; }
+    .tiptap-editor [data-vellix-divider]:is([data-divider-style="thinLine"], [data-divider-style="thickLine"]) { min-height: 20px !important; }
+    .tiptap-editor [data-divider-style="thinLine"] .vellix-divider-line {
+      width: calc(100% - 12px); height: 1px; border-radius: 1px;
+      background: currentColor; opacity: 0.5;
+    }
+    .tiptap-editor [data-divider-style="thickLine"] .vellix-divider-line {
+      width: calc(100% - 12px); height: 2px; border-radius: 1px;
+      background: currentColor; opacity: 1;
+    }
   `;
   document.head.appendChild(spacing);
   editor.on("destroy", () => spacing.remove());
   const command = window.tiptapCommand;
   let suppressedSlash = null;
   let closingSlash = false;
+  let historySignature = null;
 
   const editable = () => editor.isEditable &&
     (document.documentElement.dataset.vellixSelectionMode || "off") === "off";
+
+  function publishHistory(force = false) {
+    const canUndo = editor.can().undo(), canRedo = editor.can().redo();
+    const signature = `${canUndo}:${canRedo}`;
+    if (force !== true && signature === historySignature) return;
+    historySignature = signature;
+    window.webkit.messageHandlers.tiptap.postMessage({
+      kind: "mobileHistoryAvailability", payload: { canUndo, canRedo },
+    });
+  }
 
   function slashRange() {
     const { empty, $from } = editor.state.selection;
@@ -57,6 +77,7 @@ enum MobileEditorInteractions {
   // Release the native gate before the shared update listeners publish a new trigger.
   editor.on("transaction", () => {
     if (suppressedSlash !== null && slashRange()?.from !== suppressedSlash) suppressSlash(null);
+    publishHistory();
   });
   editor.on("update", keepSlashDismissed);
   editor.on("selectionUpdate", keepSlashDismissed);
@@ -91,6 +112,34 @@ enum MobileEditorInteractions {
       tr.setSelection(tr.selection.constructor.near(tr.doc.resolve(start + divider.nodeSize + 1), 1));
       return true;
     }).run();
+  }
+
+  function backspacePastDivider() {
+    if (!editable() || editor.view.composing) return false;
+    const { state } = editor;
+    const { empty, $from, $cursor } = state.selection;
+    if (!empty || !$cursor || !$from.parent.isTextblock ||
+        $from.parent.content.size !== 0 || $from.parentOffset !== 0) return false;
+    const start = $from.before();
+    const boundary = state.doc.resolve(start);
+    const divider = boundary.nodeBefore;
+    if (!divider || !["divider", "horizontalRule"].includes(divider.type.name) ||
+        !boundary.parent.canReplace(boundary.index(), boundary.index() + 1)) return false;
+
+    const end = $from.after();
+    const TextSelection = state.selection.constructor;
+    editor.view.dom.blur();
+    const handled = editor.chain().command(({ tr, commands }) => {
+      tr.delete(start, end);
+      const position = tr.doc.resolve(Math.min(start, tr.doc.content.size));
+      const caret = TextSelection.findFrom(position, -1, true) || TextSelection.findFrom(position, 1, true);
+      // Keep a valid unfocused selection without selecting an atomic divider or inserting content.
+      if (caret) tr.setSelection(caret);
+      else commands.selectAll();
+      return true;
+    }).blur().run();
+    window.getSelection()?.removeAllRanges();
+    return handled;
   }
 
   function backspaceIntoQuote() {
@@ -165,14 +214,14 @@ enum MobileEditorInteractions {
 
   editor.view.dom.addEventListener("keydown", event => {
     if (event.key !== "Backspace" || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
-    if (backspaceIntoQuote()) {
+    if (backspacePastDivider() || backspaceIntoQuote()) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }
   }, true);
   editor.view.dom.addEventListener("beforeinput", event => {
     if (event.inputType !== "deleteContentBackward" || event.isComposing || !event.cancelable) return;
-    if (backspaceIntoQuote()) {
+    if (backspacePastDivider() || backspaceIntoQuote()) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }
@@ -180,7 +229,26 @@ enum MobileEditorInteractions {
 
   window.tiptapCommand = function (name, args = {}) {
     if (name === "mobileDismissSlashMenu") return dismissSlash();
-    if (name === "setContent") suppressSlash(null, true);
+    if (name === "setContent") {
+      suppressSlash(null, true);
+      return Promise.resolve(command(name, args)).then(result => { publishHistory(true); return result; });
+    }
+    if (name === "undo" || name === "redo") {
+      if (!editable()) return false;
+      const wasFocused = editor.isFocused;
+      const result = editor.commands[name]();
+      if (!wasFocused) window.getSelection()?.removeAllRanges();
+      publishHistory();
+      return result;
+    }
+    if (name === "mobilePreparePaste") {
+      if (!editable()) return false;
+      const focused = editor.state.selection.$from.parent.inlineContent
+        ? editor.commands.focus() : command("focusDocumentEnd");
+      return Promise.resolve(focused).then(result => result === false ? false : new Promise(resolve => {
+        requestAnimationFrame(() => resolve(!editor.isDestroyed && editor.view.hasFocus()));
+      }));
+    }
     if (name === "insertDivider") return insertDivider(args.style);
     if (name === "insertBlock" && /^divider(?::|$)/.test(args.blockType || "")) {
       return insertDivider(args.blockType.split(":")[1]);
@@ -193,6 +261,7 @@ enum MobileEditorInteractions {
     }
     return command(name, args);
   };
+  publishHistory(true);
 })();
 """#
 }

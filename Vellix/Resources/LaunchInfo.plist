@@ -2,6 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Fonts/HachiMaruPop-Regular.ttf</string>
+		<string>Fonts/HachiMaruPop-SyntheticBold.ttf</string>
+		<string>Fonts/HachiMaruPop-SyntheticItalic.ttf</string>
+		<string>Fonts/HachiMaruPop-SyntheticBoldItalic.ttf</string>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array><dict>
+		<key>CFBundleURLName</key><string>im.penned.document</string>
+		<key>CFBundleTypeRole</key><string>Viewer</string>
+		<key>CFBundleURLSchemes</key><array><string>penned</string></array>
+	</dict></array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
@@ -10,6 +23,8 @@
 	<string>$(SUPABASE_URL)</string>
 	<key>SUPABASE_PUBLISHABLE_KEY</key>
 	<string>$(SUPABASE_PUBLISHABLE_KEY)</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save exported images to your photo library.</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

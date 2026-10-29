@@ -10,7 +10,7 @@ struct CollectionSnapshotPreview: View {
         if let view = snapshot.activeView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    Text(snapshot.name).font(.system(size: 18, weight: .bold, design: appearance.fontStyle.design))
+                    Text(snapshot.name).font(appearance.fontStyle.font(size: 18, weight: .bold))
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Text(view.name).font(.system(size: 15)).foregroundStyle(Color(vellixHex: appearance.presentationColors.accent))
                     LibraryIcon(name: "chevdown", size: 18).foregroundStyle(Color(vellixHex: appearance.presentationColors.accent))
@@ -22,7 +22,7 @@ struct CollectionSnapshotPreview: View {
                 case .kanban: kanban(view)
                 }
             }
-            .font(.system(size: 15, design: appearance.fontStyle.design))
+            .font(appearance.fontStyle.font(size: 15))
             .foregroundStyle(Color(vellixHex: appearance.textColorHex))
             .allowsHitTesting(false)
         }
@@ -46,7 +46,7 @@ struct CollectionSnapshotPreview: View {
             Text(title).fontWeight(.semibold).frame(width: 196, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 10)
             ForEach(fields) { field in
                 Group {
-                    if let entry { CollectionValueDisplay(field: field, value: entry.values[field.id] ?? CollectionValue(), ink: Color(vellixHex: appearance.textColorHex)) }
+                    if let entry { CollectionValueDisplay(field: field, value: entry.values[field.id] ?? CollectionValue(), ink: Color(vellixHex: appearance.textColorHex), fontStyle: appearance.fontStyle) }
                     else { Label { Text(field.name) } icon: { LibraryIcon(name: field.resolvedIcon, size: 18) } }
                 }.frame(width: field.kind == .number || field.kind == .checkbox ? 96 : 156, alignment: .leading)
                     .padding(.horizontal, 12).padding(.vertical, 10)
@@ -90,7 +90,7 @@ struct CollectionSnapshotPreview: View {
                     HStack(spacing: 8) {
                         LibraryIcon(name: group.column.collapsed ? "chevright" : "chevdown", size: 12)
                         Text(group.column.name).fontWeight(.semibold)
-                        Text("\(group.entries.count)").font(.caption).padding(5).background(.black.opacity(0.24), in: Capsule()).foregroundStyle(.white)
+                        Text("\(group.entries.count)").font(appearance.fontStyle == .hachiMaruPop ? appearance.fontStyle.font(size: 12) : .caption).padding(5).background(.black.opacity(0.24), in: Capsule()).foregroundStyle(.white)
                         Spacer(); Image(systemName: "plus")
                     }.frame(minHeight: 36).foregroundStyle(Self.columnInk(group.column.color))
                     if !group.column.collapsed {
@@ -133,7 +133,7 @@ struct CollectionSnapshotPreview: View {
     }
     private func chip(_ text: String, color hex: String) -> some View {
         let color = Color(vellixHex: hex)
-        return Text(text).font(.caption2.weight(.medium)).lineLimit(2).padding(.horizontal, 5).padding(.vertical, 2)
+        return Text(text).font(appearance.fontStyle == .hachiMaruPop ? appearance.fontStyle.font(size: 11, weight: .medium) : .caption2.weight(.medium)).lineLimit(2).padding(.horizontal, 5).padding(.vertical, 2)
             .foregroundStyle(color).background(color.opacity(0.2), in: RoundedRectangle(cornerRadius: 4))
     }
     private static func columnInk(_ hex: String) -> Color {
@@ -152,8 +152,8 @@ struct CollectionFieldsSnapshotPreview: View {
             ForEach(snapshot.fields) { field in
                 HStack(alignment: .top, spacing: 12) {
                     Label { Text(field.name) } icon: { LibraryIcon(name: field.resolvedIcon, size: 18) }
-                        .font(.subheadline.weight(.semibold)).frame(width: 140, alignment: .leading)
-                    CollectionValueDisplay(field: field, value: entry.values[field.id] ?? CollectionValue(), ink: Color(vellixHex: appearance.textColorHex))
+                        .font(appearance.fontStyle == .hachiMaruPop ? appearance.fontStyle.font(.subheadline, weight: .semibold) : .subheadline.weight(.semibold)).frame(width: 140, alignment: .leading)
+                    CollectionValueDisplay(field: field, value: entry.values[field.id] ?? CollectionValue(), ink: Color(vellixHex: appearance.textColorHex), fontStyle: appearance.fontStyle)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }.frame(minHeight: 44)
             }

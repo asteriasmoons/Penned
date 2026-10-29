@@ -9,6 +9,10 @@ struct PageCardView: View {
     var isStylePreview = false
     var fillsDocumentWidth = false
     var attachmentStore: AttachmentStore? = nil
+    var containingFontStyle: DocumentFontStyle? = nil
+    private var textFont: DocumentFontStyle {
+        containingFontStyle == .hachiMaruPop ? .hachiMaruPop : document.appearance.fontStyle
+    }
 
     @ViewBuilder
     var body: some View {
@@ -91,12 +95,12 @@ struct PageCardView: View {
         let showsExcerpt = compact || wide || full || !style.showsPages
         return VStack(alignment: .leading, spacing: compact ? 4 : (wide ? 6 : 9)) {
             Text(isStylePreview ? "Card Title" : document.title)
-                .font(.system(size: full ? 20 : (wide ? 18 : 15), weight: .black, design: document.appearance.fontStyle.design))
+                .font(textFont.font(size: full ? 20 : (wide ? 18 : 15), weight: .black))
                 .lineLimit(full ? 2 : 1)
             if showsExcerpt {
                 Text(isStylePreview ? "Preview of the page will be displayed here. Tap to add content." :
                     (document.previewText == "No content yet" ? "Empty page" : document.previewText))
-                    .font(.system(size: compact ? 11 : 13, design: document.appearance.fontStyle.design))
+                    .font(textFont.font(size: compact ? 11 : 13))
                     .foregroundStyle(Color(vellixHex: textColor).opacity(0.62))
                     .lineLimit(compact ? 1 : (full ? 4 : 2))
             }

@@ -165,11 +165,11 @@ struct CollectionDocumentFields: View {
                     HStack(alignment: .top, spacing: 12) {
                         Button { onBeginEditing(); fieldTarget = field } label: {
                             Label { Text(field.name) } icon: { LibraryIcon(name: field.resolvedIcon, size: 18) }
-                                .font(.subheadline.weight(.semibold))
+                                .font(appearance.fontStyle == .hachiMaruPop ? appearance.fontStyle.font(.subheadline, weight: .semibold) : .subheadline.weight(.semibold))
                                 .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                         }.frame(maxWidth: 140, alignment: .leading)
                         Button { onBeginEditing(); valueTarget = field } label: {
-                            CollectionValueDisplay(field: field, value: entry.values[field.id] ?? CollectionValue(), ink: Color(vellixHex: appearance.textColorHex))
+                            CollectionValueDisplay(field: field, value: entry.values[field.id] ?? CollectionValue(), ink: Color(vellixHex: appearance.textColorHex), fontStyle: appearance.fontStyle)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }.frame(minHeight: 44).buttonStyle(.plain)

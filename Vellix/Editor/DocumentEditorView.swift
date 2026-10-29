@@ -18,6 +18,26 @@ private enum DocumentEditorCoordinateSpace {
     static let workspace = "DocumentEditorWorkspace"
 }
 
+#if os(iOS)
+private struct MobileCollectionSelectionHighlight: View {
+    @ObservedObject var session: TipTapEditorSession
+    let blockID: String
+
+    var body: some View {
+        if session.selectionMode != "off", session.selectedCollectionBlockIDs.contains(blockID) {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(vellixHex: "#B59AD9").opacity(0.18))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color(vellixHex: "#B59AD9").opacity(0.26), lineWidth: 1)
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+}
+#endif
+
 #if canImport(UIKit)
 /// Holds a weak reference to the document's backing UIScrollView so the editor can
 /// drive it programmatically (e.g. lifting a table above the editing sheet).
@@ -139,6 +159,9 @@ struct DocumentEditorView: View {
     @State private var documentScrollProxy = DocumentScrollProxy()
     @State private var keyboardFrame = CGRect.null
     #endif
+    #if os(iOS)
+    @State private var blockSelectionScrollDriver = MobileBlockSelectionScrollDriver()
+    #endif
     @State private var slashMenuState: TipTapSlashMenuState?
     @State private var pageBreakRegions: [TipTapPageBreakRegion] = []
     @State private var collectionRegions: [TipTapCollectionRegion] = []
@@ -256,6 +279,10 @@ struct DocumentEditorView: View {
             editorContentHeight = clampedHeight
         }
         #if os(iOS)
+        .onReceive(model.session.blockSelectionDragUpdates) { handleBlockSelectionDrag($0) }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            blockSelectionScrollDriver.stop()
+        }
         .onReceive(model.session.caretUpdates) { update in
             if update == nil { documentScrollProxy.pendingCaretRevision = nil }
             else { queueCaretReveal() }
@@ -299,6 +326,9 @@ struct DocumentEditorView: View {
             guard selectionMode != nextMode else { return }
             selectionMode = nextMode
             if nextMode == .off {
+                #if os(iOS)
+                blockSelectionScrollDriver.stop()
+                #endif
                 selectedBlockCount = 0
                 selectedStylePanel = nil
             }
@@ -392,6 +422,9 @@ struct DocumentEditorView: View {
             environment.select(child)
         }
         .onDisappear {
+            #if os(iOS)
+            blockSelectionScrollDriver.stop()
+            #endif
             model.session.pauseAttachmentPlayback()
             model.attachmentActionRequest = nil
             dismissBlockDeletion()
@@ -750,12 +783,18 @@ struct DocumentEditorView: View {
         let topPadding: CGFloat = isCompact ? 74 : 150
         let bottomPadding: CGFloat = isCompact ? 118 : 140
         let minimumHeight: CGFloat = max(0, size.height - topPadding - bottomPadding)
+        // Styled page height and the external toolbar scrolling clearance are independent.
+        let styledMinimumHeight = max(0, size.height - topPadding)
+        let styledWidth = min(max(0, size.width - 2 * horizontalPadding),
+            workspace != nil ? 720 : (isCompact ? size.width : 900)) * 0.96
 
         return VStack(spacing: appearance.themeID == nil ? 0 : 30) {
             if appearance.themeID == nil {
                 plainDocument(document, appearance: appearance, isCompact: isCompact, minimumHeight: minimumHeight)
             } else {
-                themedDocument(document, appearance: appearance, isCompact: isCompact, bottomPadding: isCompact ? 4 : 8)
+                themedDocument(document, appearance: appearance, isCompact: isCompact,
+                    minimumHeight: styledMinimumHeight, bottomPadding: isCompact ? 4 : 8)
+                    .frame(width: styledWidth)
             }
         }
         .frame(maxWidth: .infinity)
@@ -813,8 +852,8 @@ struct DocumentEditorView: View {
 
         if selectionMode == .off && selectedBlockCount == 0 && !isEditingDocument && !isEditorLocked {
             EditorFloatingToolbar(
+                session: model.session,
                 appearanceAction: { showAppearance = true },
-                selectionModeAction: { setSelectionMode($0) },
                 isCompact: isCompact
             )
             .padding(.horizontal, isCompact ? 26 : 34)
@@ -972,7 +1011,7 @@ struct DocumentEditorView: View {
     @ViewBuilder private func documentTitle(_ document: DocumentRecord, appearance: DocumentAppearance, isCompact: Bool) -> some View {
         if DocumentTaskPages.isDetail(document.id), let task = model.historyPageTask {
             TaskHistoryPageHeader(task: task, appearance: appearance, title: $titleText,
-                saveTitle: { model.rename(title: $0) }, titleFocused: $isTitleFocused, titleSize: isCompact ? 22 : 30, locked: isEditorLocked)
+                saveTitle: { model.rename(title: $0) }, titleFocused: $isTitleFocused, titleSize: 24, locked: isEditorLocked)
         } else {
         HStack(alignment: .center, spacing: 10) {
             if let day = document.dailyNoteDate.flatMap(DailyNoteDay.init(key:)) {
@@ -988,7 +1027,7 @@ struct DocumentEditorView: View {
                     }
                 } label: {
                     HStack(spacing: 6) { LibraryIcon(name: "mooncal", size: 18); Text(day.title) }
-                        .font(.system(size: isCompact ? 17 : 23, weight: .bold, design: appearance.fontStyle.design))
+                        .font(appearance.fontStyle.font(size: 24, weight: .bold))
                         .padding(.horizontal, 8).frame(minHeight: 44)
                         .background(Color(vellixHex: appearance.textColorHex).opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
                 }.buttonStyle(.plain).fixedSize().accessibilityLabel("Open Calendar for " + day.title)
@@ -1001,11 +1040,14 @@ struct DocumentEditorView: View {
     }
 
     private func titleInput(_ prompt: String, text: Binding<String>, appearance: DocumentAppearance, isCompact: Bool) -> some View {
-        TextField(prompt, text: text.singleLinePageTitle)
+        TextField(prompt, text: text.singleLinePageTitle, axis: .vertical)
             .focused($isTitleFocused)
-            .font(.system(size: isCompact ? 22 : 30, weight: .black, design: appearance.fontStyle.design))
+            .font(appearance.fontStyle.font(size: 24, weight: .black))
             .foregroundStyle(Color(vellixHex: appearance.textColorHex))
-            .textFieldStyle(.plain).lineLimit(1)
+            .textFieldStyle(.plain).lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .layoutPriority(1)
+            .submitLabel(.done)
             .frame(maxWidth: .infinity, alignment: .leading).allowsHitTesting(!isEditorLocked)
             .onSubmit { model.rename(title: titleText); environment.refresh() }
     }
@@ -1059,6 +1101,7 @@ struct DocumentEditorView: View {
         _ document: DocumentRecord,
         appearance: DocumentAppearance,
         isCompact: Bool,
+        minimumHeight: CGFloat,
         bottomPadding: CGFloat
     ) -> some View {
         VStack(spacing: 0) {
@@ -1102,12 +1145,15 @@ struct DocumentEditorView: View {
                 .padding(.top, isCompact ? 16 : 28)
             }
             .padding(.bottom, bottomPadding)
+            // The styled page, not the WebView, owns the viewport minimum.
+            .frame(minHeight: minimumHeight, alignment: .topLeading)
             .backgroundPreferenceValue(PageSheetEditorBoundsPreferenceKey.self) { editorBounds in
                 pageSheetBackgrounds(
                     appearance: appearance,
                     isCompact: isCompact,
                     editorBounds: editorBounds,
-                    isVisible: true
+                    isVisible: true,
+                    minimumHeight: minimumHeight
                 )
             }
 
@@ -1131,7 +1177,7 @@ struct DocumentEditorView: View {
                                 } label: {
                                     PageCardView(document: child, style: style,
                                         photo: CardImageLoader.image(path: style.imagePath, store: environment.attachmentStore), fillsDocumentWidth: true,
-                                        attachmentStore: environment.attachmentStore)
+                                        attachmentStore: environment.attachmentStore, containingFontStyle: appearance.fontStyle)
                                         .shadow(color: VellixSurface.elevationShadow(opacity: 0.3), radius: 10, x: 0, y: 7)
                                 }.buttonStyle(.plain)
                                 if style.backdrop == .photo, let photo = style.remotePhoto { CardPhotoCredit(photo: photo) }
@@ -1385,6 +1431,24 @@ struct DocumentEditorView: View {
         #endif
     }
 
+    #if os(iOS)
+    private func handleBlockSelectionDrag(_ drag: MobileBlockSelectionDrag) {
+        guard drag.active else { blockSelectionScrollDriver.finish(token: drag.token); return }
+        guard !isEditorLocked, environment.selectedDocumentID == model.documentID,
+              model.session.selectionMode != "off", let scrollView = documentScrollProxy.scrollView else {
+            blockSelectionScrollDriver.stop()
+            return
+        }
+        let model = model, environment = environment
+        blockSelectionScrollDriver.receive(drag, scrollView: scrollView, webView: model.webViewStore.webView) { [weak model, weak environment] in
+            guard let model, let environment else { return false }
+            return environment.selectedDocumentID == model.documentID && model.session.selectionMode != "off"
+                && !model.session.isLoadingDocument && model.session.editingEnabled
+                && model.session.renderedDocumentID == model.documentID
+        }
+    }
+    #endif
+
     #if canImport(UIKit)
     private func updateKeyboardFrame(_ notification: Notification) {
         if let value = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue {
@@ -1482,6 +1546,11 @@ struct DocumentEditorView: View {
                                         needsResize: abs(region.rect.height - height) > 1)
                                 })
                                 .frame(width: region.rect.width, height: region.rect.height)
+                                #if os(iOS)
+                                .overlay {
+                                    MobileCollectionSelectionHighlight(session: model.session, blockID: region.id)
+                                }
+                                #endif
                                 .offset(x: region.rect.minX, y: region.rect.minY)
                                 .allowsHitTesting(presentationReady && selectionMode == .off && environment.selectedDocumentID == model.documentID)
                                 .id(region.id + (snapshot.activeView?.id ?? ""))
@@ -1489,6 +1558,10 @@ struct DocumentEditorView: View {
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
+            #if os(iOS)
+            // Reserve paint space outside the unchanged text column for rounded selection surfaces.
+            .padding(.horizontal, -MobileBlockSelection.selectionGutter)
+            #endif
             .opacity(presentationReady ? 1 : 0)
             .accessibilityHidden(!presentationReady)
             if !presentationReady {
@@ -1787,7 +1860,7 @@ private struct EditorTopControls: View {
             if showsDocumentHeading && isThemed && !isCompact {
               VStack(alignment: .leading, spacing: 4) {
                 Text(document.title)
-                    .font(.system(size: isCompact ? 16 : 22, weight: .black, design: document.appearance.fontStyle.design))
+                    .font(document.appearance.fontStyle.font(size: isCompact ? 16 : 22, weight: .black))
                     .foregroundStyle(VellixSurface.controlInk.opacity(0.82))
                     .lineLimit(1)
                 Text("Library")
@@ -2199,8 +2272,8 @@ private struct SelectedBlockStylePanel: View {
                 headingOption("Title", weight: .bold)
                 headingOption("Subtitle", weight: .semibold)
                 headingOption("Heading", weight: .semibold, opacity: 0.72)
-                headingOption("Strong", weight: .bold)
-                headingOption("Body", weight: .regular)
+                headingOption("Subheading", weight: .bold)
+                headingOption("Paragraph", weight: .regular)
                 headingOption("Caption", weight: .regular, opacity: 0.52)
             }
 
@@ -2460,44 +2533,118 @@ private struct SelectedBlockActionsSheet: View {
 }
 
 private struct EditorFloatingToolbar: View {
+    @ObservedObject var session: TipTapEditorSession
+    @State private var canPaste = false
+    @State private var showsHistoryBar = false
     var appearanceAction: () -> Void
-    var selectionModeAction: (EditorSelectionMode) -> Void
     var isCompact: Bool
 
-    var body: some View {
-        HStack {
-            HStack(spacing: isCompact ? 16 : 26) {
-                assetToolbarButton("paintbrush", action: appearanceAction)
-                Menu {
-                    Button("Single Select") {
-                        selectionModeAction(.single)
-                    }
-                    Button("Multi Select") {
-                        selectionModeAction(.multi)
-                    }
-                    Button("Stop Selecting") {
-                        selectionModeAction(.off)
-                    }
-                } label: {
-                    assetToolbarImage("selectsparkle")
-                }
-                .pennedIconMenuStyle()
-            }
-            .padding(.horizontal, isCompact ? 18 : 30)
-            .frame(height: isCompact ? 54 : 74)
-            .background(.thinMaterial, in: Capsule())
-            .overlay { Capsule().stroke(VellixSurface.controlInk.opacity(0.13), lineWidth: 1) }
+    private var editorAvailable: Bool { session.isReady && !session.isLoadingDocument && session.isPresentationReady }
 
-            Spacer()
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            if showsHistoryBar {
+                historyBar
+                    .frame(maxWidth: 460)
+                    .frame(maxWidth: .infinity)
+            } else {
+                HStack {
+                    HStack(spacing: isCompact ? 16 : 26) {
+                        assetToolbarButton("paintbrush", title: "Document Appearance", action: appearanceAction)
+                        assetToolbarButton("undo", title: "Undo, Paste and Redo", enabled: editorAvailable) {
+                            refreshPasteAvailability()
+                            showsHistoryBar = true
+                        }
+                    }
+                    .padding(.horizontal, isCompact ? 18 : 30)
+                    .frame(height: isCompact ? 54 : 74)
+                    .background(.thinMaterial, in: Capsule())
+                    .overlay { Capsule().stroke(VellixSurface.controlInk.opacity(0.13), lineWidth: 1) }
+
+                    Spacer()
+                }
+            }
         }
         .shadow(color: VellixSurface.elevationShadow(opacity: 0.42), radius: 26, x: 0, y: 12)
+        .onAppear(perform: refreshPasteAvailability)
+        #if canImport(UIKit)
+        .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in refreshPasteAvailability() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in refreshPasteAvailability() }
+        #elseif canImport(AppKit)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refreshPasteAvailability() }
+        #endif
     }
 
-    private func assetToolbarButton(_ assetName: String, action: @escaping () -> Void) -> some View {
+    private var historyBar: some View {
+        VStack(spacing: 4) {
+            Button { showsHistoryBar = false } label: {
+                Capsule()
+                    .fill(VellixSurface.controlInk.opacity(0.22))
+                    .frame(width: 34, height: 4)
+                    .frame(width: 44, height: 12)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close History Controls")
+            HStack(spacing: 0) {
+                historyButton("undo", title: "Undo", enabled: editorAvailable && session.canUndo, action: session.undo)
+                historyButton("paste", title: "Paste", enabled: editorAvailable && canPaste, action: session.paste)
+                historyButton("redo", title: "Redo", enabled: editorAvailable && session.canRedo, action: session.redo)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+        }
+        .frame(height: isCompact ? 88 : 102)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: isCompact ? 24 : 28, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: isCompact ? 24 : 28, style: .continuous)
+                .stroke(VellixSurface.controlInk.opacity(0.13), lineWidth: 1)
+        }
+        .simultaneousGesture(DragGesture(minimumDistance: 12).onEnded { value in
+            if value.translation.height > 18 { showsHistoryBar = false }
+        })
+        .accessibilityAction(.escape) { showsHistoryBar = false }
+    }
+
+    private func historyButton(_ assetName: String, title: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            assetToolbarImage(assetName)
+            VStack(spacing: 3) {
+                assetToolbarImage(assetName)
+                Text(title)
+                    .font(.system(size: isCompact ? 11 : 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(VellixSurface.secondaryControlInk(opacity: 0.72))
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: isCompact ? 62 : 76)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.35)
+        .accessibilityLabel(title)
+        .help(title)
+    }
+
+    private func refreshPasteAvailability() {
+        #if canImport(UIKit)
+        let clipboard = UIPasteboard.general
+        canPaste = clipboard.hasStrings || clipboard.hasImages || clipboard.hasURLs
+            || clipboard.types.contains(UTType.html.identifier) || clipboard.types.contains(UTType.fileURL.identifier)
+        #elseif canImport(AppKit)
+        canPaste = !(NSPasteboard.general.types ?? []).isEmpty
+        #endif
+    }
+
+    private func assetToolbarButton(_ assetName: String, title: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            assetToolbarImage(assetName)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.35)
+        .accessibilityLabel(title)
+        .help(title)
     }
 
     private func assetToolbarImage(_ name: String) -> some View {
@@ -2651,11 +2798,10 @@ private struct EditorInsertMenu: View {
                     }
                 }
             }
-            Button("H1") { insertBlockAction("heading1") }
-            Button("H2") { insertBlockAction("heading2") }
-            Button("H3") { insertBlockAction("heading3") }
-            Button("H4") { insertBlockAction("heading4") }
-            Button("H5") { insertBlockAction("heading5") }
+            Button("Title") { insertBlockAction("heading1") }
+            Button("Subtitle") { insertBlockAction("heading2") }
+            Button("Heading") { insertBlockAction("heading3") }
+            Button("Subheading") { insertBlockAction("heading4") }
             Button("Paragraph") { insertBlockAction("paragraph") }
             Button("Caption") { insertBlockAction("caption") }
             Button("Page") { insertBlockAction("nestedPage") }
@@ -2663,12 +2809,11 @@ private struct EditorInsertMenu: View {
             Button("Table") { insertBlockAction("table") }
             Button("Collection") { insertBlockAction("collection") }
             Menu("Toggle") {
-                Button("Body") { insertBlockAction("toggleListItem") }
-                Button("H1") { insertBlockAction("toggleHeading1") }
-                Button("H2") { insertBlockAction("toggleHeading2") }
-                Button("H3") { insertBlockAction("toggleHeading3") }
-                Button("H4") { insertBlockAction("toggleHeading4") }
-                Button("H5") { insertBlockAction("toggleHeading5") }
+                Button("Paragraph") { insertBlockAction("toggleListItem") }
+                Button("Title") { insertBlockAction("toggleHeading1") }
+                Button("Subtitle") { insertBlockAction("toggleHeading2") }
+                Button("Heading") { insertBlockAction("toggleHeading3") }
+                Button("Subheading") { insertBlockAction("toggleHeading4") }
             }
             Menu("Callout") {
                 Button("With Icon") { calloutAction() }

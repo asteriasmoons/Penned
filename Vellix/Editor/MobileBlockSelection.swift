@@ -1,12 +1,16 @@
 #if os(iOS)
+import CoreGraphics
+
 enum MobileBlockSelection {
+    static let selectionGutter: CGFloat = 6
+
     static let script = #"""
 (() => {
   if (window.PennedBlockSelection) return;
-  let editor, key, mirrorMode, controller, closeHistory, post;
+  let editor, key, mirrorMode, controller, closeHistory, post, skipNativeContentHistory = false, nativeContentHydrated = false;
   const empty = () => ({ mode: "off", selected: [], range: null, gesture: null, click: null, haptic: 0 });
   const now = () => performance.now();
-  let canonicalNode = node => node;
+  let canonicalNode = node => node, contactSequence = 0;
   const recordCache = new WeakMap();
   const scrollableContent = node => {
     const types = ["codeBlock", "table", "collection", "attachment", "pageReference"];
@@ -73,7 +77,8 @@ enum MobileBlockSelection {
     if (!record || !state) return;
     const next = state.selected.filter(item => item.pos !== record.pos);
     if (selected) next.push(ref(record));
-    update({ selected: next.sort((a, b) => a.pos - b.pos), range: null });
+    update({ selected: next.sort((a, b) => a.pos - b.pos), range: null,
+      ...(state.selected.length && !next.length ? { mode: "off", gesture: null, click: null } : {}) });
   }
   const facade = {
     get size() { return value()?.selected.length || 0; },
@@ -110,24 +115,69 @@ enum MobileBlockSelection {
   }
   function createView(view, post) {
     const bindings = new Map();
-    let lastMode, lastCount, lastHaptic = 0, destroyed = false, queued = false, contactElement = null, pendingContact = null, releaseTarget = null;
+    let lastMode, lastCount, lastCollectionSelection, lastHaptic = 0, destroyed = false, queued = false, contactElement = null, pendingContact = null, releaseTarget = null;
+    let scrollToken = null;
     const seenEvents = new WeakSet();
     const style = document.createElement("style");
     style.textContent = `
+      .vellix-editor-page:has(.penned-mobile-block-layout) {
+        --penned-selection-gutter: \#(selectionGutter)px;
+        box-sizing: border-box; padding-inline: var(--penned-selection-gutter);
+        max-width: calc(720px + var(--penned-selection-gutter) + var(--penned-selection-gutter));
+      }
+      .penned-mobile-block-layout { --penned-block-gap: 10px; }
+      .tiptap-editor.penned-mobile-block-layout { padding-top: 6px !important; }
+      .penned-mobile-block-layout > :not(:is([data-vellix-page-break], [data-type="pageBreak"], [data-page-break])) { margin-block: 0 !important; }
+      .penned-mobile-block-layout > :not(:is([data-vellix-page-break], [data-type="pageBreak"], [data-page-break])) + :not(:is([data-vellix-page-break], [data-type="pageBreak"], [data-page-break])) { margin-top: var(--penned-block-gap) !important; }
+      .penned-mobile-block-layout > .vellix-property + .vellix-property { margin-top: 4px !important; }
+      .penned-mobile-block-layout :is(.vellix-toggle-content, .vellix-blockquote-content, li) > * { margin-block: 0 !important; }
+      .penned-mobile-block-layout :is(.vellix-toggle-content, .vellix-blockquote-content, li) > * + * { margin-top: var(--penned-block-gap) !important; }
+      .penned-mobile-block-layout :is(ul, ol) > li { margin-block: 0 !important; }
+      .penned-mobile-block-layout :is(ul, ol) > li + li { margin-top: var(--penned-block-gap) !important; }
+      .penned-mobile-block-layout > :is(.vellix-callout, .vellix-plain-callout):has(+ :is([data-vellix-page-break], [data-type="pageBreak"], [data-page-break])) { margin-bottom: 20px !important; }
+      .penned-mobile-block-layout > :is([data-vellix-page-break], [data-type="pageBreak"], [data-page-break]) + :is(.vellix-callout, .vellix-plain-callout) { margin-top: 20px !important; }
       .penned-swipe-block { transition: transform 120ms ease-out; }
       .penned-swipe-block:not(.penned-swipe-scrollable) { touch-action: pan-y pinch-zoom; }
-      .penned-block-selected { outline: 2px solid #b59ad9 !important; outline-offset: -2px; box-shadow: inset 3px 0 #b59ad9; background-color: rgba(181,154,217,.16); border-radius: 6px; }
-      .penned-block-selected.tableWrapper { outline: none !important; box-shadow: none; background-color: transparent; }
-      .penned-block-selected.tableWrapper table { outline: 2px solid #b59ad9 !important; outline-offset: -2px; }
-      .penned-block-selected.tableWrapper :is(td, th) { box-shadow: inset 0 0 0 9999px rgba(181,154,217,.22); }
+      .penned-block-selected { position: relative; outline: none !important; }
+      .vellix-plain-callout:has(> .vellix-plain-callout-text > .penned-block-selected:only-child) { position: relative; }
+      .penned-block-selected::after,
+      .vellix-callout:has(> .vellix-callout-text > .penned-block-selected:only-child)::after,
+      .vellix-plain-callout:has(> .vellix-plain-callout-text > .penned-block-selected:only-child)::after,
+      blockquote:has(> .vellix-blockquote-content > .penned-block-selected:only-child)::after,
+      .penned-block-selected.vellix-page-reference > .vellix-page-reference-button::after {
+        content: ""; position: absolute; inset: -3px calc(-1 * var(--penned-selection-gutter)); pointer-events: none;
+        border-radius: 8px; background: rgba(181,154,217,.18);
+        box-shadow: inset 0 0 0 1px rgba(181,154,217,.26);
+      }
+      .penned-block-selected:is(pre, .penned-template-component)::after { inset: 0; border-radius: 16px; }
+      .penned-block-selected:is([data-vellix-page-break], [data-type="pageBreak"], [data-page-break])::after { inset: 1px 0; }
+      .vellix-callout:has(> .vellix-callout-text > .penned-block-selected:only-child)::after,
+      .vellix-plain-callout:has(> .vellix-plain-callout-text > .penned-block-selected:only-child)::after,
+      blockquote:has(> .vellix-blockquote-content > .penned-block-selected:only-child)::after { inset: 0; border-radius: inherit; }
+      .vellix-callout-text > .penned-block-selected:only-child::after,
+      .vellix-plain-callout-text > .penned-block-selected:only-child::after,
+      .vellix-blockquote-content > .penned-block-selected:only-child::after,
+      .penned-block-selected:is(.tableWrapper, .vellix-table-wrapper, .vellix-page-reference)::after { display: none; }
+      .penned-block-selected.vellix-page-reference > .vellix-page-reference-button { position: relative; }
+      .penned-block-selected.vellix-page-card > .vellix-page-reference-button::after { inset: 0; border-radius: inherit; }
+      .penned-block-selected:is(.tableWrapper, .vellix-table-wrapper) :is(td, th) { box-shadow: inset 0 0 0 9999px rgba(181,154,217,.22); }
+      .penned-block-selected:is(.tableWrapper, .vellix-table-wrapper) table { outline: none !important; }
       .penned-block-selection-active { caret-color: transparent; }
       .penned-block-selection-active .penned-swipe-block { -webkit-user-select: none; user-select: none; }
       .penned-block-selection-active .penned-block-selected { touch-action: none !important; }
       @media (prefers-reduced-motion: reduce) { .penned-swipe-block { transition: none !important; } }
     `;
     document.head.appendChild(style);
+    view.dom.classList.add("penned-mobile-block-layout");
     const cancelPending = () => { pendingContact = null; };
+    const stopScrolling = () => {
+      if (scrollToken === null) return;
+      const token = scrollToken;
+      scrollToken = null;
+      post("blockSelectionDrag", { token, active: false });
+    };
     const cancel = () => {
+      stopScrolling();
       cancelPending();
       if (value()?.gesture) update({ gesture: null });
       else { contactElement = null; releaseTarget?.(); }
@@ -160,11 +210,26 @@ enum MobileBlockSelection {
       for (let next = index + direction; direction && next >= 0 && next < blocks.length; next += direction) {
         const block = blocks[next], rect = surface(block).getBoundingClientRect();
         if (!visible(block)) continue;
-        const inset = value().selected.some(item => item.pos === block.pos) ? 0 : Math.min(8, rect.height / 4);
+        const inset = value().selected.some(item => item.pos === block.pos) ? 0 : Math.min(4, rect.height / 4);
         if (direction > 0 ? y < rect.top + inset : y > rect.bottom - inset) break;
         target = block;
       }
       return target;
+    }
+    function continueDragScroll({ token, revision, y, boundary }) {
+      const state = value(), gesture = state?.gesture, range = state?.range;
+      if (destroyed || !canSelect() || !Number.isFinite(y) || !range || gesture?.token !== token ||
+          gesture.phase !== "active" || !gesture.committed || !gesture.extending) return false;
+      if (gesture.scrollRevision !== revision) return true;
+      let target;
+      if (boundary === "start" || boundary === "end") {
+        const blocks = records(view.state.doc).filter(visible);
+        target = boundary === "start" ? blocks[0] : blocks[blocks.length - 1];
+      } else target = targetAt(y, range);
+      if (target && target.pos !== range.head.pos) {
+        update({ selected: rangeSelection(range, target, visible), range: { ...range, head: ref(target) } }, true);
+      }
+      return true;
     }
     function beginPending() {
       const contact = pendingContact;
@@ -173,10 +238,14 @@ enum MobileBlockSelection {
       const state = value(), blocks = records(view.state.doc);
       const block = blocks.find(item => item.pos === contact.origin.pos && (!contact.origin.id || item.node.attrs.id === contact.origin.id));
       if (!block || !state || (state.mode === "off" && textSelectionActive())) return;
-      const resume = state.range && state.selected.some(item => item.pos === block.pos);
+      const selected = state.selected.some(item => item.pos === block.pos);
+      const resume = selected ? state.range || { anchor: ref(block), head: ref(block),
+        base: state.selected.filter(item => item.pos !== block.pos) } : null;
       update({ gesture: { phase: "pending", identifier: contact.identifier, origin: ref(block),
+        token: contact.token, screenY: contact.screenY, scrollRevision: 0,
         x: contact.x, y: contact.y, started: contact.started, dx: 0, base: state.selected,
-        resume: resume ? state.range : null, editable: view.editable, committed: false, commitY: null }, click: null });
+        selectionActive: state.mode !== "off" && state.selected.length > 0,
+        resume, editable: view.editable, committed: false, commitY: null }, click: null });
     }
     function start(event, position, element) {
       const state = value();
@@ -198,7 +267,8 @@ enum MobileBlockSelection {
           releaseTarget = null;
         };
       }
-      pendingContact = { identifier: touch.identifier, origin: ref(block),
+      pendingContact = { identifier: touch.identifier, token: ++contactSequence,
+        screenY: Number.isFinite(touch.screenY) ? touch.screenY : touch.clientY, origin: ref(block),
         x: touch.clientX, y: touch.clientY, started: now() };
       // Do not dispatch from touchstart capture: ProseMirror must first flush any
       // uncommitted native typing. Rendering stale state here can erase that input.
@@ -213,21 +283,24 @@ enum MobileBlockSelection {
       const touch = Array.from(event.touches).find(item => item.identifier === gesture.identifier);
       if (!touch || event.touches.length !== 1 || !event.cancelable) { cancel(); return; }
       const dx = touch.clientX - gesture.x, dy = touch.clientY - gesture.y;
-      const verticalResume = gesture.resume && Math.abs(dy) >= 10 && Math.abs(dy) > Math.abs(dx) * 1.3;
+      const screenY = Number.isFinite(touch.screenY) ? touch.screenY : touch.clientY;
+      const deltaY = screenY - gesture.screenY;
+      const scrollRevision = gesture.scrollRevision + (Math.abs(deltaY) > 0.25 ? 1 : 0);
+      const verticalResume = gesture.resume && Math.abs(dy) >= 4 && Math.abs(dy) > Math.abs(dx) * 1.1;
       if (gesture.phase === "pending") {
-        if (now() - gesture.started > 320 || (state.mode === "off" && textSelectionActive())) { cancel(); return; }
+        if ((!gesture.resume && now() - gesture.started > 320) || (state.mode === "off" && textSelectionActive())) { cancel(); return; }
         if (!verticalResume) {
           if (Math.abs(dy) >= 10 || (Math.abs(dy) >= 8 && Math.abs(dy) >= Math.abs(dx) / 1.8)) { cancel(); return; }
-          if (Math.abs(dx) < 18 || Math.abs(dx) < Math.abs(dy) * 1.8) return;
+          if (Math.abs(dx) < (gesture.selectionActive ? 8 : 18) || Math.abs(dx) < Math.abs(dy) * 1.8) return;
         }
       }
       // Never attempt to take over a non-cancellable or already-scrolling stream.
       event.preventDefault();
       if (!event.defaultPrevented) { cancel(); return; }
       event.stopImmediatePropagation();
-      const resuming = gesture.resuming || (gesture.phase === "pending" && verticalResume);
-      const committed = gesture.committed || resuming || Math.abs(dx) >= 48;
-      const extending = gesture.extending || resuming || (gesture.commitY !== null && Math.abs(touch.clientY - gesture.commitY) >= 14);
+      const resuming = gesture.resuming || (!gesture.committed && verticalResume);
+      const committed = gesture.committed || resuming || Math.abs(dx) >= (gesture.selectionActive ? 24 : 48);
+      const extending = gesture.extending || resuming || (gesture.commitY !== null && Math.abs(touch.clientY - gesture.commitY) >= 6);
       let selected = state.selected, range = state.range;
       if (committed) {
         if (!gesture.committed) range = gesture.resume || { anchor: gesture.origin, head: gesture.origin, base: gesture.base };
@@ -239,8 +312,12 @@ enum MobileBlockSelection {
         }
       }
       update({ mode: committed ? "multi" : state.mode, selected, range,
-        gesture: { ...gesture, phase: "active", dx: resuming ? 0 : Math.max(-56, Math.min(56, dx * 0.6)),
+        gesture: { ...gesture, phase: "active", screenY, scrollRevision, dx: resuming ? 0 : Math.max(-56, Math.min(56, dx * 0.6)),
           committed, resuming, extending, commitY: gesture.commitY ?? (committed ? touch.clientY : null) } }, committed);
+      if (committed && extending && range && (scrollToken !== gesture.token || Math.abs(deltaY) > 0.25)) {
+        scrollToken = gesture.token;
+        post("blockSelectionDrag", { token: gesture.token, revision: scrollRevision, active: true, x: touch.clientX, y: touch.clientY, deltaY });
+      }
     }
     function end(event, position) {
       if (seenEvents.has(event)) return;
@@ -252,6 +329,7 @@ enum MobileBlockSelection {
       if (gesture.phase === "active") {
         if (event.cancelable) event.preventDefault();
         event.stopImmediatePropagation();
+        stopScrolling();
         update({ gesture: null, click: { pos: gesture.origin.pos, until: now() + 450 } });
         if (gesture.committed) view.dom.blur();
       } else cancel();
@@ -267,11 +345,13 @@ enum MobileBlockSelection {
       event.preventDefault(); event.stopImmediatePropagation();
       const next = state.mode === "single" ? [] : state.selected.filter(item => item.pos !== position);
       if (!state.selected.some(item => item.pos === position)) next.push(ref(block));
-      update({ selected: next.sort((a, b) => a.pos - b.pos), range: null, click: null }, true);
+      update({ mode: next.length ? state.mode : "off", selected: next.sort((a, b) => a.pos - b.pos),
+        range: null, gesture: null, click: null }, true);
     }
     function refresh() {
       const state = key.getState(view.state);
       if (!state || !editor) return;
+      if (!state.gesture?.committed || !state.gesture.extending || state.mode === "off") stopScrolling();
       if (!state.gesture && !pendingContact) { contactElement = null; releaseTarget?.(); }
       if (lastMode !== state.mode) {
         mirrorMode?.(state.mode);
@@ -282,6 +362,14 @@ enum MobileBlockSelection {
         if (state.mode !== "off") window.tiptapCommand?.("mobileDismissSlashMenu");
       }
       if (lastCount !== state.selected.length) { lastCount = state.selected.length; post("selection", { count: state.selected.length }); }
+      const selectedPositions = new Set(state.selected.map(item => item.pos));
+      const collectionBlockIDs = records(view.state.doc).filter(block => block.type === "collection" && selectedPositions.has(block.pos))
+        .map(block => block.node.attrs.id).filter(Boolean);
+      const collectionSelection = JSON.stringify(collectionBlockIDs);
+      if (lastCollectionSelection !== collectionSelection) {
+        lastCollectionSelection = collectionSelection;
+        post("blockSelectionSurfaces", { collectionBlockIDs });
+      }
       if (state.haptic > lastHaptic) post("haptic", { style: "light" });
       lastHaptic = state.haptic;
       const live = new Set();
@@ -318,19 +406,20 @@ enum MobileBlockSelection {
       queueMicrotask(() => { queued = false; if (!destroyed) refresh(); });
     });
     observer.observe(view.dom, { childList: true, subtree: true });
-    controller = { refresh, cancelPending, mapPending(tr) {
+    controller = { refresh, cancelPending, scroll: continueDragScroll, mapPending(tr) {
       if (!pendingContact) return;
       const origin = mapped([pendingContact.origin], tr)[0];
       pendingContact = origin ? { ...pendingContact, origin } : null;
     } };
     return { update: refresh, destroy() {
-      destroyed = true; cancelPending(); releaseTarget?.(); observer.disconnect();
+      destroyed = true; stopScrolling(); cancelPending(); releaseTarget?.(); observer.disconnect();
       for (const binding of bindings.values()) binding.remove();
-      bindings.clear(); style.remove(); controller = null;
+      bindings.clear(); view.dom.classList.remove("penned-mobile-block-layout"); style.remove(); controller = null;
     } };
   }
   window.PennedBlockSelection = {
     records, selectionFacade: () => facade,
+    continueDragScroll: payload => controller?.scroll(payload) ?? false,
     transformSelectedNested(transform) {
       const state = value();
       if (!state?.selected.length) return undefined;
@@ -376,6 +465,7 @@ enum MobileBlockSelection {
     setMode,
     command(name, args) {
       if (!value()) return undefined;
+      if (name === "setContent" && !nativeContentHydrated) skipNativeContentHistory = true;
       if (name === "setContent" || (name === "setEditable" && args.editable === false)) { controller?.cancelPending(); update({ reset: true }); }
       if (name === "selectAllBlocks") {
         if (!canSelect()) return false;
@@ -395,6 +485,15 @@ enum MobileBlockSelection {
         onBeforeCreate() { editor = this.editor; mirrorMode = modeChanged; },
         addProseMirrorPlugins() {
           return [new Plugin({ key,
+            filterTransaction(tr) {
+              if (skipNativeContentHistory && tr.docChanged) {
+                // Hydrating the initial saved document is not a user edit.
+                tr.setMeta("addToHistory", false);
+                skipNativeContentHistory = false;
+                nativeContentHydrated = true;
+              }
+              return true;
+            },
             state: {
               init: empty,
               apply(tr, previous) {
@@ -412,10 +511,11 @@ enum MobileBlockSelection {
                   }
                   state = { ...previous, selected: mapped(previous.selected, tr), range: mappedRange(previous.range, tr), gesture, click: null };
                 }
-                if (!patch) return state;
-                const next = { ...state, ...patch, haptic: state.haptic };
-                if (patch.haptic && !same(state.selected, next.selected)) next.haptic += 1;
-                return next;
+                const next = patch ? { ...state, ...patch, haptic: state.haptic } : state;
+                if (patch?.haptic && !same(state.selected, next.selected)) next.haptic += 1;
+                return previous.selected.length && !next.selected.length
+                  ? { ...next, mode: "off", range: null, gesture: null, click: null }
+                  : next;
               },
             },
             props: {

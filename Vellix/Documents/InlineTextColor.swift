@@ -100,7 +100,8 @@ nonisolated struct InlineTextColorEditorRequest: Identifiable {
 }
 
 enum InlineTextPreview {
-    static func text(_ values: [[String: Any]], appearance: DocumentAppearance) -> Text {
+    static func text(_ values: [[String: Any]], appearance: DocumentAppearance, size: CGFloat = 16,
+                     weight: Font.Weight = .regular, italic: Bool = false) -> Text {
         values.reduce(Text("")) { result, item in
             let tag = item["type"] as? String == "inlineTag" ? (item["attrs"] as? [String: Any])?["name"] as? String : nil
             var attributed = AttributedString(tag.map { "#" + $0 } ?? (item["type"] as? String == "hardBreak" ? "\n" : (item["text"] as? String ?? "")))
@@ -112,14 +113,24 @@ enum InlineTextPreview {
             }
             var text = Text(attributed)
             var explicitColor: InlineTextColor?
-            if tag != nil { text = text.foregroundColor(Color(vellixHex: appearance.presentationColors.accent)).bold() }
-            for mark in item["marks"] as? [[String: Any]] ?? [] {
+            let marks = item["marks"] as? [[String: Any]] ?? []
+            let custom = appearance.fontStyle == .hachiMaruPop
+            if custom {
+                let bold = tag != nil || marks.contains { $0["type"] as? String == "bold" }
+                let slanted = italic || marks.contains { $0["type"] as? String == "italic" }
+                text = text.font(appearance.fontStyle.font(size: size, weight: bold ? .bold : weight, italic: slanted))
+            }
+            if tag != nil {
+                text = text.foregroundColor(Color(vellixHex: appearance.presentationColors.accent))
+                if !custom { text = text.bold() }
+            }
+            for mark in marks {
                 switch mark["type"] as? String {
-                case "bold": text = text.bold()
-                case "italic": text = text.italic()
+                case "bold": if !custom { text = text.bold() }
+                case "italic": if !custom { text = text.italic() }
                 case "underline": text = text.underline()
                 case "strike": text = text.strikethrough()
-                case "code": text = text.monospaced()
+                case "code": if appearance.fontStyle != .hachiMaruPop { text = text.monospaced() }
                 case "textStyle": explicitColor = InlineTextColor.markAttributes(mark["attrs"] as? [String: Any] ?? [:])
                 case "link": text = text.foregroundColor(Color(vellixHex: appearance.presentationColors.link)).underline()
                 default: break

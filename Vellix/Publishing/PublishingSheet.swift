@@ -16,6 +16,7 @@ struct PublishingSheet: View {
     @State private var confirm = ""
     @State private var error: String?
     @State private var copied = false
+    @State private var selectedTab = "Publish"
     private var job: PublicationJob? { queue.jobs[document.id] }
     private var status: PublicationStatus? { job?.status }
     private var live: Bool { status?.active == true && job?.intent != "inactive" }
@@ -24,12 +25,15 @@ struct PublishingSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Picker("Sharing", selection: .constant("Publish")) {
+                Picker("Sharing", selection: $selectedTab) {
                     Text("Share").tag("Share").disabled(true)
                     Text("Publish").tag("Publish")
-                    Text("Export").tag("Export").disabled(true)
+                    Text("Export").tag("Export")
                     Text("Transfer").tag("Transfer").disabled(true)
                 }.pickerStyle(.segmented)
+                if selectedTab == "Export" {
+                    DocumentExportTab(document: document, queue: queue)
+                } else {
                 heading
                 if live, let status { published(status) } else { unpublished }
                 if let message = error ?? job?.error ?? queue.errorMessage {
@@ -44,11 +48,12 @@ struct PublishingSheet: View {
                 if queue.busy { Text("Connecting to publishing…").font(.footnote).foregroundStyle(.secondary) }
                 Text("Published documents update automatically after changes are successfully saved.")
                     .font(.footnote).foregroundStyle(.secondary)
+                }
             }.padding(20).frame(maxWidth: 560).frame(maxWidth: .infinity)
         }
         .font(.system(.body, design: .rounded).weight(.bold))
         .foregroundStyle(VellixSurface.controlInk)
-        .pennedSheet(title: "Publish to Web", close: { dismiss() })
+        .pennedSheet(title: selectedTab == "Export" ? "Export" : "Publish to Web", close: { dismiss() })
         .sheet(item: $panel) { value in
             PublishingOptionsSheet(panel: value, documentID: document.id, queue: queue)
         }

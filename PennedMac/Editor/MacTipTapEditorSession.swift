@@ -30,6 +30,7 @@ final class TipTapEditorSession: ObservableObject {
     private var currentAppearance: DocumentAppearance?
     private(set) var applicationColorScheme: ColorScheme = .dark
     private var pageReferenceColorScheme: ColorScheme = .dark
+    private var pageReferenceFontStyle: DocumentFontStyle?
     var preparesInteractivePresentation = true
     var presentationDiagnostics: String {
         "generation=\(presentation.generation) webPrepared=\(presentation.webPrepared) contentReady=\(presentation.isContentReady) snapshotPending=\(confirmingFrameGeneration != nil) nativePending=\(pendingNativePresentationHeights.count)"
@@ -362,6 +363,7 @@ final class TipTapEditorSession: ObservableObject {
 
     func setAppearance(_ appearance: DocumentAppearance) {
         currentAppearance = appearance
+        setPageReferences(pageRecords)
         guard isReady, webView != nil else {
             logger.info("🎨 TRACE setAppearance queued ready=\(self.isReady)")
             pendingAppearance = appearance
@@ -381,17 +383,20 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     func setPageReferences(_ records: [DocumentRecord]) {
-        guard records != pageRecords || pageReferenceColorScheme != applicationColorScheme else { return }
+        let font: DocumentFontStyle? = currentAppearance?.fontStyle == .hachiMaruPop ? .hachiMaruPop : nil
+        guard records != pageRecords || pageReferenceColorScheme != applicationColorScheme || pageReferenceFontStyle != font else { return }
         let schemeChanged = pageReferenceColorScheme != applicationColorScheme
+        let fontChanged = pageReferenceFontStyle != font
         pageReferenceColorScheme = applicationColorScheme
+        pageReferenceFontStyle = font
         let previous = Dictionary(uniqueKeysWithValues: pageRecords.map { ($0.id, $0) })
         let presentations = Dictionary(uniqueKeysWithValues: pageReferencePayload.compactMap { payload -> (String, [String: Any])? in
             guard let id = payload["documentID"] as? String else { return nil }
             return (id, payload)
         })
         pageReferencePayload = records.map { record in
-            if previous[record.id] == record, !(schemeChanged && record.appearance.isThemeDependent), let cached = presentations[record.id] { return cached }
-            return PageReferencePresentation.bridgeObject(record, attachmentStore: attachmentStore, colorScheme: applicationColorScheme)
+            if previous[record.id] == record, !fontChanged, !(schemeChanged && record.appearance.isThemeDependent), let cached = presentations[record.id] { return cached }
+            return PageReferencePresentation.bridgeObject(record, attachmentStore: attachmentStore, colorScheme: applicationColorScheme, containingFontStyle: font)
         }
         pageRecords = records
         if isReady { sendPageReferences() }
@@ -567,6 +572,7 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     func insertBlock(_ blockType: String) {
+        guard !["heading5", "heading6", "toggleHeading5", "toggleHeading6"].contains(blockType) else { return }
         if blockType == "callout" {
             registerIconAsset("sparkle") { [weak self] in
                 self?.send(TipTapEditorCommand.insertBlock(blockType))
@@ -589,6 +595,8 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     func setSelectedBlockType(_ blockType: String, level: Int? = nil, color: String? = nil) {
+        guard !["heading5", "heading6", "toggleHeading5", "toggleHeading6"].contains(blockType) else { return }
+        if ["heading", "toggleListItem"].contains(blockType), let level, !(1...4).contains(level) { return }
         if blockType == "callout" {
             registerIconAsset("sparkle") { [weak self] in
                 self?.send(TipTapEditorCommand.setSelectedBlockType(blockType, level: level, color: color))

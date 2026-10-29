@@ -23,7 +23,7 @@ struct CalendarDocumentPreview: View {
                     .shadow(color: .black.opacity(0.4), radius: 4, x: 0, y: 3)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(document.title)
-                        .font(.system(.subheadline, design: document.appearance.fontStyle.design).weight(.bold))
+                        .font(document.appearance.fontStyle.font(.subheadline, weight: .bold))
                         .foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
                     if showsExcerpt, !document.plainText.isEmpty {
                         Text(document.previewText).font(.caption).foregroundStyle(.secondary).lineLimit(3)

@@ -54,7 +54,7 @@ final class DocumentPreviewCache: ObservableObject {
 
     func content(for document: DocumentRecord) -> DocumentPreviewContent {
         guard documents.spaceID == nil || documents.spaceID == document.spaceID else { return DocumentPreviewContent(document: document, children: [], collections: []) }
-        if let cached = contents[document.id], cached.document.updatedAt >= document.updatedAt { return cached }
+        if let cached = contents[document.id], cached.document == document { return cached }
         guard let result = try? collections.previewContent(for: document, documents: documents) else {
             return contents[document.id] ?? DocumentPreviewContent(document: document, children: [], collections: [])
         }
@@ -238,6 +238,14 @@ final class DocumentPreviewCache: ObservableObject {
         let measurements = try await webView.callAsyncJavaScript(#"""
             window.tiptapCommand('setEditable', {editable: false});
             document.activeElement?.blur();
+            if (needsFontLoad) {
+                window.tiptapCommand('setAppearance', appearance);
+                const editor = document.querySelector('.tiptap-editor, .ProseMirror');
+                editor.getBoundingClientRect();
+                const sample = editor.textContent || 'Hachi Maru Pop';
+                await Promise.all(['normal 400', 'normal 700', 'italic 400', 'italic 700'].map(face =>
+                    document.fonts.load(`${face} 16px "HachiMaruPop"`, sample)));
+            }
             await document.fonts.ready;
             const assets = getComputedStyle(document.documentElement);
             async function rasterizedIcon(source, width, height, color) {
@@ -314,7 +322,9 @@ final class DocumentPreviewCache: ObservableObject {
                 .filter(node => node.matches('[data-vellix-page-break], [data-type="pageBreak"], [data-page-break]'))
                 .map(node => { const rect = node.getBoundingClientRect(); return {y: rect.top - bounds.top, height: rect.height}; });
             return {height: Math.max(24, bounds.height), breaks};
-            """#, arguments: [:], in: nil, contentWorld: .page) as? [String: Any] ?? [:]
+            """#, arguments: ["needsFontLoad": appearance.fontStyle == .hachiMaruPop,
+                              "appearance": TipTapEditorCommand.setAppearance(appearance, interfaceScheme: colorScheme).args],
+            in: nil, contentWorld: .page) as? [String: Any] ?? [:]
         let bodyHeight = min(CGFloat(570), max(24, CGFloat((measurements["height"] as? NSNumber)?.doubleValue ?? 24)))
         let pageBreaks = (measurements["breaks"] as? [[String: Any]] ?? []).compactMap { entry -> PreviewPageBreak? in
             guard let y = entry["y"] as? NSNumber, let height = entry["height"] as? NSNumber else { return nil }
@@ -444,6 +454,7 @@ struct LibrarySnapshotHeader: View {
     let document: DocumentRecord
     let cover: CGImage?
     var appearance: DocumentAppearance? = nil
+    var titleLineLimit: Int? = 2
 
     var body: some View {
         let appearance = appearance ?? document.appearance
@@ -459,9 +470,10 @@ struct LibrarySnapshotHeader: View {
                 if document.dailyNoteDate != nil { LibraryIcon(name: "mooncal", size: 20) }
                 Text(document.title)
             }
-                .font(.system(size: 26, weight: .black, design: appearance.fontStyle.design))
+                .font(appearance.fontStyle.font(size: 24, weight: .black))
                 .foregroundStyle(Color(vellixHex: appearance.textColorHex))
-                .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(titleLineLimit).fixedSize(horizontal: false, vertical: titleLineLimit == nil)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Rectangle().fill(Color(vellixHex: appearance.textColorHex).opacity(0.13)).frame(height: 1)
         }
     }

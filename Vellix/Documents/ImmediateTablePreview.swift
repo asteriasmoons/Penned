@@ -71,10 +71,10 @@ struct ImmediateTablePreview: View {
                 let style = DocumentFontStyle(rawValue: attrs["font"] as? String ?? "") ?? appearance.fontStyle
                 let width = widths[cell.column..<(cell.column + cell.columns)].reduce(0, +)
                 let height = heights[cell.row..<(cell.row + cell.rows)].reduce(0, +)
-                styledCellText(cell.value)
-                    .font(.system(size: 16, weight: (attrs["bold"] as? Bool ?? isHeader) ? .bold : .regular,
-                                  design: attrs["code"] as? Bool == true ? .monospaced : style.design))
-                    .italic(attrs["italic"] as? Bool == true)
+                styledCellText(cell.value, fontStyle: style, weight: (attrs["bold"] as? Bool ?? isHeader) ? .bold : .regular,
+                               italic: attrs["italic"] as? Bool == true)
+                    .font(style.font(size: 14, weight: (attrs["bold"] as? Bool ?? isHeader) ? .bold : .regular,
+                                     code: attrs["code"] as? Bool == true, italic: attrs["italic"] as? Bool == true))
                     .strikethrough(attrs["strike"] as? Bool == true)
                     .foregroundStyle(Color(vellixHex: attrs["textColor"] as? String ?? appearance.textColorHex))
                     .multilineTextAlignment(attrs["align"] as? String == "center" ? .center : attrs["align"] as? String == "right" ? .trailing : .leading)
@@ -100,14 +100,18 @@ struct ImmediateTablePreview: View {
         return children.map(cellText).joined(separator: node["type"] as? String == "paragraph" ? "" : "\n")
     }
 
-    private func styledCellText(_ node: [String: Any]) -> Text {
+    private func styledCellText(_ node: [String: Any], fontStyle: DocumentFontStyle, weight: Font.Weight, italic: Bool) -> Text {
         let attrs = node["attrs"] as? [String: Any] ?? [:]
         if let calculated = attrs["calculated"] as? String { return Text(calculated) }
         let children = node["content"] as? [[String: Any]] ?? []
-        if node["type"] as? String == "paragraph" { return InlineTextPreview.text(children, appearance: appearance) }
+        if node["type"] as? String == "paragraph" {
+            var cellAppearance = appearance
+            cellAppearance.fontStyle = fontStyle
+            return InlineTextPreview.text(children, appearance: cellAppearance, size: 14, weight: weight, italic: italic)
+        }
         if children.isEmpty { return Text(cellText(node)) }
         return children.enumerated().reduce(Text("")) { result, item in
-            result + Text(item.offset == 0 ? "" : "\n") + styledCellText(item.element)
+            result + Text(item.offset == 0 ? "" : "\n") + styledCellText(item.element, fontStyle: fontStyle, weight: weight, italic: italic)
         }
     }
 }

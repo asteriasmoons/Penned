@@ -8,6 +8,44 @@
     />
     <title>Vellix TipTap</title>
     <style>
+      @font-face {
+        font-family: "HachiMaruPop";
+        src: url("penned-font://document/HachiMaruPop-Regular.ttf") format("truetype"), url("./fonts/HachiMaruPop-Regular.ttf") format("truetype");
+        font-weight: 400;
+        font-style: normal;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "HachiMaruPop";
+        src: url("penned-font://document/HachiMaruPop-SyntheticBold.ttf?v=2") format("truetype"), url("./fonts/HachiMaruPop-SyntheticBold.ttf?v=2") format("truetype");
+        font-weight: 600 900;
+        font-style: normal;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "HachiMaruPop";
+        src: url("penned-font://document/HachiMaruPop-SyntheticItalic.ttf") format("truetype"), url("./fonts/HachiMaruPop-SyntheticItalic.ttf") format("truetype");
+        font-weight: 400;
+        font-style: italic;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "HachiMaruPop";
+        src: url("penned-font://document/HachiMaruPop-SyntheticBoldItalic.ttf?v=2") format("truetype"), url("./fonts/HachiMaruPop-SyntheticBoldItalic.ttf?v=2") format("truetype");
+        font-weight: 600 900;
+        font-style: italic;
+        font-display: swap;
+      }
+      html[style*="HachiMaruPop"] {
+        --vellix-code-font-family: "HachiMaruPop", cursive;
+      }
+      html[style*="HachiMaruPop"] .tiptap-editor,
+      html[style*="HachiMaruPop"] .tiptap-editor * {
+        font-synthesis: none;
+      }
+      html[style*="HachiMaruPop"] .tiptap-editor :is(code, pre) {
+        font-family: var(--vellix-font-family) !important;
+      }
       :root {
         color: #f7f7f7;
         background: transparent;
@@ -121,7 +159,8 @@
       }
 
       .tiptap-editor {
-        font-size: 15px;
+        font-size: 14px;
+        font-weight: 400;
         line-height: 1.52 !important;
         padding-bottom: 1px !important;
       }
@@ -200,22 +239,19 @@
         line-height: 1.24 !important;
       }
 
-      .tiptap-editor h1 { font-size: 2.05em; }
-      .tiptap-editor h2 { font-size: 1.62em; }
-      .tiptap-editor h3 { font-size: 1.42em; }
-      .tiptap-editor h4 { font-size: 1.28em; }
-      .tiptap-editor h5 { font-size: 1.08em; }
-      .tiptap-editor h6 { font-size: 1em; }
+      .tiptap-editor h1 { font-size: 24px; }
+      .tiptap-editor h2 { font-size: 21px; }
+      .tiptap-editor h3 { font-size: 18px; }
+      .tiptap-editor h4 { font-size: 16px; }
+      .tiptap-editor h5 { font-size: 16px; }
+      .tiptap-editor h6 { font-size: 16px; }
+      .tiptap-editor :is(.vellix-caption, [data-vellix-caption]) { font-size: 12px !important; }
 
       .tiptap-editor p + :is(h1, h2, h3, h4, h5) {
         margin-top: 11px;
       }
 
       @media (max-width: 700px) {
-        .tiptap-editor {
-          font-size: 14.5px;
-        }
-
         .tiptap-editor p,
         .tiptap-editor li,
         .tiptap-editor blockquote,
@@ -870,31 +906,32 @@
         min-height: 30px !important;
         margin: 4px 0 !important;
         border: 0 !important;
+        color: var(--vellix-primary-text) !important;
       }
 
       .tiptap-editor .vellix-divider-line {
         display: block;
-        background: rgba(var(--vellix-neutral-rgb), 0.18);
+        background: color-mix(in srgb, currentColor 18%, transparent);
         border-radius: 999px;
       }
 
       .tiptap-editor [data-divider-style="thinLine"] .vellix-divider-line {
         width: 100%;
         height: 1px;
-        background: linear-gradient(90deg, transparent, rgba(var(--vellix-neutral-rgb), 0.141176) 10%, rgba(var(--vellix-neutral-rgb), 0.141176) 90%, transparent);
+        background: linear-gradient(90deg, transparent, color-mix(in srgb, currentColor 14.1176%, transparent) 10%, color-mix(in srgb, currentColor 14.1176%, transparent) 90%, transparent);
       }
 
       .tiptap-editor [data-divider-style="thickLine"] .vellix-divider-line {
         width: min(86%, 520px);
         height: 8px;
-        background: rgba(var(--vellix-neutral-rgb), 0.2);
+        background: color-mix(in srgb, currentColor 20%, transparent);
       }
 
       .tiptap-editor .vellix-divider-dots {
         display: block;
         width: 100%;
         height: 1px;
-        color: rgba(var(--vellix-neutral-rgb), 0.55);
+        color: color-mix(in srgb, currentColor 55%, transparent);
         background-image: radial-gradient(circle at 0.5px 0.5px, currentColor 0.5px, transparent 0.5px);
         background-size: 5px 1px;
         background-repeat: repeat-x;
@@ -913,7 +950,7 @@
         height: 10px;
         flex: 0 0 10px;
         border-radius: 50%;
-        background: rgba(var(--vellix-neutral-rgb), 0.34);
+        background: currentColor;
       }
 
       /* The pageBreak node is only a transparent structural boundary.
@@ -1117,12 +1154,12 @@
         background: linear-gradient(
           90deg,
           transparent,
-          rgba(46, 203, 255, 0.3) 12%,
-          rgba(46, 203, 255, 0.42) 50%,
-          rgba(46, 203, 255, 0.3) 88%,
+          color-mix(in srgb, currentColor 30%, transparent) 12%,
+          color-mix(in srgb, currentColor 42%, transparent) 50%,
+          color-mix(in srgb, currentColor 30%, transparent) 88%,
           transparent
         );
-        box-shadow: 0 0 8px rgba(46, 203, 255, 0.18);
+        box-shadow: 0 0 8px color-mix(in srgb, currentColor 18%, transparent);
       }
 
       .vellix-selection-mode .tiptap-editor [data-vellix-selection-node-type="divider"][data-divider-style="thinLine"][data-vellix-selected="true"] .vellix-divider-line {
@@ -1134,13 +1171,13 @@
       }
 
       .vellix-selection-mode .tiptap-editor [data-vellix-selection-node-type="divider"][data-vellix-selected="true"] .vellix-divider-dots {
-        color: rgba(46, 203, 255, 0.58);
-        filter: drop-shadow(0 0 4px rgba(46, 203, 255, 0.18));
+        color: color-mix(in srgb, var(--vellix-primary-text) 58%, transparent);
+        filter: drop-shadow(0 0 4px color-mix(in srgb, var(--vellix-primary-text) 18%, transparent));
       }
 
       .vellix-selection-mode .tiptap-editor [data-vellix-selection-node-type="divider"][data-vellix-selected="true"] .vellix-divider-circle {
-        background: rgba(46, 203, 255, 0.58);
-        box-shadow: 0 0 8px rgba(46, 203, 255, 0.18);
+        background: currentColor;
+        box-shadow: 0 0 8px color-mix(in srgb, currentColor 18%, transparent);
       }
 
       .vellix-selection-mode .tiptap-editor [data-vellix-selection-block="true"][data-vellix-selected="true"]::after {

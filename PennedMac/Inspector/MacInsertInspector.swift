@@ -19,10 +19,11 @@ struct MacInsertItem: Identifiable {
         .init(id: "bulletListItem", title: "Bulleted List", icon: "bulletlist", category: "Lists"),
         .init(id: "numberedListItem", title: "Numbered List", icon: "numberlist", category: "Lists"),
         .init(id: "toggleListItem", title: "Toggle List", icon: "chevright", category: "Lists"),
-        .init(id: "heading1", title: "Heading 1", icon: "boldtext", category: "Text Styles"),
-        .init(id: "heading2", title: "Heading 2", icon: "boldtext", category: "Text Styles"),
-        .init(id: "heading3", title: "Heading 3", icon: "boldtext", category: "Text Styles"),
-        .init(id: "paragraph", title: "Body", icon: "linedpages", category: "Text Styles"),
+        .init(id: "heading1", title: "Title", icon: "boldtext", category: "Text Styles"),
+        .init(id: "heading2", title: "Subtitle", icon: "boldtext", category: "Text Styles"),
+        .init(id: "heading3", title: "Heading", icon: "boldtext", category: "Text Styles"),
+        .init(id: "heading4", title: "Subheading", icon: "boldtext", category: "Text Styles"),
+        .init(id: "paragraph", title: "Paragraph", icon: "linedpages", category: "Text Styles"),
         .init(id: "caption", title: "Caption", icon: "linedpages", category: "Text Styles")
     ]
 }

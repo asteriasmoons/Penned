@@ -100,7 +100,7 @@ struct CollectionKanbanView: View {
     private func header(_ snapshot: CollectionSnapshot, view: CollectionViewRecord) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Button { request("configure") } label: {
-                Text(snapshot.name).font(.system(size: 18, weight: .bold, design: appearance.fontStyle.design))
+                Text(snapshot.name).font(appearance.fontStyle.font(size: 18, weight: .bold))
                     .foregroundStyle(Color(vellixHex: appearance.textColorHex))
                     .fixedSize(horizontal: false, vertical: true).multilineTextAlignment(.leading)
             }.disabled(!editable)
@@ -131,7 +131,7 @@ struct CollectionKanbanView: View {
                 HStack(spacing: 4) {
                     Text(view.name).font(.subheadline).lineLimit(1)
                     LibraryIcon(name: "chevdown", size: 12)
-                }.font(.system(size: 15, design: appearance.fontStyle.design))
+                }.font(appearance.fontStyle.font(size: 15))
                     .foregroundStyle(Color(vellixHex: appearance.presentationColors.accent))
                     .padding(.vertical, 8).padding(.horizontal, 8)
             }.macIconMenuStyle().disabled(!editable).accessibilityLabel("Collection views")
@@ -154,8 +154,8 @@ struct CollectionKanbanView: View {
                 } label: {
                     Image(systemName: column.collapsed ? "chevron.right" : "chevron.down").font(.system(size: 12, weight: .semibold)).frame(width: 28, height: 36)
                 }.disabled(!editable).accessibilityLabel(column.collapsed ? "Expand \(column.name)" : "Collapse \(column.name)")
-                Text(column.name).font(.system(.subheadline, design: .rounded).weight(.semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                Text("\(entries.count)").font(.caption.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 4)
+                Text(column.name).font(appearance.fontStyle == .hachiMaruPop ? appearance.fontStyle.font(.subheadline, weight: .semibold) : .system(.subheadline, design: .rounded).weight(.semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                Text("\(entries.count)").font(appearance.fontStyle == .hachiMaruPop ? appearance.fontStyle.font(size: 12, weight: .medium) : .caption.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 4)
                     .background(.black.opacity(0.24), in: Capsule()).foregroundStyle(.white)
                 Spacer(minLength: 0)
                 Button { beginAdding(column.id) } label: { Image(systemName: "plus").font(.system(size: 17)).frame(width: 36, height: 36) }
@@ -194,7 +194,7 @@ struct CollectionKanbanView: View {
         VStack(alignment: .leading, spacing: 8) {
             Button { request("openEntry", documentID: entry.id) } label: {
                 HStack(alignment: .top, spacing: 8) {
-                    Text(entry.title).font(.system(.subheadline, design: .rounded).weight(.medium)).lineLimit(3).multilineTextAlignment(.leading)
+                    Text(entry.title).font(appearance.fontStyle == .hachiMaruPop ? appearance.fontStyle.font(.subheadline, weight: .medium) : .system(.subheadline, design: .rounded).weight(.medium)).lineLimit(3).multilineTextAlignment(.leading)
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(ink.opacity(0.45)).padding(.top, 3)
                 }.contentShape(Rectangle())
@@ -246,7 +246,7 @@ struct CollectionKanbanView: View {
     private func propertyTag(_ text: String, color hex: String, field: CollectionField, entry: CollectionEntrySummary) -> some View {
         let color = Color(vellixHex: hex)
         return Button { request("value", documentID: entry.id, fieldID: field.id) } label: {
-            Text(text).font(.caption2.weight(.medium)).lineLimit(2).padding(.horizontal, 5).padding(.vertical, 2)
+            Text(text).font(appearance.fontStyle == .hachiMaruPop ? appearance.fontStyle.font(size: 11, weight: .medium) : .caption2.weight(.medium)).lineLimit(2).padding(.horizontal, 5).padding(.vertical, 2)
                 .foregroundStyle(color).background(color.opacity(0.2), in: RoundedRectangle(cornerRadius: 4))
                 .overlay(RoundedRectangle(cornerRadius: 4).stroke(color.opacity(0.35), lineWidth: 0.75))
         }.disabled(!editable).accessibilityLabel("\(field.name): \(text). Edit value")

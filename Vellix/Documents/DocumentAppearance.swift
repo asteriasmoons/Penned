@@ -52,7 +52,7 @@ enum DocumentThemeID: String, Codable, CaseIterable, Identifiable {
 }
 
 enum DocumentFontStyle: String, Codable, CaseIterable, Identifiable {
-    case system, serif, mono, rounded
+    case system, serif, mono, rounded, hachiMaruPop
 
     var id: String { rawValue }
 
@@ -62,6 +62,7 @@ enum DocumentFontStyle: String, Codable, CaseIterable, Identifiable {
         case .serif: return "Ss"
         case .mono: return "00"
         case .rounded: return "Rr"
+        case .hachiMaruPop: return "HH"
         }
     }
 
@@ -73,6 +74,8 @@ enum DocumentFontStyle: String, Codable, CaseIterable, Identifiable {
             return "Rounded"
         case .mono:
             return "Monospaced"
+        case .hachiMaruPop:
+            return "Hachi Maru Pop"
         }
     }
 
@@ -84,6 +87,8 @@ enum DocumentFontStyle: String, Codable, CaseIterable, Identifiable {
             return .rounded
         case .mono:
             return .monospaced
+        case .hachiMaruPop:
+            return .default
         }
     }
 
@@ -95,7 +100,32 @@ enum DocumentFontStyle: String, Codable, CaseIterable, Identifiable {
             return "ui-rounded, system-ui, sans-serif"
         case .mono:
             return "ui-monospace, monospace"
+        case .hachiMaruPop:
+            return "\"HachiMaruPop\", cursive"
         }
+    }
+
+    private func hachiFace(weight: Font.Weight, italic: Bool = false) -> String {
+        let bold = [Font.Weight.semibold, .bold, .heavy, .black].contains(weight)
+        if bold { return italic ? "HachiMaruPop-SyntheticBoldItalic" : "HachiMaruPop-SyntheticBold" }
+        return italic ? "HachiMaruPop-SyntheticItalic" : "HachiMaruPop-Regular"
+    }
+
+    func font(size: CGFloat, weight: Font.Weight = .regular, code: Bool = false, italic: Bool = false) -> Font {
+        if self == .hachiMaruPop {
+            DocumentFontResources.register()
+            return .custom(hachiFace(weight: weight, italic: italic), fixedSize: size)
+        }
+        let font = Font.system(size: size, weight: weight, design: code ? .monospaced : design)
+        return italic ? font.italic() : font
+    }
+
+    func font(_ style: Font.TextStyle, weight: Font.Weight = .regular) -> Font {
+        if self == .hachiMaruPop {
+            DocumentFontResources.register()
+            return .custom(hachiFace(weight: weight), size: 15, relativeTo: style)
+        }
+        return .system(style, design: design).weight(weight)
     }
 }
 

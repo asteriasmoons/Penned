@@ -134,7 +134,7 @@ export function sanitizeDocument(input: unknown, links: ReadonlyMap<string, stri
   const appearance: JSONObject = {}, appearanceSource = object(source.appearance);
   for (const key of ["editorBackground", "innerPageBackground"]) if (appearanceSource[key] != null) appearance[key] = background(appearanceSource[key]);
   for (const key of ["themeID", "fontStyle", "coverThemeID"]) if (appearanceSource[key] != null) appearance[key] = string(appearanceSource[key], 40);
-  if (appearance.fontStyle && !["system", "serif", "mono", "rounded"].includes(String(appearance.fontStyle))) throw new PublishingError(400, "invalid_font");
+  if (appearance.fontStyle && !["system", "serif", "mono", "rounded", "hachiMaruPop"].includes(String(appearance.fontStyle))) throw new PublishingError(400, "invalid_font");
   if (appearanceSource.textColorHex != null) appearance.textColorHex = color(appearanceSource.textColorHex);
   if (typeof appearanceSource.showsCover === "boolean") appearance.showsCover = appearanceSource.showsCover;
   if (appearanceSource.coverPhoto != null) appearance.coverPhoto = photo(appearanceSource.coverPhoto);

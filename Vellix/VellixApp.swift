@@ -21,6 +21,7 @@ struct VellixApp: App {
     @StateObject private var startup = LibraryWorkspace()
     @StateObject private var accounts = AppState()
     @State private var recoveryAccountSettings = false
+    @State private var pendingDocumentLink: URL?
     @Environment(\.scenePhase) private var scenePhase
 
     private var workspaceSessionKey: String {
@@ -70,6 +71,12 @@ struct VellixApp: App {
                 if let container = accounts.accountContainer { AccountSettingsView().environmentObject(accounts).environmentObject(startup).modelContainer(container) }
             }
             .task { await accounts.bootstrap()?.value }
+            .onOpenURL { url in
+                guard url.scheme?.lowercased() == "penned" else { return }
+                pendingDocumentLink = url
+                Task { await openPendingDocumentLink() }
+            }
+            .task(id: startup.environment?.database.libraryID) { await openPendingDocumentLink() }
             .task(id: workspaceSessionKey) {
                 if case .checking = accounts.status { return }
                 guard !Task.isCancelled else { return }
@@ -99,5 +106,12 @@ struct VellixApp: App {
         .commands {
             if let environment = startup.environment { VellixCommands(environment: environment) }
         }
+    }
+
+    @MainActor private func openPendingDocumentLink() async {
+        guard let url = pendingDocumentLink, startup.matches(accounts.currentAccountIdentity), let environment = startup.environment else { return }
+        pendingDocumentLink = nil
+        do { if let document = try await DocumentInternalLink.resolve(url, environment: environment) { environment.select(document) } }
+        catch { environment.errorMessage = error.localizedDescription }
     }
 }

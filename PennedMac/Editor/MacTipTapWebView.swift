@@ -397,6 +397,7 @@ fileprivate extension TipTapWebView {
 
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = contentController
+        configuration.setURLSchemeHandler(DocumentFontSchemeHandler(), forURLScheme: DocumentFontResources.scheme)
         #if os(iOS)
         configuration.allowsInlineMediaPlayback = true
         #endif

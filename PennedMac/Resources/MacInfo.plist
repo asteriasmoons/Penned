@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
+    <key>ATSApplicationFontsPath</key><string>Fonts</string>
+    <key>CFBundleURLTypes</key><array><dict>
+        <key>CFBundleURLName</key><string>im.penned.document</string>
+        <key>CFBundleTypeRole</key><string>Viewer</string>
+        <key>CFBundleURLSchemes</key><array><string>penned</string></array>
+    </dict></array>
     <key>CFBundleName</key><string>Penned</string>
     <key>SUPABASE_URL</key><string>$(SUPABASE_URL)</string>
     <key>SUPABASE_PUBLISHABLE_KEY</key><string>$(SUPABASE_PUBLISHABLE_KEY)</string>

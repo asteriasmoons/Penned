@@ -43,8 +43,8 @@ struct MacFormatInspector: View {
             }.controlSize(.small)
             MacInspectorSectionHeader(title: "Block Styles")
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 8) {
-                ForEach(1...5, id: \.self) { level in Button("H\(level)") { session.setSelectedBlockType("heading", level: level) } }
-                Button("Body") { session.setSelectedBlockType("paragraph") }
+                ForEach(1...4, id: \.self) { level in Button(DocumentTextStyleNames.heading(level)) { session.setSelectedBlockType("heading", level: level) } }
+                Button("Paragraph") { session.setSelectedBlockType("paragraph") }
                 Button("Caption") { session.setSelectedBlockType("caption") }
                 Button("Quote") { session.setSelectedBlockType("quote") }
                 Button("Callout") { session.setSelectedBlockType("callout") }

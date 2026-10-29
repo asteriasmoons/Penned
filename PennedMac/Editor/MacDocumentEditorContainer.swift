@@ -134,10 +134,10 @@ private struct MacDocumentSurface: View {
                             HStack(spacing: 10) {
                                 if DocumentTaskPages.isDetail(document.id), let task = model.historyPageTask {
                                     TaskHistoryPageHeader(task: task, appearance: appearance, title: $title,
-                                        saveTitle: { model.rename(title: $0) }, titleFocused: titleFocused, titleSize: 26, locked: locked)
+                                        saveTitle: { model.rename(title: $0) }, titleFocused: titleFocused, titleSize: 24, locked: locked)
                                 } else {
                                 TextField("Untitled", text: $title, axis: .vertical).textFieldStyle(.plain)
-                                    .font(.system(size: 26, weight: .black, design: appearance.fontStyle.design))
+                                    .font(appearance.fontStyle.font(size: 24, weight: .black))
                                     .foregroundStyle(Color(vellixHex: appearance.textColorHex)).focused(titleFocused)
                                     .onSubmit { model.rename(title: title) }.disabled(locked)
                                 }
@@ -153,7 +153,7 @@ private struct MacDocumentSurface: View {
                                     if let style = child.cardStyle {
                                         PageCardView(document: child, style: style,
                                             photo: CardImageLoader.image(path: style.imagePath, store: environment.attachmentStore),
-                                            fillsDocumentWidth: true, attachmentStore: environment.attachmentStore)
+                                            fillsDocumentWidth: true, attachmentStore: environment.attachmentStore, containingFontStyle: appearance.fontStyle)
                                     } else { NestedPageRow(document: child, appearance: appearance) {} }
                                 }.buttonStyle(.plain).contextMenu { MacDocumentMenu(document: child, workspace: workspace) }
                             }

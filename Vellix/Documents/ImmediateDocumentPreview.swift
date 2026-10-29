@@ -7,6 +7,13 @@ struct ImmediateDocumentPreview: View {
     let document: DocumentRecord
     private var appearance: DocumentAppearance { document.appearance.resolved(for: colorScheme) }
     private var savedContent: DocumentPreviewContent { environment.documentPreviews.content(for: document) }
+    private var blockSpacing: CGFloat {
+        #if os(iOS)
+        10
+        #else
+        18
+        #endif
+    }
 
     private var sheets: [[[String: Any]]] {
         var result: [[[String: Any]]] = [[]]
@@ -30,13 +37,14 @@ struct ImmediateDocumentPreview: View {
                     VStack(alignment: .leading, spacing: 18) {
                         if index == 0 {
                             LibrarySnapshotHeader(document: document,
-                                cover: CardImageLoader.image(path: document.cover, store: environment.attachmentStore), appearance: appearance)
+                                cover: CardImageLoader.image(path: document.cover, store: environment.attachmentStore),
+                                appearance: appearance, titleLineLimit: nil)
                             if let (collection, entry) = savedContent.entryContext {
                                 CollectionFieldsSnapshotPreview(snapshot: collection, entry: entry, appearance: appearance)
                             }
                         }
                         ImmediatePreviewBlocks(nodes: nodes, appearance: appearance, depth: 0,
-                            collections: savedContent.collections, referencedDocuments: savedContent.children, spacing: 18)
+                            collections: savedContent.collections, referencedDocuments: savedContent.children, spacing: blockSpacing)
                     }
                     .padding(20).frame(maxWidth: .infinity, alignment: .topLeading)
                     .background {
@@ -146,10 +154,11 @@ private struct ImmediatePreviewBlock: View {
             let guided = nodes.isEmpty && attrs["placeholderEnabled"] as? Bool == true
             let inline = guided ? (attrs["placeholderGuidance"] as? [[String: Any]] ?? []) : nodes
             let level = attrs["level"] as? Int ?? 1
-            let size: CGFloat = type == "heading" ? [34, 28, 23, 20, 18][max(0, min(4, level - 1))] : (type == "caption" ? 13.6 : 16)
+            let size: CGFloat = type == "heading" ? [24, 21, 18, 16, 16, 16][max(0, min(5, level - 1))] : (type == "caption" ? 12 : 14)
             let alignment: TextAlignment = attrs["textAlign"] as? String == "center" ? .center : (attrs["textAlign"] as? String == "right" ? .trailing : .leading)
-            richText(inline).font(.system(size: size, weight: type == "heading" ? .bold : .regular,
-                design: type == "codeBlock" ? .monospaced : appearance.fontStyle.design))
+            InlineTextPreview.text(inline, appearance: appearance, size: size, weight: type == "heading" ? .bold : .regular)
+                .font(appearance.fontStyle.font(size: size, weight: type == "heading" ? .bold : .regular,
+                code: type == "codeBlock"))
                 .opacity(guided ? 0.38 : (type == "caption" ? 0.75 : 1)).multilineTextAlignment(alignment)
                 .frame(maxWidth: .infinity, minHeight: inline.isEmpty ? 20 : nil,
                     alignment: alignment == .center ? .center : (alignment == .trailing ? .trailing : .leading))
@@ -184,7 +193,7 @@ private struct ImmediatePreviewBlock: View {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(nodes.prefix(96).enumerated()), id: \.offset) { index, item in
                     HStack(alignment: .top, spacing: 8) {
-                        if type == "orderedList" { Text("\((attrs["start"] as? Int ?? 1) + index).").font(.system(size: 16)) }
+                        if type == "orderedList" { Text("\((attrs["start"] as? Int ?? 1) + index).").font(appearance.fontStyle == .hachiMaruPop ? appearance.fontStyle.font(size: 14) : .system(size: 14)) }
                         else if type == "taskList" {
                             let itemAttrs = item["attrs"] as? [String: Any] ?? [:]
                             Group {
@@ -198,14 +207,32 @@ private struct ImmediatePreviewBlock: View {
                 }
             }
         case "divider", "horizontalRule":
+            if ["fourCircles", "fourDots"].contains(attrs["style"] as? String ?? "") {
+                HStack(spacing: 18) {
+                    ForEach(0..<4, id: \.self) { _ in
+                        Circle().fill(Color(vellixHex: appearance.textColorHex)).frame(width: 10, height: 10)
+                    }
+                }.frame(maxWidth: .infinity, minHeight: 30)
+            } else {
+            #if os(iOS)
+            if attrs["style"] == nil || ["thinLine", "thickLine"].contains(attrs["style"] as? String ?? "") {
+                Rectangle().fill(color.opacity(attrs["style"] as? String == "thickLine" ? 1 : 0.5))
+                    .frame(height: attrs["style"] as? String == "thickLine" ? 2 : 1)
+                    .padding(.horizontal, 6).frame(height: 20)
+            } else {
+                Rectangle().fill(color.opacity(0.20)).frame(height: 1).padding(.vertical, 8)
+            }
+            #else
             Rectangle().fill(color.opacity(0.20)).frame(height: attrs["style"] as? String == "thickLine" ? 4 : 1).padding(.vertical, 8)
+            #endif
+            }
         case "pageReference":
             if let id = attrs["documentID"] as? String,
                let child = referencedDocuments.first(where: { $0.id == id }) ?? environment.editorCache.model(for: id)?.document {
                 if let style = child.cardStyle {
                     PageCardView(document: child, style: style,
                         photo: CardImageLoader.image(path: style.imagePath, store: environment.attachmentStore), fillsDocumentWidth: style.size.fillsDocumentWidth,
-                        attachmentStore: environment.attachmentStore)
+                        attachmentStore: environment.attachmentStore, containingFontStyle: appearance.fontStyle)
                 } else { NestedPageRow(document: child, appearance: appearance, open: {}) }
             }
         case "inlineProperty":
@@ -222,9 +249,6 @@ private struct ImmediatePreviewBlock: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func richText(_ values: [[String: Any]]) -> Text {
-        InlineTextPreview.text(values, appearance: appearance)
-    }
 }
 
 private struct TemplateComponentPreview: View {
@@ -267,10 +291,10 @@ private struct TemplateComponentPreview: View {
                         .frame(minWidth: 0, maxWidth: .infinity, alignment: .trailing)
                 }.frame(maxWidth: .infinity)
             }
-        }.font(.system(size: 16, design: appearance.fontStyle.design)).foregroundStyle(ink)
+        }.font(appearance.fontStyle.font(size: 16)).foregroundStyle(ink)
     }
     private func chip(_ text: String, selected: Bool, rating: Bool = false) -> some View {
-        Text(text).font(.system(size: 14, weight: rating ? (selected ? .semibold : .regular) : .bold, design: appearance.fontStyle.design))
+        Text(text).font(appearance.fontStyle.font(size: 14, weight: rating ? (selected ? .semibold : .regular) : .bold))
             .foregroundStyle(selected && !rating ? inverse : ink).padding(.horizontal, rating ? 18 : 12).padding(.vertical, rating ? 10 : 4)
             .frame(minHeight: rating ? nil : 30)
             .background(selected ? ink.opacity(rating ? 0.16 : 1) : .clear, in: RoundedRectangle(cornerRadius: rating ? 10 : 18))

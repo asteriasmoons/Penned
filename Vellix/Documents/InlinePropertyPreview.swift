@@ -15,7 +15,7 @@ struct InlinePropertyPreview: View {
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             value.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }
-        .font(.system(size: 13, design: appearance.fontStyle.design))
+        .font(appearance.fontStyle.font(size: 13))
         .dynamicTypeSize(.medium)
         .allowsHitTesting(false)
     }

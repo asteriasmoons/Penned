@@ -284,7 +284,7 @@ enum TipTapEditorEvent: Equatable {
             guard let key = item["key"] as? String, !key.isEmpty else { return nil }
             return TipTapSlashMenuItem(
                 key: key,
-                title: item["title"] as? String ?? key,
+                title: DocumentTextStyleNames.menuTitle(for: key, fallback: item["title"] as? String ?? key),
                 detail: item["detail"] as? String ?? "",
                 icon: item["icon"] as? String ?? "sparkle"
             )
@@ -398,6 +398,28 @@ struct TipTapCollectionRegion: Equatable, Identifiable {
     var id: String
     var collectionID: String
     var rect: CGRect
+}
+
+enum DocumentTextStyleNames {
+    nonisolated static func heading(_ level: Int) -> String {
+        switch level {
+        case 1: return "Title"
+        case 2: return "Subtitle"
+        case 3: return "Heading"
+        case 4: return "Subheading"
+        default: return "Subheading"
+        }
+    }
+
+    nonisolated static func menuTitle(for key: String, fallback: String) -> String {
+        if key.hasPrefix("heading"), let level = Int(key.dropFirst("heading".count)), (1...4).contains(level) {
+            return heading(level)
+        }
+        if key.hasPrefix("toggleHeading"), let level = Int(key.dropFirst("toggleHeading".count)), (1...4).contains(level) {
+            return "Toggle " + heading(level)
+        }
+        return fallback
+    }
 }
 
 struct TipTapSlashMenuItem: Equatable, Identifiable {

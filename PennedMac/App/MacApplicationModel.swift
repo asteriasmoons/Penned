@@ -102,10 +102,11 @@ struct MacLibraryWindowRoot: View {
     @EnvironmentObject private var library: LibraryWorkspace
     @Environment(\.scenePhase) private var scenePhase
     @SceneStorage("penned.mac.sceneID") private var sceneID = UUID().uuidString
+    @State private var pendingDocumentLink: URL?
     var body: some View {
         Group {
             if library.matches(app.verificationMode ? nil : accounts.currentAccountIdentity), let environment = library.environment {
-                MacWorkspaceEntry(parent: environment, sceneID: sceneID, app: app)
+                MacWorkspaceEntry(parent: environment, sceneID: sceneID, app: app, pendingDocumentLink: $pendingDocumentLink)
                     .id(String(describing: ObjectIdentifier(environment)) + (accounts.currentAccountIdentity?.libraryOwnerKey ?? "local"))
             } else if let error = library.errorMessage {
                 VStack(spacing: 16) {
@@ -124,6 +125,7 @@ struct MacLibraryWindowRoot: View {
         .task { if !app.verificationMode { await accounts.bootstrap()?.value }; await app.activate() }
         .task(id: app.activationKey) { await app.activate() }
         .onChange(of: scenePhase) { _, phase in if phase == .active { app.foreground() } }
+        .onOpenURL { url in if url.scheme?.lowercased() == "penned" { pendingDocumentLink = url } }
         .onReceive(NotificationCenter.default.publisher(for: ASAuthorizationAppleIDProvider.credentialRevokedNotification)) { _ in
             Task { await accounts.handleAppleCredentialRevoked() }
         }
@@ -135,9 +137,11 @@ struct MacLibraryWindowRoot: View {
 
 private struct MacWorkspaceEntry: View {
     @StateObject private var workspace: MacWorkspaceModel
+    @Binding private var pendingDocumentLink: URL?
     let app: MacApplicationModel
-    init(parent: AppEnvironment, sceneID: String, app: MacApplicationModel) {
+    init(parent: AppEnvironment, sceneID: String, app: MacApplicationModel, pendingDocumentLink: Binding<URL?>) {
         self.app = app
+        _pendingDocumentLink = pendingDocumentLink
         let owner = app.accounts.currentAccountIdentity?.libraryOwnerKey
         if let retained = app.windows.existing(sceneID, libraryID: parent.database.libraryID, ownerKey: owner) {
             _workspace = StateObject(wrappedValue: retained)
@@ -165,5 +169,14 @@ private struct MacWorkspaceEntry: View {
         MacWorkspaceView(workspace: workspace).environmentObject(workspace.environment)
             .environmentObject(workspace).focusedSceneObject(workspace)
             .onAppear { workspace.start() }
+            .task(id: pendingDocumentLink) {
+                guard let url = pendingDocumentLink else { return }
+                pendingDocumentLink = nil
+                workspace.perform {
+                    if let document = try await DocumentInternalLink.resolve(url, environment: workspace.environment, switchSpace: { try await workspace.switchSpace($0) }) {
+                        try await workspace.open(document)
+                    }
+                }
+            }
     }
 }

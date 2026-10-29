@@ -39,7 +39,7 @@ export function sanitizeVisibleNode(type: string, input: unknown, context: Conte
     const source = object(attrs.preview), result: JSONObject = { title: string(source.title, 1000), excerpt: string(source.excerpt ?? "", 400) };
     if (source.icon != null) result.icon = string(source.icon, 100);
     if (source.textColorHex != null) result.textColorHex = color(source.textColorHex);
-    if (source.fontStyle != null) result.fontStyle = choice(source.fontStyle, ["rounded", "system", "mono", "serif"]);
+    if (source.fontStyle != null) result.fontStyle = choice(source.fontStyle, ["rounded", "system", "mono", "serif", "hachiMaruPop"]);
     linked(source, result, context); cover(source, result, context);
     if (source.cardStyle != null) {
       const style = object(source.cardStyle), approved: JSONObject = {

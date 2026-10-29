@@ -213,7 +213,7 @@ struct DocumentStyleSheet: View {
                     styleTile(title: "Font", width: unit * 2 + 8) {
                         VStack(spacing: 4) {
                             Text(definition.appearance.fontStyle.title)
-                                .font(.system(size: 32, weight: .black, design: definition.appearance.fontStyle.design))
+                                .font(definition.appearance.fontStyle.font(size: 32, weight: .black))
                             Text("Font").foregroundStyle(.secondary)
                         }
                     } action: { panel = .font }
@@ -267,21 +267,23 @@ struct DocumentStyleSheet: View {
     }
 
     private var fontOptions: some View {
-        HStack(spacing: 8) {
-            ForEach(DocumentFontStyle.allCases) { font in
-                let selected = definition.appearance.fontStyle == font
-                Button { definition.appearance.fontStyle = font } label: {
-                    HStack(spacing: 8) {
-                        Text(font.sample).font(.system(size: 21, weight: .medium, design: font.design))
-                        if selected { Text(font.title).font(.system(size: 18, weight: .medium, design: .rounded)) }
-                    }
-                    .frame(maxWidth: selected ? .infinity : nil)
-                    .frame(minWidth: 48, minHeight: 48)
-                    .foregroundStyle(selected ? accent : VellixSurface.controlInk.opacity(0.8))
-                    .background(selected ? accent.opacity(0.09) : .clear, in: Capsule())
-                    .pennedSheetField(cornerRadius: 24)
-                }.buttonStyle(.plain).accessibilityLabel(font.title)
-                    .accessibilityAddTraits(selected ? .isSelected : [])
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(DocumentFontStyle.allCases) { font in
+                    let selected = definition.appearance.fontStyle == font
+                    Button { definition.appearance.fontStyle = font } label: {
+                        HStack(spacing: 8) {
+                            Text(font.sample).font(font.font(size: 21, weight: .medium))
+                            if selected { Text(font.title).font(.system(size: 18, weight: .medium, design: .rounded)) }
+                        }
+                        .padding(.horizontal, selected ? 12 : 0)
+                        .frame(minWidth: 48, minHeight: 48)
+                        .foregroundStyle(selected ? accent : VellixSurface.controlInk.opacity(0.8))
+                        .background(selected ? accent.opacity(0.09) : .clear, in: Capsule())
+                        .pennedSheetField(cornerRadius: 24)
+                    }.buttonStyle(.plain).accessibilityLabel(font.title)
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                }
             }
         }
     }
@@ -753,8 +755,7 @@ struct DocumentStyleThumbnail: View {
                         }.frame(width: contentWidth, height: height * 0.15)
                             .clipped().clipShape(RoundedRectangle(cornerRadius: 3))
                     }
-                    Text(title).font(.system(size: width > 120 ? 14 : 8, weight: .black,
-                                             design: appearance.fontStyle.design))
+                    Text(title).font(appearance.fontStyle.font(size: width > 120 ? 14 : 8, weight: .black))
                         .foregroundStyle(Color(vellixHex: appearance.textColorHex))
                         .lineLimit(4).minimumScaleFactor(0.75)
                         .frame(width: contentWidth, alignment: .leading)

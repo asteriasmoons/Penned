@@ -256,7 +256,7 @@ struct TableEditorSheet: View {
                 ForEach(DocumentFontStyle.allCases) { font in
                     let selected = context?.font == font.rawValue
                     Button { style(["font": font.rawValue]) } label: {
-                        Text(font.sample).font(.system(size: 23, design: font.design))
+                        Text(font.sample).font(font.font(size: 23))
                             .frame(maxWidth: .infinity).frame(height: 54)
                             .foregroundStyle(selected ? accent : VellixSurface.controlInk)
                             .background(selected ? accent.opacity(0.15) : .clear, in: Capsule())

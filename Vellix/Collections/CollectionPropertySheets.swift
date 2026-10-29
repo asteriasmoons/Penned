@@ -185,10 +185,11 @@ struct CollectionFieldEditorSheet: View {
 
 struct CollectionOptionChip: View {
     var option: InlinePropertyOption
+    var fontStyle: DocumentFontStyle? = nil
     var body: some View {
         let color = Color(vellixHex: option.color)
         Text(option.name.isEmpty ? "New Option" : option.name)
-            .font(.subheadline.weight(.medium)).foregroundStyle(color)
+            .font(fontStyle == .hachiMaruPop ? DocumentFontStyle.hachiMaruPop.font(.subheadline, weight: .medium) : .subheadline.weight(.medium)).foregroundStyle(color)
             .padding(.horizontal, 8).padding(.vertical, 4)
             .background(color.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
             .fixedSize(horizontal: false, vertical: true)
@@ -199,11 +200,16 @@ struct CollectionValueDisplay: View {
     var field: CollectionField
     var value: CollectionValue
     var ink: Color = .primary
+    var fontStyle: DocumentFontStyle? = nil
+    @Environment(\.font) private var inheritedFont
     var body: some View {
+        content.font(fontStyle == .hachiMaruPop ? DocumentFontStyle.hachiMaruPop.font(.subheadline) : inheritedFont)
+    }
+    @ViewBuilder private var content: some View {
         if field.kind == .select || field.kind == .multiSelect {
             let options = field.configuration.options.filter { value.optionIDs.contains($0.id) }
             if options.isEmpty { Text("Not set").foregroundStyle(.secondary) }
-            else { CollectionChipLayout { ForEach(options) { CollectionOptionChip(option: $0) } } }
+            else { CollectionChipLayout { ForEach(options) { CollectionOptionChip(option: $0, fontStyle: fontStyle) } } }
         } else {
             HStack(spacing: 6) {
                 if !value.isEmpty && (field.kind == .date || field.kind == .checkbox) { LibraryIcon(name: field.resolvedIcon, size: 17) }

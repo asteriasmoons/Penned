@@ -20,9 +20,9 @@ struct EditorTextConversionMenu: View {
         Menu {
             option("Paragraph", target: "paragraph", selection: selection)
             option("Caption", target: "caption", selection: selection)
-            Menu("Heading") {
-                ForEach(1...6, id: \.self) { level in
-                    option("H\(level)", target: "heading\(level)", selection: selection)
+            Menu("Headings") {
+                ForEach(1...4, id: \.self) { level in
+                    option(DocumentTextStyleNames.heading(level), target: "heading\(level)", selection: selection)
                 }
             }
             Menu("Callout") {
@@ -34,9 +34,9 @@ struct EditorTextConversionMenu: View {
             option("Bullet List", target: "bulletListItem", selection: selection)
             option("Numbered List", target: "numberedListItem", selection: selection)
             Menu("Toggle") {
-                option("Body", target: "toggleListItem", selection: selection)
-                ForEach(1...6, id: \.self) { level in
-                    option("H\(level)", target: "toggleHeading\(level)", selection: selection)
+                option("Paragraph", target: "toggleListItem", selection: selection)
+                ForEach(1...4, id: \.self) { level in
+                    option(DocumentTextStyleNames.heading(level), target: "toggleHeading\(level)", selection: selection)
                 }
             }
             option("Code Block", target: "codeBlock", selection: selection)
@@ -145,14 +145,14 @@ enum TextBlockConversion {
     const nodes = editor.schema.nodes, targets = ['paragraph'];
     if (nodes.caption) targets.push('caption');
     const levels = editor.extensionManager.extensions.find(extension => extension.name === 'heading')?.options.levels || [];
-    if (nodes.heading) for (const level of levels) if (level >= 1 && level <= 6) targets.push('heading' + level);
+    if (nodes.heading) for (const level of levels) if (level >= 1 && level <= 4) targets.push('heading' + level);
     for (const [key, type] of [['callout', 'callout'], ['plainCallout', 'plainCallout'], ['quote', 'blockquote'],
       ['checkListItem', 'taskList'], ['bulletListItem', 'bulletList'], ['numberedListItem', 'orderedList'], ['codeBlock', 'codeBlock']]) {
       if (nodes[type]) targets.push(key);
     }
     if (nodes.toggleItem) {
       targets.push('toggleListItem');
-      for (const level of levels) if (level >= 1 && level <= 6) targets.push('toggleHeading' + level);
+      for (const level of levels) if (level >= 1 && level <= 4) targets.push('toggleHeading' + level);
     }
     return targets;
   }
@@ -193,7 +193,7 @@ enum TextBlockConversion {
     // A supplied transaction stays undispatched until the entire chain succeeds.
     const transaction = editor.state.tr;
     let chain = editor.commandManager.createChain(transaction).setTextSelection({ from: selection.from, to: selection.to });
-    const heading = target.match(/^heading([1-6])$/), toggleHeading = target.match(/^toggleHeading([1-6])$/);
+    const heading = target.match(/^heading([1-4])$/), toggleHeading = target.match(/^toggleHeading([1-4])$/);
     if (target === 'paragraph' || target === 'caption' || target === 'codeBlock' || heading) {
       chain = chain.setNode(heading ? 'heading' : target, heading ? { level: Number(heading[1]) } : {});
     } else if (target === 'toggleListItem' || toggleHeading) {
@@ -240,6 +240,8 @@ enum TextBlockConversion {
   editor.on('focus', captureFocus);
   editor.on('blur', schedule);
   window.tiptapCommand = async (name, args = {}) => {
+    if (['insertBlock', 'chooseSlashItem'].includes(name) && /^(?:heading|toggleHeading)[56]$/.test(args.blockType || args.key || '')) return false;
+    if (name === 'setSelectedBlockType' && ['heading', 'toggleListItem'].includes(args.blockType) && Number(args.level) > 4) return false;
     if (name === 'setContent' || name === 'setSelectionMode' || (name === 'setEditable' && args.editable === false)) {
       editor.view.dispatch(editor.state.tr.setMeta(plugin, { reset: true }).setMeta('addToHistory', false));
     }

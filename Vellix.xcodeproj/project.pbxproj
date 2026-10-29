@@ -254,6 +254,9 @@
 				CFA16DAC301AC3DA007825F0 /* Exceptions for "Vellix" folder in "VellixUITests" target */,
 				D00100000000000000000003 /* Exceptions for "Vellix" folder in "PennedMac" target */,
 			);
+			explicitFolders = (
+				Fonts,
+			);
 			path = Vellix;
 			sourceTree = "<group>";
 		};

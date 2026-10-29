@@ -16,10 +16,10 @@ struct NestedPageRow: View {
                     .shadow(color: .black.opacity(0.30), radius: 1, x: 0, y: 1)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(document.title)
-                        .font(.system(size: 18, weight: .black, design: appearance.fontStyle.design))
+                        .font(appearance.fontStyle.font(size: 18, weight: .black))
                         .lineLimit(1)
                     Text(document.previewText == "No content yet" ? "Empty page" : document.previewText)
-                        .font(.system(size: 14, design: appearance.fontStyle.design))
+                        .font(appearance.fontStyle.font(size: 14))
                         .foregroundStyle(Color(vellixHex: appearance.textColorHex).opacity(0.48))
                         .lineLimit(1)
                 }

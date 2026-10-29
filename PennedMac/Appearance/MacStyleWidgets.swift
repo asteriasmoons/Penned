@@ -39,7 +39,7 @@ struct MacFontOptions: View {
         HStack(spacing: 6) {
             ForEach(DocumentFontStyle.allCases) { font in
                 Button { selection = font } label: {
-                    Text(font.sample).font(.system(size: 19, weight: .medium, design: font.design))
+                    Text(font.sample).font(font.font(size: 19, weight: .medium))
                         .foregroundStyle(selection == font ? VellixSurface.violet : VellixSurface.ink)
                         .frame(maxWidth: .infinity).frame(height: 36)
                         .background(selection == font ? VellixSurface.selection : VellixSurface.subtleFill, in: RoundedRectangle(cornerRadius: 7))

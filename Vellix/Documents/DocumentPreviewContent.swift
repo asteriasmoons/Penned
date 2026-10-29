@@ -45,7 +45,9 @@ struct DocumentPreviewContent: Equatable {
             ? ["attachment-presentation-v3-video-frame"] : []
         let tagRevision = ([document] + children).contains { TipTapContentAnalyzer.hasInlineTags(in: $0.tipTapJSON) } ? ["inline-tag-presentation-v1"] : []
         let toggleRevision = ([document] + children).contains { TipTapContentAnalyzer.hasToggles(in: $0.tipTapJSON) } ? ["toggle-icon-presentation-v1"] : []
-        let inputs = [["library-preview-v10-collections", metadata.base64EncodedString()] + content(document) + inlineRevision + calloutRevision + componentRevision + attachmentRevision + tagRevision + toggleRevision]
+        let fontRevision = ([document] + children).contains { $0.appearance.fontStyle == .hachiMaruPop }
+            ? ["hachi-font-presentation-v2"] : []
+        let inputs = [["library-preview-v12-named-typography-solid-circles", metadata.base64EncodedString()] + content(document) + inlineRevision + calloutRevision + componentRevision + attachmentRevision + tagRevision + toggleRevision + fontRevision]
             + children.sorted { $0.id < $1.id }.map { [$0.id] + content($0) }
         let data = (try? encoder.encode(inputs)) ?? Data()
         return document.id + "-" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()

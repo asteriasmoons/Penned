@@ -28,6 +28,7 @@ final class TipTapEditorSession: ObservableObject {
     private var currentAppearance: DocumentAppearance?
     private(set) var applicationColorScheme: ColorScheme = .dark
     private var pageReferenceColorScheme: ColorScheme = .dark
+    private var pageReferenceFontStyle: DocumentFontStyle?
     var preparesInteractivePresentation = true
     var presentationDiagnostics: String {
         "generation=\(presentation.generation) webPrepared=\(presentation.webPrepared) contentReady=\(presentation.isContentReady) snapshotPending=\(confirmingFrameGeneration != nil) nativePending=\(pendingNativePresentationHeights.count)"
@@ -38,6 +39,12 @@ final class TipTapEditorSession: ObservableObject {
     @Published var editorVisualContentBottom: CGFloat = 320
     @Published var selectedBlockCount = 0
     @Published var selectionMode = "off"
+    @Published private(set) var canUndo = false
+    @Published private(set) var canRedo = false
+    #if os(iOS)
+    @Published private(set) var selectedCollectionBlockIDs: Set<String> = []
+    let blockSelectionDragUpdates = PassthroughSubject<MobileBlockSelectionDrag, Never>()
+    #endif
     @Published var isEditing = false
     @Published private(set) var formattingState = TipTapFormattingState()
     @Published private(set) var textConversionState = TipTapTextConversionState()
@@ -361,6 +368,7 @@ final class TipTapEditorSession: ObservableObject {
 
     func setAppearance(_ appearance: DocumentAppearance) {
         currentAppearance = appearance
+        setPageReferences(pageRecords)
         guard isReady, webView != nil else {
             logger.info("🎨 TRACE setAppearance queued ready=\(self.isReady)")
             pendingAppearance = appearance
@@ -380,17 +388,20 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     func setPageReferences(_ records: [DocumentRecord]) {
-        guard records != pageRecords || pageReferenceColorScheme != applicationColorScheme else { return }
+        let font: DocumentFontStyle? = currentAppearance?.fontStyle == .hachiMaruPop ? .hachiMaruPop : nil
+        guard records != pageRecords || pageReferenceColorScheme != applicationColorScheme || pageReferenceFontStyle != font else { return }
         let schemeChanged = pageReferenceColorScheme != applicationColorScheme
+        let fontChanged = pageReferenceFontStyle != font
         pageReferenceColorScheme = applicationColorScheme
+        pageReferenceFontStyle = font
         let previous = Dictionary(uniqueKeysWithValues: pageRecords.map { ($0.id, $0) })
         let presentations = Dictionary(uniqueKeysWithValues: pageReferencePayload.compactMap { payload -> (String, [String: Any])? in
             guard let id = payload["documentID"] as? String else { return nil }
             return (id, payload)
         })
         pageReferencePayload = records.map { record in
-            if previous[record.id] == record, !(schemeChanged && record.appearance.isThemeDependent), let cached = presentations[record.id] { return cached }
-            return PageReferencePresentation.bridgeObject(record, attachmentStore: attachmentStore, colorScheme: applicationColorScheme)
+            if previous[record.id] == record, !fontChanged, !(schemeChanged && record.appearance.isThemeDependent), let cached = presentations[record.id] { return cached }
+            return PageReferencePresentation.bridgeObject(record, attachmentStore: attachmentStore, colorScheme: applicationColorScheme, containingFontStyle: font)
         }
         pageRecords = records
         if isReady { sendPageReferences() }
@@ -483,6 +494,8 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     private func resetPresentation(documentID: String?) {
+        canUndo = false
+        canRedo = false
         textConversionState = TipTapTextConversionState()
         isConvertingSelectedText = false
         presentationTask?.cancel()
@@ -566,6 +579,7 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     func insertBlock(_ blockType: String) {
+        guard !["heading5", "heading6", "toggleHeading5", "toggleHeading6"].contains(blockType) else { return }
         if blockType == "callout" {
             registerIconAsset("sparkle") { [weak self] in
                 self?.send(TipTapEditorCommand.insertBlock(blockType))
@@ -588,6 +602,8 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     func setSelectedBlockType(_ blockType: String, level: Int? = nil, color: String? = nil) {
+        guard !["heading5", "heading6", "toggleHeading5", "toggleHeading6"].contains(blockType) else { return }
+        if ["heading", "toggleListItem"].contains(blockType), let level, !(1...4).contains(level) { return }
         if blockType == "callout" {
             registerIconAsset("sparkle") { [weak self] in
                 self?.send(TipTapEditorCommand.setSelectedBlockType(blockType, level: level, color: color))
@@ -797,6 +813,53 @@ final class TipTapEditorSession: ObservableObject {
         send(TipTapEditorCommand.redo())
     }
 
+    func paste() {
+        guard let webView, isReady, isPresentationReady, !isLoadingDocument,
+              editingEnabled, selectionMode == "off" else { return }
+        let generation = loadGeneration
+        #if canImport(UIKit)
+        guard webView.window != nil else { return }
+        webView.callAsyncJavaScript("return await window.tiptapCommand('mobilePreparePaste');",
+            arguments: [:], in: nil, in: .page) { [weak self, weak webView] result in
+            guard let self, let webView, self.loadGeneration == generation,
+                  self.isReady, !self.isLoadingDocument, self.editingEnabled,
+                  self.selectionMode == "off", webView.window != nil else { return }
+            switch result {
+            case .failure(let error): self.bridgeErrorMessage = error.localizedDescription
+            case .success(let focused):
+                let action = #selector(UIResponderStandardEditActions.paste(_:))
+                guard focused as? Bool == true, let responder = self.pasteResponder(in: webView),
+                      responder.canPerformAction(action, withSender: nil),
+                      UIApplication.shared.sendAction(action, to: responder, from: nil, for: nil) else {
+                    self.bridgeErrorMessage = "Paste is not available for the current clipboard content."
+                    return
+                }
+            }
+        }
+        #elseif canImport(AppKit)
+        send(TipTapEditorCommand.focusEditor()) { [weak self, weak webView] result in
+            guard let self, let webView, self.loadGeneration == generation,
+                  self.editingEnabled, !self.isLoadingDocument else { return }
+            if case .failure(let error) = result { self.bridgeErrorMessage = error.localizedDescription; return }
+            guard let responder = webView.window?.firstResponder,
+                  NSApp.sendAction(#selector(NSText.paste(_:)), to: responder, from: nil) else {
+                self.bridgeErrorMessage = "Paste is not available for the current clipboard content."
+                return
+            }
+        }
+        #endif
+    }
+
+    #if canImport(UIKit)
+    private func pasteResponder(in view: UIView) -> UIResponder? {
+        if view.isFirstResponder { return view }
+        for child in view.subviews {
+            if let responder = pasteResponder(in: child) { return responder }
+        }
+        return nil
+    }
+    #endif
+
     func handleRawMessage(_ body: Any) {
         do {
             guard
@@ -807,6 +870,25 @@ final class TipTapEditorSession: ObservableObject {
             }
 
             let payload = dictionary["payload"] as? [String: Any] ?? [:]
+            #if os(iOS)
+            if kind == "blockSelectionDrag" {
+                if let drag = MobileBlockSelectionDrag(payload: payload) { blockSelectionDragUpdates.send(drag) }
+                return
+            }
+            if kind == "mobileHistoryAvailability" {
+                let undo = payload["canUndo"] as? Bool ?? false
+                let redo = payload["canRedo"] as? Bool ?? false
+                if canUndo != undo { canUndo = undo }
+                if canRedo != redo { canRedo = redo }
+                return
+            }
+            if kind == "blockSelectionSurfaces" {
+                let ids: [String] = selectionMode == "off" ? [] : (payload["collectionBlockIDs"] as? [String] ?? [])
+                let selected = Set(ids)
+                if selectedCollectionBlockIDs != selected { selectedCollectionBlockIDs = selected }
+                return
+            }
+            #endif
             logger.info("📥 TRACE TIPTAP IN kind=\(kind, privacy: .public) payload=\(self.payloadSummary(payload), privacy: .public)")
             if kind == "diag" {
                 let message = payload["message"] as? String ?? ""
@@ -834,6 +916,9 @@ final class TipTapEditorSession: ObservableObject {
             send(TipTapEditorCommand("setAttachments", args: ["files": attachmentFiles.map(\.object)]))
         selectedBlockCount = 0
         selectionMode = "off"
+        #if os(iOS)
+        selectedCollectionBlockIDs = []
+        #endif
         isEditing = false
         slashMenuState = nil
         pageBreakRegions = []
@@ -913,6 +998,9 @@ final class TipTapEditorSession: ObservableObject {
             selectionMode = mode
             if mode == "off" {
                 selectedBlockCount = 0
+                #if os(iOS)
+                selectedCollectionBlockIDs = []
+                #endif
                 slashMenuState = nil
             }
             onEvent?(event)

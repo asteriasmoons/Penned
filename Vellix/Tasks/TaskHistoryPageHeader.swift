@@ -6,7 +6,7 @@ struct TaskHistoryPageHeader: View {
     @Binding var title: String
     var saveTitle: (String) -> Void
     var titleFocused: FocusState<Bool>.Binding
-    var titleSize: CGFloat = 22
+    var titleSize: CGFloat = 24
     var locked = false
     @EnvironmentObject private var environment: AppEnvironment
     @State private var isSaving = false
@@ -16,7 +16,7 @@ struct TaskHistoryPageHeader: View {
             HStack(alignment: .top, spacing: 10) {
                 completionCircle
                 TextField("Untitled Task", text: Binding(get: { title }, set: { title = $0.components(separatedBy: .newlines).joined(separator: " ") }))
-                    .font(.system(size: titleSize, weight: .black, design: appearance.fontStyle.design))
+                    .font(appearance.fontStyle.font(size: titleSize, weight: .black))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textFieldStyle(.plain).lineLimit(1).disabled(locked)
                     .focused(titleFocused)
@@ -26,7 +26,7 @@ struct TaskHistoryPageHeader: View {
                 HStack(spacing: 16) { scheduleLabels }
                 VStack(alignment: .leading, spacing: 6) { scheduleLabels }
             }
-            .font(.system(size: 14, design: appearance.fontStyle.design))
+            .font(appearance.fontStyle.font(size: 14))
             .foregroundStyle(Color(vellixHex: appearance.textColorHex).opacity(0.6))
         }
         .foregroundStyle(Color(vellixHex: appearance.textColorHex))
