@@ -15,12 +15,18 @@ struct TaskHistoryPageHeader: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 10) {
                 completionCircle
-                TextField("Untitled Task", text: Binding(get: { title }, set: { title = $0.components(separatedBy: .newlines).joined(separator: " ") }))
+                TextField("Untitled Task", text: $title.singleLinePageTitle(onReturn: {
+                    titleFocused.wrappedValue = false
+                    saveTitle(title)
+                }), axis: .vertical)
                     .font(appearance.fontStyle.font(size: titleSize, weight: .black))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .textFieldStyle(.plain).lineLimit(1).disabled(locked)
+                    .textFieldStyle(.plain).lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true).layoutPriority(1).disabled(locked)
                     .focused(titleFocused)
-                    .onSubmit { saveTitle(title) }
+                    .submitLabel(.done)
+                    .onSubmit { titleFocused.wrappedValue = false; saveTitle(title) }
+                    .onKeyPress(.return) { titleFocused.wrappedValue = false; saveTitle(title); return .handled }
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 16) { scheduleLabels }

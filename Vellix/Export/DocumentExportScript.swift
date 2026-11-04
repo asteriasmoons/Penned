@@ -148,6 +148,7 @@ enum DocumentExportScript {
     content.querySelectorAll('.penned-collection-row').forEach(n=>n.style.gridTemplateColumns=`minmax(140px,1.4fr) ${'minmax(90px,1fr) '.repeat(Math.max(0,n.childElementCount-1))}`);
     content.querySelectorAll('.penned-collection-table').forEach(n=>{n.style.width='100%';n.style.minWidth='0';});
     if (!options.showTags) content.querySelectorAll('[data-inline-tag],.penned-inline-tag,[data-type="inlineTag"]').forEach(n=>n.remove());
+    if (!options.showTags) content.querySelectorAll('.penned-clip-source-content > p').forEach(n=>{if(!n.textContent.trim())n.remove();});
     content.querySelectorAll('[contenteditable]').forEach(n=>n.removeAttribute('contenteditable'));
     content.querySelectorAll('[data-vellix-selected]').forEach(n=>n.removeAttribute('data-vellix-selected'));
     content.querySelectorAll('img').forEach(n=>{n.loading='eager';n.style.maxWidth='100%';});

@@ -13,6 +13,7 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
         var rect: CGRect
         var blockType: String
         var colorHex: String?
+        var imagePath: String? = nil
     }
 
     private(set) var marks: [Mark] = []
@@ -43,9 +44,9 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
         var monospaced: Bool
         let bottom: CGFloat = 120
 
-        mutating func add(_ shape: Shape, _ rect: CGRect, _ type: String, color: String? = nil) {
+        mutating func add(_ shape: Shape, _ rect: CGRect, _ type: String, color: String? = nil, imagePath: String? = nil) {
             guard rect.minY < bottom, rect.width > 0 else { return }
-            marks.append(Mark(shape: shape, rect: rect, blockType: type, colorHex: color))
+            marks.append(Mark(shape: shape, rect: rect, blockType: type, colorHex: color, imagePath: imagePath))
         }
 
         // Line lengths and wrapping follow actual text, not a decorative pattern.
@@ -135,7 +136,30 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                     if open {
                         blocks(Array(children.dropFirst()), x: x + 7, width: width - 7, depth: depth + 1)
                     }
+                case "plainCalloutRow":
+                    let top = y
+                    let gap: CGFloat = 3
+                    let specified = children.reduce(0.0) { $0 + (((($1["attrs"] as? [String: Any])?["widthPercent"]) as? Double) ?? 0) }
+                    let automatic = children.filter { ($0["attrs"] as? [String: Any])?["widthPercent"] == nil }.count
+                    let share = automatic > 0 ? max(0, 100 - specified) / Double(automatic) : 0
+                    let slots = children.count + (automatic == 0 && specified < 99 ? 1 : 0)
+                    let gapShare = slots > 0 ? gap * CGFloat(slots - 1) / CGFloat(slots) : 0
+                    var left = x, rowTop = top, rowBottom = top
+                    for child in children {
+                        let percent = ((child["attrs"] as? [String: Any])?["widthPercent"] as? Double) ?? (share > 0 ? share : 100)
+                        let cellWidth = min(width, max(12, width * CGFloat(percent) / 100 - gapShare))
+                        if left > x && left + cellWidth > x + width { left = x; rowTop = rowBottom + gap }
+                        y = rowTop
+                        blocks([child], x: left, width: cellWidth, depth: depth + 1)
+                        rowBottom = max(rowBottom, y)
+                        left += cellWidth + gap
+                    }
+                    y = rowBottom
                 case "callout", "plainCallout", "blockquote", "codeBlock":
+                    if type == "plainCallout", let source = attrs["clipSource"] as? [String: Any] {
+                        sourceCard(source, children: children, x: x, width: width, depth: depth)
+                        continue
+                    }
                     let top = y - 2
                     let insertionIndex = marks.count
                     let color = attrs["color"] as? String
@@ -156,11 +180,14 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                     y += 6
                 case "divider", "horizontalRule":
                     let style = attrs["style"] as? String ?? "thinLine"
-                    if style == "dottedCircles" || style == "fourCircles" {
-                        let count = style == "fourCircles" ? 4 : max(1, Int(width / 5))
-                        let left = x + (width - CGFloat(count) * 5) / 2
+                    let fourDots = style == "fourCircles" || style == "fourDots"
+                    if style == "dottedCircles" || fourDots {
+                        let count = fourDots ? 4 : max(1, Int(width / 5))
+                        let diameter: CGFloat = fourDots ? 0.6 : 1.5
+                        let span = fourDots ? CGFloat(count - 1) * 5 + diameter : CGFloat(count) * 5
+                        let left = x + (width - span) / 2
                         for dot in 0..<count {
-                            add(.bullet, CGRect(x: left + CGFloat(dot) * 5, y: y + 2, width: 1.5, height: 1.5), type)
+                            add(.bullet, CGRect(x: left + CGFloat(dot) * 5, y: y + 2, width: diameter, height: diameter), type)
                         }
                     } else {
                         add(.line, CGRect(x: x, y: y + 2, width: width, height: style == "thickLine" ? 2.5 : 1), type)
@@ -217,6 +244,51 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                     blocks(children, x: x, width: width, depth: depth + 1)
                 }
             }
+        }
+
+        mutating func sourceCard(_ source: [String: Any], children: [[String: Any]], x: CGFloat, width: CGFloat, depth: Int) {
+            let top = y - 2, insertionIndex = marks.count
+            y += 2
+            let linkTop = y, inset: CGFloat = 4
+            add(.container, CGRect(x: x + inset, y: linkTop, width: width - inset * 2, height: 9), "clipSourceLink", color: "#202020")
+            let path = (source["file"] as? [String: Any])?["relativePath"] as? String
+            if let path {
+                add(.image, CGRect(x: x + inset + 1, y: linkTop + 1, width: 12, height: 7), "clipSourceImage", imagePath: path)
+            }
+            let titleX = x + inset + (path == nil ? 2 : 16)
+            y = linkTop + 3
+            text(source["title"] as? String ?? source["url"] as? String ?? "", type: "clipSourceTitle", x: titleX,
+                width: x + width - inset - titleX - 2, thickness: 2, maxLines: 1)
+            y = linkTop + 13
+            for child in children.prefix(96) {
+                guard y < bottom, remainingNodes > 0 else { break }
+                let attrs = child["attrs"] as? [String: Any] ?? [:]
+                let inline = child["content"] as? [[String: Any]] ?? []
+                if child["type"] as? String == "inlineProperty", let value = InlinePropertyDefinition.decode(attrs["property"]), value.kind == .date {
+                    remainingNodes -= 1
+                    add(.line, CGRect(x: x + inset, y: y + 1, width: 9, height: 1.8), "clipSourceTitle")
+                    add(.chip, CGRect(x: x + inset + 11, y: y - 1, width: 15, height: 5), "clipSourceDate", color: "#B59AD9")
+                    if value.includeTime { add(.line, CGRect(x: x + inset + 28, y: y + 1, width: 16, height: 1.8), "clipSourceTitle") }
+                    y += 9
+                } else if child["type"] as? String == "paragraph", inline.contains(where: { $0["type"] as? String == "inlineTag" }),
+                          inline.allSatisfy({ $0["type"] as? String == "inlineTag" || ($0["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                    remainingNodes -= 1
+                    var left = x + inset
+                    for tag in inline where tag["type"] as? String == "inlineTag" {
+                        let name = (tag["attrs"] as? [String: Any])?["name"] as? String ?? ""
+                        let w = min(width - inset * 2, max(6, CGFloat(name.prefix(80).count) * 1.65 + 4))
+                        if left + w > x + width - inset { y += 8; left = x + inset }
+                        add(.chip, CGRect(x: left, y: y, width: w, height: 5), "clipSourceTag", color: "#B59AD9")
+                        left += w + 2
+                    }
+                    y += 10
+                } else {
+                    blocks([child], x: x + inset, width: width - inset * 2, depth: depth + 1)
+                }
+            }
+            marks.insert(Mark(shape: .container, rect: CGRect(x: x, y: top, width: width, height: max(0, min(bottom, y + 2) - top)),
+                blockType: "clipSource", colorHex: "#292929"), at: insertionIndex)
+            y += 6
         }
 
         mutating func property(_ object: Any?, x: CGFloat, width: CGFloat) {

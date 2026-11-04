@@ -488,6 +488,9 @@ struct TemplatesView: View {
     @State private var renameTarget: TemplateRecord?
     @State private var renamedTitle = ""
     @State private var deleteTarget: TemplateRecord?
+    @State private var publishingTemplateID: String?
+    @State private var publishError: String?
+    @State private var publishConfirmation: String?
 
     var body: some View {
         ScrollView {
@@ -546,6 +549,11 @@ struct TemplatesView: View {
                 .background(.thinMaterial, in: Circle())
                 .accessibilityLabel("New Template")
             }
+            ToolbarItem(placement: .primaryAction) {
+                if publishingTemplateID != nil {
+                    ProgressView().accessibilityLabel("Publishing template")
+                }
+            }
         }
         .alert("Rename Template", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
             TextField("Name", text: $renamedTitle)
@@ -566,6 +574,24 @@ struct TemplatesView: View {
             }
             Button("Cancel", role: .cancel) { deleteTarget = nil }
         }
+        .alert("Could Not Publish Template", isPresented: Binding(
+            get: { publishError != nil }, set: { if !$0 { publishError = nil } }
+        )) { Button("OK") { publishError = nil } } message: { Text(publishError ?? "") }
+        .alert("Template Published", isPresented: Binding(
+            get: { publishConfirmation != nil }, set: { if !$0 { publishConfirmation = nil } }
+        )) { Button("OK") { publishConfirmation = nil } } message: { Text(publishConfirmation ?? "") }
+    }
+
+    private func publish(_ template: TemplateRecord) {
+        guard environment.canPublishTemplates, publishingTemplateID == nil else { return }
+        publishingTemplateID = template.id
+        Task {
+            defer { publishingTemplateID = nil }
+            do {
+                _ = try await environment.publishGalleryTemplate(template)
+                publishConfirmation = "\(template.title) was published using its saved category."
+            } catch { publishError = error.localizedDescription }
+        }
     }
 
     @ViewBuilder
@@ -580,6 +606,10 @@ struct TemplatesView: View {
             } catch { environment.report(error) }
         }
         if !template.isBuiltIn {
+            if environment.canPublishTemplates {
+                Button(publishingTemplateID == template.id ? "Publishing Template..." : "Publish Template") { publish(template) }
+                    .disabled(publishingTemplateID != nil)
+            }
             Button("Edit Template") { environment.editTemplate(template) }
             Button("Rename") { renamedTitle = template.title; renameTarget = template }
             Button("Delete Template", role: .destructive) { deleteTarget = template }

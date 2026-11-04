@@ -19,7 +19,13 @@ struct MacLibrarySettings: View {
                     if let document = environment.overview.templateDocuments[template.id] {
                         Button {
                             if template.isBuiltIn { environment.createDocument(title: template.title, from: template) }
-                            else { open(document) }
+                            else {
+                                guard let workspace = app.windows.lastActive else { return }
+                                workspace.perform {
+                                    let editable = try environment.documentForTemplateEditing(template)
+                                    try await workspace.open(editable)
+                                }
+                            }
                             app.windows.lastActive?.window?.makeKeyAndOrderFront(nil)
                         } label: {
                             HStack(spacing: 14) {

@@ -25,6 +25,7 @@ struct ImmediateDocumentPreview: View {
     }
 
     var body: some View {
+        GeometryReader { geometry in
         ZStack(alignment: .topLeading) {
             LibrarySnapshotSurface(style: appearance.editorBackground,
                 photo: document.isThemed ? CardImageLoader.image(path: document.appearance.editorBackground.imagePath, store: environment.attachmentStore) : nil)
@@ -47,6 +48,9 @@ struct ImmediateDocumentPreview: View {
                             collections: savedContent.collections, referencedDocuments: savedContent.children, spacing: blockSpacing)
                     }
                     .padding(20).frame(maxWidth: .infinity, alignment: .topLeading)
+                    .frame(minHeight: sheets.count == 1
+                        ? max(0, geometry.size.height - (document.isThemed ? 16 : 0)) : 0,
+                        alignment: .topLeading)
                     .background {
                         if document.isThemed {
                             LibrarySnapshotSurface(style: appearance.innerPageBackground,
@@ -60,6 +64,7 @@ struct ImmediateDocumentPreview: View {
                 }
             }
             .padding(document.isThemed ? 8 : 0)
+        }
         }
         .foregroundStyle(Color(vellixHex: appearance.textColorHex))
         .environment(\.colorScheme, appearance.presentationColorScheme)
@@ -102,6 +107,49 @@ private struct ImmediatePreviewBlocks: View {
                     collections: collections, referencedDocuments: referencedDocuments)
                     .padding(.top, index == 0 ? 0 : (consecutiveProperties ? 4 : spacing))
             }
+        }
+    }
+}
+
+struct CalloutRowPreviewLayout: Layout {
+    let widths: [Double?]
+
+    init(nodes: [[String: Any]]) {
+        widths = nodes.map { node in
+            guard let value = (node["attrs"] as? [String: Any])?["widthPercent"] as? Double,
+                  value.isFinite, value > 0 else { return nil }
+            return min(100, max(1, value))
+        }
+    }
+
+    private func frames(width: CGFloat, subviews: Subviews) -> [CGRect] {
+        guard width > 0, !subviews.isEmpty else { return [] }
+        let specified = widths.compactMap { $0 }.reduce(0, +)
+        let automatic = widths.filter { $0 == nil }.count
+        let share = automatic > 0 ? max(0, 100 - specified) / Double(automatic) : 0
+        let slots = subviews.count + (automatic == 0 && specified < 99 ? 1 : 0)
+        let gapShare = CGFloat(slots > 0 ? 12 * Double(slots - 1) / Double(slots) : 0)
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+        return subviews.enumerated().map { index, subview in
+            let percent = widths[index] ?? (share > 0 ? share : 100 / Double(subviews.count))
+            let cellWidth = min(width, max(min(120, width), width * CGFloat(percent) / 100 - gapShare))
+            if x > 0 && x + cellWidth > width + 0.5 { x = 0; y += rowHeight + 12; rowHeight = 0 }
+            let size = subview.sizeThatFits(ProposedViewSize(width: cellWidth, height: nil))
+            let rect = CGRect(x: x, y: y, width: cellWidth, height: size.height)
+            x += cellWidth + 12; rowHeight = max(rowHeight, size.height)
+            return rect
+        }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? subviews.reduce(CGFloat.zero) { $0 + $1.sizeThatFits(.unspecified).width }
+        return CGSize(width: width, height: frames(width: width, subviews: subviews).map(\.maxY).max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for (subview, frame) in zip(subviews, frames(width: bounds.width, subviews: subviews)) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), anchor: .topLeading,
+                proposal: ProposedViewSize(width: frame.width, height: frame.height))
         }
     }
 }
@@ -162,7 +210,19 @@ private struct ImmediatePreviewBlock: View {
                 .opacity(guided ? 0.38 : (type == "caption" ? 0.75 : 1)).multilineTextAlignment(alignment)
                 .frame(maxWidth: .infinity, minHeight: inline.isEmpty ? 20 : nil,
                     alignment: alignment == .center ? .center : (alignment == .trailing ? .trailing : .leading))
+        case "plainCalloutRow":
+            CalloutRowPreviewLayout(nodes: nodes) {
+                ForEach(Array(nodes.enumerated()), id: \.offset) { _, child in
+                    ImmediatePreviewBlock(node: child, appearance: appearance, depth: depth + 1,
+                        collections: collections, referencedDocuments: referencedDocuments)
+                }
+            }
         case "callout", "plainCallout":
+            if type == "plainCallout", let source = attrs["clipSource"] as? [String: Any],
+               let href = source["url"] as? String, InlinePropertyDefinition.safeURL(href) != nil {
+                ClipSourceDocumentPreview(source: source, nodes: nodes, appearance: appearance,
+                    depth: depth, collections: collections, referencedDocuments: referencedDocuments)
+            } else {
             HStack(alignment: populatedIconCallout ? .top : .firstTextBaseline, spacing: 11) {
                 if type == "callout" {
                     LibraryIcon(name: attrs["icon"] as? String ?? "sparkle", size: 26).foregroundStyle(color)
@@ -181,6 +241,7 @@ private struct ImmediatePreviewBlock: View {
             .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
             .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(color.opacity(0.18)))
+            }
         case "blockquote":
             children(nodes).padding(.leading, 14).padding(.vertical, 8)
                 .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 3) }
@@ -193,7 +254,14 @@ private struct ImmediatePreviewBlock: View {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(nodes.prefix(96).enumerated()), id: \.offset) { index, item in
                     HStack(alignment: .top, spacing: 8) {
-                        if type == "orderedList" { Text("\((attrs["start"] as? Int ?? 1) + index).").font(appearance.fontStyle == .hachiMaruPop ? appearance.fontStyle.font(size: 14) : .system(size: 14)) }
+                        if type == "orderedList" {
+                            let first = (item["content"] as? [[String: Any]])?.first
+                            let heading = first?["type"] as? String == "heading"
+                            let level = (first?["attrs"] as? [String: Any])?["level"] as? Int ?? 1
+                            let size: CGFloat = heading ? [24, 21, 18, 16][max(0, min(3, level - 1))] : 14
+                            Text("\((attrs["start"] as? Int ?? 1) + index).")
+                                .font(appearance.fontStyle.font(size: size, weight: heading ? .bold : .regular))
+                        }
                         else if type == "taskList" {
                             let itemAttrs = item["attrs"] as? [String: Any] ?? [:]
                             Group {
@@ -210,7 +278,7 @@ private struct ImmediatePreviewBlock: View {
             if ["fourCircles", "fourDots"].contains(attrs["style"] as? String ?? "") {
                 HStack(spacing: 18) {
                     ForEach(0..<4, id: \.self) { _ in
-                        Circle().fill(Color(vellixHex: appearance.textColorHex)).frame(width: 10, height: 10)
+                        Circle().fill(Color(vellixHex: appearance.textColorHex)).frame(width: 4, height: 4)
                     }
                 }.frame(maxWidth: .infinity, minHeight: 30)
             } else {
@@ -249,6 +317,106 @@ private struct ImmediatePreviewBlock: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+}
+
+private struct ClipSourceDocumentPreview: View {
+    @EnvironmentObject private var environment: AppEnvironment
+    let source: [String: Any]
+    let nodes: [[String: Any]]
+    let appearance: DocumentAppearance
+    let depth: Int
+    let collections: [CollectionSnapshot]
+    let referencedDocuments: [DocumentRecord]
+
+    private var metadataAppearance: DocumentAppearance {
+        var value = appearance
+        value.textColorHex = "#D5D5D5"
+        return value
+    }
+    private var thumbnail: CGImage? {
+        guard let file = source["file"] as? [String: Any], let path = file["relativePath"] as? String,
+              let resolved = try? environment.attachments.editorAttachment(relativePath: path), resolved.media.kind == .image else { return nil }
+        return CardImageLoader.image(path: resolved.record.relativePath, store: environment.attachmentStore)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                if let image = thumbnail {
+                    Image(decorative: image, scale: 1).resizable().scaledToFill()
+                        .frame(width: 48, height: 30).clipped().clipShape(RoundedRectangle(cornerRadius: 3))
+                }
+                Text(source["title"] as? String ?? source["url"] as? String ?? "")
+                    .font(appearance.fontStyle.font(size: 14)).foregroundStyle(Color(vellixHex: "#D5D5D5"))
+                    .lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.leading, 4).padding(.trailing, 10).padding(.vertical, 4)
+            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+            .background(Color(vellixHex: "#202020"), in: RoundedRectangle(cornerRadius: 6))
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(Array(nodes.prefix(96).enumerated()), id: \.offset) { _, node in
+                    metadata(node)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(vellixHex: "#292929"), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder private func metadata(_ node: [String: Any]) -> some View {
+        let attrs = node["attrs"] as? [String: Any] ?? [:]
+        let inline = node["content"] as? [[String: Any]] ?? []
+        if node["type"] as? String == "inlineProperty", let property = InlinePropertyDefinition.decode(attrs["property"]), property.kind == .date {
+            ClipSavedDatePreview(property: property, appearance: appearance)
+        } else if node["type"] as? String == "paragraph", inline.contains(where: { $0["type"] as? String == "inlineTag" }),
+                  inline.allSatisfy({ $0["type"] as? String == "inlineTag" || ($0["type"] as? String == "text" && ($0["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }) {
+            CollectionChipLayout(spacing: 4) {
+                ForEach(Array(inline.filter { $0["type"] as? String == "inlineTag" }.enumerated()), id: \.offset) { _, tag in
+                    Text("#" + ((tag["attrs"] as? [String: Any])?["name"] as? String ?? ""))
+                        .font(appearance.fontStyle.font(size: 14, weight: .semibold))
+                        .foregroundStyle(Color(vellixHex: "#B59AD9")).padding(.horizontal, 2)
+                        .background(Color(vellixHex: "#B59AD9").opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                }
+            }
+        } else {
+            ImmediatePreviewBlock(node: node, appearance: metadataAppearance, depth: depth + 1,
+                collections: collections, referencedDocuments: referencedDocuments)
+        }
+    }
+}
+
+private struct ClipSavedDatePreview: View {
+    let property: InlinePropertyDefinition
+    let appearance: DocumentAppearance
+
+    private func day(_ date: Date) -> String {
+        if Calendar.current.isDateInToday(date) { return "Today" }
+        if Calendar.current.isDateInYesterday(date) { return "Yesterday" }
+        let formatter = DateFormatter(); formatter.dateStyle = .medium; formatter.timeStyle = .none
+        return formatter.string(from: date)
+    }
+    private func time(_ date: Date) -> String {
+        let formatter = DateFormatter(); formatter.dateStyle = .none; formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    var body: some View {
+        CollectionChipLayout(spacing: 4) {
+            Text(property.name.isEmpty ? "Saved" : property.name)
+            if let date = property.civilDate {
+                HStack(spacing: 4) {
+                    LibraryIcon(name: "numcal", size: 14)
+                    Text(day(date))
+                }
+                .foregroundStyle(Color(vellixHex: "#B59AD9"))
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background(Color(vellixHex: "#B59AD9").opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
+                if property.includeTime { Text("at " + time(date)) }
+            }
+        }
+        .font(appearance.fontStyle.font(size: 12)).foregroundStyle(Color(vellixHex: "#A7A7A7"))
+    }
 }
 
 private struct TemplateComponentPreview: View {

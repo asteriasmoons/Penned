@@ -8,50 +8,111 @@ enum MobileBlockSelection {
 (() => {
   if (window.PennedBlockSelection) return;
   let editor, key, mirrorMode, controller, closeHistory, post, skipNativeContentHistory = false, nativeContentHydrated = false;
-  const empty = () => ({ mode: "off", selected: [], range: null, gesture: null, click: null, haptic: 0 });
+  const empty = () => ({ mode: "off", selected: [], range: null, gesture: null, click: null, haptic: 0, dividerConverted: false });
   const now = () => performance.now();
   let canonicalNode = node => node, contactSequence = 0;
   const recordCache = new WeakMap();
+  const recordIndexes = new WeakMap(), selectionPositionCache = new WeakMap();
+  const unitIndexes = new WeakMap(), scrollableCache = new WeakMap();
+  const isCalloutUnit = node => node.type.name === "callout" || node.type.name === "plainCallout";
+  // Stable DOM markers identify gesture hosts without a permanent node
+  // decoration on every block (DecorationSet.forChild scans all local spans).
+  const unitSelector = 'p, h1, h2, h3, h4, h5, h6, pre, [data-vellix-block-id], .vellix-callout, .vellix-plain-callout, .vellix-table-wrapper';
+  const selectableUnit = node => node.isBlock && (node.isTextblock || node.isAtom || node.type.name === "table" || isCalloutUnit(node));
+  const descendUnit = node => isCalloutUnit(node);
   const scrollableContent = node => {
+    if (isCalloutUnit(node)) return false;
+    if (scrollableCache.has(node)) return scrollableCache.get(node);
     const types = ["codeBlock", "table", "collection", "attachment", "pageReference"];
     let found = types.includes(node.type.name);
-    if (!found) node.descendants(child => { if (types.includes(child.type.name)) found = true; return !found; });
+    // Textblocks only contain inline content, so they cannot contain any of
+    // these block-level scrollable surfaces. Avoid walking their text/marks.
+    if (!found && !node.isTextblock) node.descendants(child => { if (types.includes(child.type.name)) found = true; return !found; });
+    scrollableCache.set(node, found);
     return found;
   };
   const records = (doc, normalize) => {
     if (normalize) canonicalNode = normalize;
     if (recordCache.has(doc)) return recordCache.get(doc);
     const result = [];
+    const helper = window.PennedIncrementalNodes;
+    if (helper) {
+      const index = unitIndexes.get(doc) || helper.createNodeIndex(doc, selectableUnit, descendUnit);
+      unitIndexes.set(doc, index);
+      for (const { node, pos } of index.records) {
+        let path;
+        const resolved = () => doc.resolve(pos);
+        result.push({ node, pos, index: result.length,
+          get path() { return path ||= Array.from({ length: resolved().depth + 1 }, (_, depth) => resolved().index(depth)); },
+          get key() { return `path:${this.path.join(".")}`; },
+          get json() { return canonicalNode(node.toJSON()); }, type: node.type.name,
+          get parentType() { return resolved().parent.type.name; },
+          get scrollable() { return scrollableContent(node); } });
+      }
+    }
     const visit = (parent, parentPos, parentPath) => parent.forEach((node, offset, index) => {
       const pos = parent.type.name === "doc" ? offset : parentPos + 1 + offset;
       const path = [...parentPath, index];
       // Containers keep their hierarchy; their editable children are independent units.
       // Tables remain one unit so block actions never detach a cell from its row.
-      if (node.isBlock && (node.isTextblock || node.isAtom || node.type.name === "table")) {
+      // Callouts are a unit AND recurse, so the callout and the cards inside it are both selectable.
+      const unit = isCalloutUnit(node) || (node.isBlock && (node.isTextblock || node.isAtom || node.type.name === "table"));
+      if (unit) {
         result.push({ node, pos, index: result.length, path, key: `path:${path.join(".")}`,
           get json() { return canonicalNode(node.toJSON()); }, type: node.type.name,
-          parentType: parent.type.name, scrollable: scrollableContent(node) });
-      } else if (node.isBlock) visit(node, pos, path);
+          parentType: parent.type.name,
+          get scrollable() { return scrollableContent(node); } });
+      }
+      if (isCalloutUnit(node) || (!unit && node.isBlock)) visit(node, pos, path);
     });
-    visit(doc, 0, []);
+    if (!helper) visit(doc, 0, []);
     recordCache.set(doc, result);
+    recordIndexes.set(doc, { byPosition: new Map(result.map(block => [block.pos, block])),
+      byKey: null, byID: null });
     return result;
+  };
+  const recordAt = (doc, position) => { records(doc); return recordIndexes.get(doc).byPosition.get(position); };
+  const selectedPositions = selected => {
+    if (!selectionPositionCache.has(selected)) selectionPositionCache.set(selected, new Set(selected.map(item => item.pos)));
+    return selectionPositionCache.get(selected);
   };
   const ref = record => ({ pos: record.pos, id: record.node.attrs.id || null });
   const value = () => editor && key?.getState(editor.state);
   const same = (a, b) => a.length === b.length && a.every((item, index) => item.pos === b[index].pos && item.id === b[index].id);
   const canSelect = () => editor?.options.editable !== false && !editor?.view.composing;
   function mapped(selected, tr) {
-    const next = records(tr.doc);
-    return selected.flatMap(item => {
-      const position = tr.mapping.mapResult(item.pos, 1);
-      let record = !position.deleted && next.find(block => block.pos === position.pos && (!item.id || block.node.attrs.id === item.id));
-      if (!record && item.id) {
-        const matches = next.filter(block => block.node.attrs.id === item.id);
-        if (matches.length === 1) record = matches[0];
+    if (!selected.length) return selected;
+    records(tr.doc);
+    const index = recordIndexes.get(tr.doc);
+    // Build the ID lookup only when a mapped position actually needs recovery.
+    // Otherwise each selected block could scan the entire document independently.
+    const recoverByID = id => {
+      if (!index.byID) {
+        index.byID = new Map();
+        for (const block of records(tr.doc)) {
+          const blockID = block.node.attrs.id;
+          if (!blockID) continue;
+          const matches = index.byID.get(blockID) || [];
+          matches.push(block);
+          index.byID.set(blockID, matches);
+        }
       }
-      return record ? [ref(record)] : [];
-    }).filter((item, index, all) => all.findIndex(other => other.pos === item.pos) === index);
+      const matches = index.byID.get(id) || [];
+      return matches.length === 1 ? matches[0] : null;
+    };
+    const seen = new Set();
+    const result = [];
+    for (const item of selected) {
+      const position = tr.mapping.mapResult(item.pos, 1);
+      let record = !position.deleted && recordAt(tr.doc, position.pos);
+      if (record && item.id && record.node.attrs.id !== item.id) record = null;
+      if (!record && item.id) record = recoverByID(item.id);
+      if (record && !seen.has(record.pos)) {
+        seen.add(record.pos);
+        result.push(ref(record));
+      }
+    }
+    return result;
   }
   function mappedRange(range, tr) {
     if (!range) return null;
@@ -70,34 +131,58 @@ enum MobileBlockSelection {
     return update({ mode: next, selected: next === "off" ? [] : value().selected, range: null, gesture: null, click: null });
   }
   function fromKey(name) {
-    return records(editor.state.doc).find(record => record.key === name);
+    records(editor.state.doc);
+    const index = recordIndexes.get(editor.state.doc);
+    index.byKey ||= new Map(records(editor.state.doc).map(block => [block.key, block]));
+    return index.byKey.get(name);
   }
   function changeKey(name, selected) {
     const record = fromKey(name), state = value();
     if (!record || !state) return;
     const next = state.selected.filter(item => item.pos !== record.pos);
     if (selected) next.push(ref(record));
-    update({ selected: next.sort((a, b) => a.pos - b.pos), range: null,
-      ...(state.selected.length && !next.length ? { mode: "off", gesture: null, click: null } : {}) });
+    const collapsed = collapseNested(next);
+    update({ selected: collapsed.sort((a, b) => a.pos - b.pos), range: null,
+      ...(state.selected.length && !collapsed.length ? { mode: "off", gesture: null, click: null } : {}) });
   }
   const facade = {
     get size() { return value()?.selected.length || 0; },
-    has(name) { const record = editor && fromKey(name); return !!record && !!value()?.selected.some(item => item.pos === record.pos); },
+    has(name) { const record = editor && fromKey(name), state = value(); return !!record && !!state && selectedPositions(state.selected).has(record.pos); },
     add(name) { changeKey(name, true); return this; },
     delete(name) { const had = this.has(name); changeKey(name, false); return had; },
     clear() { if (value()?.selected.length) update({ selected: [], range: null }); },
-    *[Symbol.iterator]() { if (editor) for (const record of records(editor.state.doc)) if (this.has(record.key)) yield record.key; },
+    *[Symbol.iterator]() {
+      const state = value();
+      if (state) { const selected = selectedPositions(state.selected); for (const record of records(editor.state.doc)) if (selected.has(record.pos)) yield record.key; }
+    },
   };
+  // A selection must never hold both a callout and a card inside it: block
+  // actions delete/replace by stale position and would run past the callout.
+  // Keep the outermost of any nested pair.
+  function collapseNested(items) {
+    if (!items || items.length < 2) return items || [];
+    const doc = editor.state.doc;
+    const spans = items.map(item => {
+      const record = recordAt(doc, item.pos);
+      return { item, from: item.pos, to: item.pos + (record ? record.node.nodeSize : 1) };
+    });
+    return spans.filter(span => !spans.some(other =>
+      other !== span && other.from <= span.from && span.to <= other.to &&
+      (other.from !== span.from || other.to !== span.to))).map(span => span.item);
+  }
   function rangeSelection(range, target, visible) {
     const blocks = records(editor.state.doc);
-    const origin = blocks.findIndex(block => block.pos === range.anchor.pos);
-    const end = blocks.findIndex(block => block.pos === target.pos);
+    const origin = recordAt(editor.state.doc, range.anchor.pos)?.index ?? -1;
+    const end = recordAt(editor.state.doc, target.pos)?.index ?? -1;
     if (origin < 0 || end < 0) return range.base;
     const byPosition = new Map(range.base.map(item => [item.pos, item]));
-    for (const block of blocks.slice(Math.min(origin, end), Math.max(origin, end) + 1)) {
+    // Iterate the original registry instead of allocating a sliced array for
+    // every movement during an active drag.
+    for (let index = Math.min(origin, end); index <= Math.max(origin, end); index++) {
+      const block = blocks[index];
       if (visible(block)) byPosition.set(block.pos, ref(block));
     }
-    return [...byPosition.values()].sort((a, b) => a.pos - b.pos);
+    return collapseNested([...byPosition.values()].sort((a, b) => a.pos - b.pos));
   }
   function blockedTarget(target, block) {
     if (!(target instanceof Element)) return true;
@@ -115,8 +200,35 @@ enum MobileBlockSelection {
   }
   function createView(view, post) {
     const bindings = new Map();
-    let lastMode, lastCount, lastCollectionSelection, lastHaptic = 0, destroyed = false, queued = false, contactElement = null, pendingContact = null, releaseTarget = null;
+    const boundNodes = new WeakMap();
+    let lastMode, lastCount, lastCollectionSelection, lastHaptic = 0, destroyed = false, contactElement = null, pendingContact = null, releaseTarget = null;
     let scrollToken = null;
+    let bindingsDoc = null, bindingsDirty = true, bindingGeneration = 0, lastSelectedDoc = null, lastSelected = null;
+    let pendingBindingChanges = [], pendingBindingDoc = null;
+    const removedBindingElements = new Set();
+    const attachBinding = (element, position) => {
+      const existing = bindings.get(element);
+      if (existing) { existing.pos = position; return; }
+      const binding = { pos: position, generation: bindingGeneration };
+      const handlers = {
+        touchstart: event => start(event, binding.pos, element),
+        touchmove: event => move(event, element),
+        touchend: event => end(event, binding.pos),
+        touchcancel: cancel,
+        contextmenu: cancel,
+        click: event => click(event, binding.pos, element),
+      };
+      for (const [name, handler] of Object.entries(handlers)) element.addEventListener(name, handler,
+        { capture: true, passive: name === "touchstart" || name === "touchcancel" || name === "contextmenu" });
+      binding.remove = () => {
+        for (const [name, handler] of Object.entries(handlers)) element.removeEventListener(name, handler, true);
+      };
+      bindings.set(element, binding);
+    };
+    const detachBinding = element => {
+      const binding = bindings.get(element);
+      if (binding && element !== contactElement) { binding.remove(); bindings.delete(element); }
+    };
     const seenEvents = new WeakSet();
     const style = document.createElement("style");
     style.textContent = `
@@ -131,18 +243,18 @@ enum MobileBlockSelection {
       .penned-mobile-block-layout > :not(:is([data-vellix-page-break], [data-type="pageBreak"], [data-page-break])) + :not(:is([data-vellix-page-break], [data-type="pageBreak"], [data-page-break])) { margin-top: var(--penned-block-gap) !important; }
       .penned-mobile-block-layout > .vellix-property + .vellix-property { margin-top: 4px !important; }
       .penned-mobile-block-layout :is(.vellix-toggle-content, .vellix-blockquote-content, li) > * { margin-block: 0 !important; }
-      .penned-mobile-block-layout :is(.vellix-toggle-content, .vellix-blockquote-content, li) > * + * { margin-top: var(--penned-block-gap) !important; }
+      .penned-mobile-block-layout :is(.vellix-toggle-content, .vellix-blockquote-content, li:not([data-type="taskItem"])) > * + * { margin-top: var(--penned-block-gap) !important; }
       .penned-mobile-block-layout :is(ul, ol) > li { margin-block: 0 !important; }
       .penned-mobile-block-layout :is(ul, ol) > li + li { margin-top: var(--penned-block-gap) !important; }
       .penned-mobile-block-layout > :is(.vellix-callout, .vellix-plain-callout):has(+ :is([data-vellix-page-break], [data-type="pageBreak"], [data-page-break])) { margin-bottom: 20px !important; }
       .penned-mobile-block-layout > :is([data-vellix-page-break], [data-type="pageBreak"], [data-page-break]) + :is(.vellix-callout, .vellix-plain-callout) { margin-top: 20px !important; }
-      .penned-swipe-block { transition: transform 120ms ease-out; }
-      .penned-swipe-block:not(.penned-swipe-scrollable) { touch-action: pan-y pinch-zoom; }
+      .penned-mobile-block-layout :is(p, h1, h2, h3, h4, h5, h6, pre, [data-vellix-block-id], .vellix-callout, .vellix-plain-callout, .vellix-table-wrapper) { transition: transform 120ms ease-out; }
+      .penned-mobile-block-layout :is(p, h1, h2, h3, h4, h5, h6, [data-vellix-block-id], .vellix-callout, .vellix-plain-callout):not(:is(pre, .penned-collection, .penned-attachment, .vellix-page-reference)):not(:is(pre *, .vellix-table-wrapper *, .penned-collection *, .penned-attachment *, .vellix-page-reference *)) { touch-action: pan-y pinch-zoom; }
       .penned-block-selected { position: relative; outline: none !important; }
       .vellix-plain-callout:has(> .vellix-plain-callout-text > .penned-block-selected:only-child) { position: relative; }
       .penned-block-selected::after,
-      .vellix-callout:has(> .vellix-callout-text > .penned-block-selected:only-child)::after,
-      .vellix-plain-callout:has(> .vellix-plain-callout-text > .penned-block-selected:only-child)::after,
+      .vellix-callout:has(> .vellix-callout-text > .penned-block-selected:only-child:not(.vellix-page-reference))::after,
+      .vellix-plain-callout:has(> .vellix-plain-callout-text > .penned-block-selected:only-child:not(.vellix-page-reference))::after,
       blockquote:has(> .vellix-blockquote-content > .penned-block-selected:only-child)::after,
       .penned-block-selected.vellix-page-reference > .vellix-page-reference-button::after {
         content: ""; position: absolute; inset: -3px calc(-1 * var(--penned-selection-gutter)); pointer-events: none;
@@ -150,9 +262,10 @@ enum MobileBlockSelection {
         box-shadow: inset 0 0 0 1px rgba(181,154,217,.26);
       }
       .penned-block-selected:is(pre, .penned-template-component)::after { inset: 0; border-radius: 16px; }
+      .penned-block-selected:is(.vellix-callout, .vellix-plain-callout)::after { inset: 0; border-radius: inherit; }
       .penned-block-selected:is([data-vellix-page-break], [data-type="pageBreak"], [data-page-break])::after { inset: 1px 0; }
-      .vellix-callout:has(> .vellix-callout-text > .penned-block-selected:only-child)::after,
-      .vellix-plain-callout:has(> .vellix-plain-callout-text > .penned-block-selected:only-child)::after,
+      .vellix-callout:has(> .vellix-callout-text > .penned-block-selected:only-child:not(.vellix-page-reference))::after,
+      .vellix-plain-callout:has(> .vellix-plain-callout-text > .penned-block-selected:only-child:not(.vellix-page-reference))::after,
       blockquote:has(> .vellix-blockquote-content > .penned-block-selected:only-child)::after { inset: 0; border-radius: inherit; }
       .vellix-callout-text > .penned-block-selected:only-child::after,
       .vellix-plain-callout-text > .penned-block-selected:only-child::after,
@@ -163,9 +276,12 @@ enum MobileBlockSelection {
       .penned-block-selected:is(.tableWrapper, .vellix-table-wrapper) :is(td, th) { box-shadow: inset 0 0 0 9999px rgba(181,154,217,.22); }
       .penned-block-selected:is(.tableWrapper, .vellix-table-wrapper) table { outline: none !important; }
       .penned-block-selection-active { caret-color: transparent; }
-      .penned-block-selection-active .penned-swipe-block { -webkit-user-select: none; user-select: none; }
+      /* WebKit inherits user-select from the editor surface. Apply it once at
+         the gesture root rather than matching every block on first swipe. */
+      .penned-block-selection-active,
+      .penned-block-selection-arming { -webkit-user-select: none; user-select: none; }
       .penned-block-selection-active .penned-block-selected { touch-action: none !important; }
-      @media (prefers-reduced-motion: reduce) { .penned-swipe-block { transition: none !important; } }
+      @media (prefers-reduced-motion: reduce) { .penned-mobile-block-layout :is(p, h1, h2, h3, h4, h5, h6, pre, [data-vellix-block-id], .vellix-callout, .vellix-plain-callout, .vellix-table-wrapper) { transition: none !important; } }
     `;
     document.head.appendChild(style);
     view.dom.classList.add("penned-mobile-block-layout");
@@ -179,6 +295,7 @@ enum MobileBlockSelection {
     const cancel = () => {
       stopScrolling();
       cancelPending();
+      if (!value()?.selected.length) view.dom.classList.remove("penned-block-selection-arming");
       if (value()?.gesture) update({ gesture: null });
       else { contactElement = null; releaseTarget?.(); }
     };
@@ -186,10 +303,10 @@ enum MobileBlockSelection {
       const element = view.nodeDOM(block.pos), table = block.type === "table" && element?.querySelector("table");
       return table && table.getBoundingClientRect().height > 0 ? table : element;
     };
-    const visible = block => {
+    const visible = (block, measuredRect = null) => {
       const element = view.nodeDOM(block.pos);
       if (!(element instanceof HTMLElement) || !view.dom.contains(element)) return false;
-      if (element.closest("[hidden]") || surface(block).getBoundingClientRect().height <= 0) return false;
+      if (element.closest("[hidden]") || (measuredRect || surface(block).getBoundingClientRect()).height <= 0) return false;
       const style = getComputedStyle(element);
       if (style.display === "none" || style.visibility === "hidden") return false;
       const closed = "[data-vellix-toggle][data-open='false']";
@@ -202,15 +319,16 @@ enum MobileBlockSelection {
     function targetAt(y, range) {
       // Gaps and block edges are sticky; only entering another block extends the range.
       const blocks = records(view.state.doc);
-      const index = blocks.findIndex(block => block.pos === range.head.pos);
+      const index = recordAt(view.state.doc, range.head.pos)?.index ?? -1;
       if (index < 0) return null;
       let target = blocks[index];
       const current = surface(target).getBoundingClientRect();
       const direction = y > current.bottom ? 1 : y < current.top ? -1 : 0;
+      const alreadySelected = selectedPositions(value().selected);
       for (let next = index + direction; direction && next >= 0 && next < blocks.length; next += direction) {
         const block = blocks[next], rect = surface(block).getBoundingClientRect();
-        if (!visible(block)) continue;
-        const inset = value().selected.some(item => item.pos === block.pos) ? 0 : Math.min(4, rect.height / 4);
+        if (!visible(block, rect)) continue;
+        const inset = alreadySelected.has(block.pos) ? 0 : Math.min(4, rect.height / 4);
         if (direction > 0 ? y < rect.top + inset : y > rect.bottom - inset) break;
         target = block;
       }
@@ -223,8 +341,18 @@ enum MobileBlockSelection {
       if (gesture.scrollRevision !== revision) return true;
       let target;
       if (boundary === "start" || boundary === "end") {
-        const blocks = records(view.state.doc).filter(visible);
-        target = boundary === "start" ? blocks[0] : blocks[blocks.length - 1];
+        // Native scroll-edge updates need only the first or last visible unit.
+        // Avoid allocating an array of every visible block on each scroll tick.
+        const blocks = records(view.state.doc);
+        if (boundary === "start") {
+          for (let index = 0; index < blocks.length; index++) {
+            if (visible(blocks[index])) { target = blocks[index]; break; }
+          }
+        } else {
+          for (let index = blocks.length - 1; index >= 0; index--) {
+            if (visible(blocks[index])) { target = blocks[index]; break; }
+          }
+        }
       } else target = targetAt(y, range);
       if (target && target.pos !== range.head.pos) {
         update({ selected: rangeSelection(range, target, visible), range: { ...range, head: ref(target) } }, true);
@@ -235,9 +363,8 @@ enum MobileBlockSelection {
       const contact = pendingContact;
       pendingContact = null;
       if (!contact || destroyed || !canSelect()) return;
-      const state = value(), blocks = records(view.state.doc);
-      const block = blocks.find(item => item.pos === contact.origin.pos && (!contact.origin.id || item.node.attrs.id === contact.origin.id));
-      if (!block || !state || (state.mode === "off" && textSelectionActive())) return;
+      const state = value(), block = recordAt(view.state.doc, contact.origin.pos);
+      if (!block || (contact.origin.id && block.node.attrs.id !== contact.origin.id) || !state || (state.mode === "off" && textSelectionActive())) return;
       const selected = state.selected.some(item => item.pos === block.pos);
       const resume = selected ? state.range || { anchor: ref(block), head: ref(block),
         base: state.selected.filter(item => item.pos !== block.pos) } : null;
@@ -252,7 +379,7 @@ enum MobileBlockSelection {
       if (event.touches.length !== 1) { cancel(); return; }
       if (!state || !canSelect() || blockedTarget(event.target, element) ||
           (state.mode === "off" && textSelectionActive()) || editor.state.selection.$anchorCell) return;
-      const touch = event.touches[0], block = records(editor.state.doc).find(item => item.pos === position);
+      const touch = event.touches[0], block = recordAt(editor.state.doc, position);
       if (!block) return;
       releaseTarget?.();
       contactElement = element;
@@ -291,7 +418,10 @@ enum MobileBlockSelection {
         if ((!gesture.resume && now() - gesture.started > 320) || (state.mode === "off" && textSelectionActive())) { cancel(); return; }
         if (!verticalResume) {
           if (Math.abs(dy) >= 10 || (Math.abs(dy) >= 8 && Math.abs(dy) >= Math.abs(dx) / 1.8)) { cancel(); return; }
-          if (Math.abs(dx) < (gesture.selectionActive ? 8 : 18) || Math.abs(dx) < Math.abs(dy) * 1.8) return;
+          // Warm the one-time document-wide selection style recalc during the pre-commit
+          // window, so it does not stall the first frame of the block tracking the finger.
+          if (Math.abs(dx) >= 4 && Math.abs(dx) > Math.abs(dy)) view.dom.classList.add("penned-block-selection-arming");
+          if (Math.abs(dx) < (gesture.selectionActive ? 6 : 12) || Math.abs(dx) < Math.abs(dy) * 1.8) return;
         }
       }
       // Never attempt to take over a non-cancellable or already-scrolling stream.
@@ -299,12 +429,12 @@ enum MobileBlockSelection {
       if (!event.defaultPrevented) { cancel(); return; }
       event.stopImmediatePropagation();
       const resuming = gesture.resuming || (!gesture.committed && verticalResume);
-      const committed = gesture.committed || resuming || Math.abs(dx) >= (gesture.selectionActive ? 24 : 48);
+      const committed = gesture.committed || resuming || Math.abs(dx) >= (gesture.selectionActive ? 14 : 24);
       const extending = gesture.extending || resuming || (gesture.commitY !== null && Math.abs(touch.clientY - gesture.commitY) >= 6);
       let selected = state.selected, range = state.range;
       if (committed) {
         if (!gesture.committed) range = gesture.resume || { anchor: gesture.origin, head: gesture.origin, base: gesture.base };
-        let target = records(view.state.doc).find(block => block.pos === range.head.pos);
+        let target = recordAt(view.state.doc, range.head.pos);
         if (extending) target = targetAt(touch.clientY, range);
         if (target) {
           if (!gesture.committed || target.pos !== range.head.pos) selected = rangeSelection(range, target, visible);
@@ -340,7 +470,7 @@ enum MobileBlockSelection {
         event.preventDefault(); event.stopImmediatePropagation(); update({ click: null }); return;
       }
       if (!state || state.mode === "off" || !canSelect() || blockedTarget(event.target, element)) return;
-      const block = records(editor.state.doc).find(item => item.pos === position);
+      const block = recordAt(editor.state.doc, position);
       if (!block) return;
       event.preventDefault(); event.stopImmediatePropagation();
       const next = state.mode === "single" ? [] : state.selected.filter(item => item.pos !== position);
@@ -352,8 +482,16 @@ enum MobileBlockSelection {
       const state = key.getState(view.state);
       if (!state || !editor) return;
       if (!state.gesture?.committed || !state.gesture.extending || state.mode === "off") stopScrolling();
-      if (!state.gesture && !pendingContact) { contactElement = null; releaseTarget?.(); }
+      if (!state.gesture && !pendingContact) {
+        if (contactElement && !contactElement.isConnected) bindingsDirty = true;
+        contactElement = null; releaseTarget?.();
+      }
       if (lastMode !== state.mode) {
+        if (lastMode && state.mode === "off" && state.dividerConverted) {
+          view.dom.blur();
+          const native = window.getSelection();
+          if (native && (view.dom.contains(native.anchorNode) || view.dom.contains(native.focusNode))) native.removeAllRanges();
+        }
         mirrorMode?.(state.mode);
         document.documentElement.dataset.vellixSelectionMode = state.mode;
         document.body.dataset.vellixSelectionMode = state.mode;
@@ -361,52 +499,148 @@ enum MobileBlockSelection {
         lastMode = state.mode; post("selectionMode", { mode: state.mode });
         if (state.mode !== "off") window.tiptapCommand?.("mobileDismissSlashMenu");
       }
+      // The arming warm-up is only needed before selection commits. Once the editor is
+      // fully at rest it must come off, or text would stay unselectable while editing.
+      if (state.mode === "off" && !state.gesture && !pendingContact && view.dom.classList.contains("penned-block-selection-arming")) view.dom.classList.remove("penned-block-selection-arming");
       if (lastCount !== state.selected.length) { lastCount = state.selected.length; post("selection", { count: state.selected.length }); }
-      const selectedPositions = new Set(state.selected.map(item => item.pos));
-      const collectionBlockIDs = records(view.state.doc).filter(block => block.type === "collection" && selectedPositions.has(block.pos))
-        .map(block => block.node.attrs.id).filter(Boolean);
-      const collectionSelection = JSON.stringify(collectionBlockIDs);
-      if (lastCollectionSelection !== collectionSelection) {
-        lastCollectionSelection = collectionSelection;
-        post("blockSelectionSurfaces", { collectionBlockIDs });
+      if (lastSelectedDoc !== view.state.doc || lastSelected !== state.selected) {
+        const collectionBlockIDs = state.selected.map(item => recordAt(view.state.doc, item.pos))
+          .filter(block => block?.type === "collection").map(block => block.node.attrs.id).filter(Boolean);
+        const collectionSelection = JSON.stringify(collectionBlockIDs);
+        if (lastCollectionSelection !== collectionSelection) {
+          lastCollectionSelection = collectionSelection;
+          post("blockSelectionSurfaces", { collectionBlockIDs });
+        }
+        lastSelectedDoc = view.state.doc;
+        lastSelected = state.selected;
       }
       if (state.haptic > lastHaptic) post("haptic", { style: "light" });
       lastHaptic = state.haptic;
-      const live = new Set();
-      for (const block of records(view.state.doc)) {
-        const element = view.nodeDOM(block.pos);
-        if (!(element instanceof HTMLElement)) continue;
-        live.add(element);
-        const existing = bindings.get(element);
-        if (existing?.pos === block.pos) continue;
-        existing?.remove();
-        const handlers = {
-          touchstart: event => start(event, block.pos, element),
-          touchmove: event => move(event, element),
-          touchend: event => end(event, block.pos),
-          touchcancel: cancel,
-          contextmenu: cancel,
-          click: event => click(event, block.pos, element),
-        };
-        for (const [name, handler] of Object.entries(handlers)) element.addEventListener(name, handler,
-          { capture: true, passive: name === "touchstart" || name === "touchcancel" || name === "contextmenu" });
-        bindings.set(element, { pos: block.pos, remove() {
-          for (const [name, handler] of Object.entries(handlers)) element.removeEventListener(name, handler, true);
-        } });
+      if (bindingsDoc === view.state.doc && !bindingsDirty) return;
+      const incremental = !bindingsDirty && pendingBindingDoc === view.state.doc;
+      bindingsDoc = view.state.doc;
+      bindingsDirty = false;
+      const changedBindings = pendingBindingChanges;
+      pendingBindingChanges = [];
+      pendingBindingDoc = null;
+      if (incremental) {
+        // Bind changed units directly; neither insertion nor replacement needs
+        // a document-wide pass. Mutation records handle removed DOM targets.
+        for (const block of changedBindings) {
+          const element = view.nodeDOM(block.pos);
+          if (element instanceof HTMLElement) {
+            boundNodes.set(block.node, element);
+            attachBinding(element, block.pos);
+          }
+        }
+        for (const element of removedBindingElements) detachBinding(element);
+        removedBindingElements.clear();
+        return;
       }
-      for (const [element, binding] of bindings) if (!live.has(element) && element !== contactElement) {
+      // Mark bindings with a generation instead of allocating a document-sized
+      // live-element Set every time ProseMirror updates the rendered nodes.
+      const generation = ++bindingGeneration;
+      for (const block of records(view.state.doc)) {
+        const cachedElement = boundNodes.get(block.node);
+        const cachedBinding = cachedElement && bindings.get(cachedElement);
+        const element = cachedElement?.isConnected && cachedBinding?.generation !== generation
+          ? cachedElement : view.nodeDOM(block.pos);
+        if (!(element instanceof HTMLElement)) continue;
+        boundNodes.set(block.node, element);
+        const existing = bindings.get(element);
+        if (existing) { existing.pos = block.pos; existing.generation = generation; continue; }
+        attachBinding(element, block.pos);
+        bindings.get(element).generation = generation;
+      }
+      for (const [element, binding] of bindings) if (binding.generation !== generation && element !== contactElement) {
         binding.remove(); bindings.delete(element);
       }
     }
-    // NodeViews can replace DOM without replacing the ProseMirror document. Reconcile
-    // identities after DOM churn as well as state changes, never via global gestures.
-    const observer = new MutationObserver(() => {
-      if (queued || destroyed) return;
-      queued = true;
-      queueMicrotask(() => { queued = false; if (!destroyed) refresh(); });
+    // Gesture metadata does not replace block DOM; actual NodeView churn still rebinds.
+    const observer = new MutationObserver(mutations => {
+      if (destroyed) return;
+      // Inline formatting can replace spans inside an already-bound textblock.
+      // Those changes do not replace the block's gesture target and must not
+      // trigger a document-wide rebinding pass. Structural changes still do.
+      const changesSelectableBlock = node => node.nodeType === 1 &&
+        (node.matches?.(unitSelector) || node.querySelector?.(unitSelector));
+      let needsRebind = false;
+      for (const mutation of mutations) {
+        const insideBoundBlock = mutation.target instanceof Element &&
+          mutation.target.closest(unitSelector);
+        if (!insideBoundBlock) {
+          for (const node of mutation.addedNodes) if (node.nodeType === 1) { needsRebind = true; break; }
+          if (!needsRebind) for (const node of mutation.removedNodes) if (node.nodeType === 1) { needsRebind = true; break; }
+        } else {
+          for (const node of mutation.addedNodes) if (changesSelectableBlock(node)) { needsRebind = true; break; }
+          if (!needsRebind) for (const node of mutation.removedNodes) if (changesSelectableBlock(node)) { needsRebind = true; break; }
+        }
+        if (needsRebind) break;
+      }
+      if (!needsRebind) return;
+      // Reconcile only nodes in mutated subtrees. Stable DOM markers are only
+      // candidates; verify their selectable model position before attaching.
+      const reconcile = element => {
+        if (!(element instanceof HTMLElement) || !view.dom.contains(element) ||
+            !element.matches(unitSelector)) return;
+        let position;
+        try { position = view.posAtDOM(element, 0); } catch { return; }
+        const doc = view.state.doc;
+        const resolved = doc.resolve(Math.max(0, Math.min(position, doc.content.size)));
+        const candidates = [position, position - 1];
+        for (let depth = resolved.depth; depth > 0; depth--) candidates.push(resolved.before(depth));
+        for (const pos of candidates) {
+          if (pos < 0 || view.nodeDOM(pos) !== element || !recordAt(doc, pos)) continue;
+          attachBinding(element, pos);
+          return;
+        }
+      };
+      for (const mutation of mutations) {
+        for (const node of mutation.removedNodes) {
+          if (!(node instanceof Element)) continue;
+          if (bindings.has(node)) removedBindingElements.add(node);
+          node.querySelectorAll?.(unitSelector).forEach(element => {
+            if (bindings.has(element)) removedBindingElements.add(element);
+          });
+        }
+        for (const node of mutation.addedNodes) {
+          if (!(node instanceof Element)) continue;
+          reconcile(node);
+          node.querySelectorAll?.(unitSelector).forEach(reconcile);
+        }
+      }
+      for (const element of removedBindingElements) if (!view.dom.contains(element)) detachBinding(element);
+      removedBindingElements.clear();
     });
     observer.observe(view.dom, { childList: true, subtree: true });
     controller = { refresh, cancelPending, scroll: continueDragScroll, mapPending(tr) {
+      if (tr.docChanged) {
+        const helper = window.PennedIncrementalNodes;
+        const index = helper && unitIndexes.get(tr.doc);
+        if (!index) {
+          // The initial document or a missing index still uses the one-time
+          // complete binding pass. Normal edits use the indexed delta.
+          bindingsDirty = true;
+          pendingBindingChanges = [];
+          pendingBindingDoc = null;
+        } else {
+          // Map handler positions without querying DOM. If several transactions
+          // arrive before the view refresh, carry earlier changes forward too.
+          for (const binding of bindings.values()) {
+            if (binding.pos < 0) continue;
+            const mappedPosition = tr.mapping.mapResult(binding.pos, 1);
+            binding.pos = mappedPosition.deleted ? -1 : mappedPosition.pos;
+          }
+          const carried = pendingBindingDoc === tr.before ? pendingBindingChanges.flatMap(block => {
+            const mappedPosition = tr.mapping.mapResult(block.pos, 1);
+            if (mappedPosition.deleted) return [];
+            const record = recordAt(tr.doc, mappedPosition.pos);
+            return record ? [record] : [];
+          }) : [];
+          pendingBindingChanges = [...carried, ...index.changed];
+          pendingBindingDoc = tr.doc;
+        }
+      }
       if (!pendingContact) return;
       const origin = mapped([pendingContact.origin], tr)[0];
       pendingContact = origin ? { ...pendingContact, origin } : null;
@@ -419,12 +653,54 @@ enum MobileBlockSelection {
   }
   window.PennedBlockSelection = {
     records, selectionFacade: () => facade,
+    selectedRecords() {
+      return (value()?.selected || []).map(item => recordAt(editor.state.doc, item.pos)).filter(Boolean);
+    },
     continueDragScroll: payload => controller?.scroll(payload) ?? false,
     transformSelectedNested(transform) {
       const state = value();
       if (!state?.selected.length) return undefined;
-      const selected = records(editor.state.doc).filter(block => state.selected.some(item => item.pos === block.pos));
+      const positions = selectedPositions(state.selected);
+      const selected = records(editor.state.doc).filter(block => positions.has(block.pos));
       if (!selected.some(block => block.path.length > 1)) return undefined;
+      // Converting selected list entries to a callout must wrap the list as a
+      // block, not replace the required paragraph within each listItem.
+      const firstTarget = transform(selected[0].json, selected[0]);
+      if (["plainCallout", "callout"].includes(firstTarget?.type) && selected.some(block => block.parentType === "listItem")) {
+        const doc = editor.state.doc;
+        const topLevel = new Map();
+        for (const block of selected) {
+          const resolved = doc.resolve(block.pos);
+          const topIndex = resolved.index(0);
+          const topNode = doc.child(topIndex);
+          if (!topLevel.has(topIndex)) topLevel.set(topIndex, { index: topIndex, node: topNode });
+        }
+        const indices = [...topLevel.keys()].sort((a,b) => a-b);
+        if (indices.some((index, i) => i && index !== indices[i-1] + 1)) {
+          post("error", { message: "Select adjacent blocks to put them in one callout." });
+          return false;
+        }
+        const from = indices.slice(0, 1).reduce((pos, index) => {
+          let offset = 0; for (let i = 0; i < index; i++) offset += doc.child(i).nodeSize;
+          return offset;
+        }, 0);
+        const to = from + indices.reduce((size, index) => size + doc.child(index).nodeSize, 0);
+        const contents = indices.map(index => doc.child(index).toJSON());
+        const callout = editor.schema.nodeFromJSON({
+          type: firstTarget.type,
+          attrs: { id: crypto.randomUUID(), color: firstTarget.attrs?.color || "#ffffff",
+            ...(firstTarget.type === "callout" ? { icon: firstTarget.attrs?.icon || "sparkle" } : {}) },
+          content: contents
+        });
+        callout.check();
+        let transaction = closeHistory(editor.state.tr);
+        transaction.replaceWith(from, to, callout);
+        transaction.doc.check();
+        transaction.setMeta(key, { selected: [], range: null, gesture: null, click: null });
+        editor.view.dispatch(transaction);
+        editor.view.dispatch(closeHistory(editor.state.tr));
+        return true;
+      }
       const replacements = selected.map(block => ({ block, node: editor.schema.nodeFromJSON(transform(block.json, block)) }));
       for (const { block, node } of replacements) {
         node.check();
@@ -444,13 +720,26 @@ enum MobileBlockSelection {
     deleteSelected() {
       const state = value();
       if (!state?.selected.length) return false;
-      const selected = records(editor.state.doc).filter(block => state.selected.some(item => item.pos === block.pos));
+      const positions = selectedPositions(state.selected);
+      const selected = records(editor.state.doc).filter(block => positions.has(block.pos));
       if (!selected.some(block => block.path.length > 1)) return false;
       let transaction = closeHistory(editor.state.tr);
-      // ProseMirror fits each replacement to its parent's content expression,
-      // preserving required list paragraphs and the surrounding hierarchy.
-      for (const block of selected.slice().reverse()) transaction.delete(block.pos, block.pos + block.node.nodeSize);
+      // A selected paragraph inside a list item represents that entire bullet
+      // when it is the item's only child. Delete the listItem itself; deleting
+      // just its required paragraph makes ProseMirror recreate an empty bullet.
+      const ranges = selected.map(block => {
+        const resolved = editor.state.doc.resolve(block.pos);
+        if (resolved.parent.type.name === "listItem" && resolved.parent.childCount === 1) {
+          const from = resolved.before(resolved.depth);
+          return { from, to: from + resolved.parent.nodeSize };
+        }
+        return { from: block.pos, to: block.pos + block.node.nodeSize };
+      });
+      const unique = [...new Map(ranges.map(range => [range.from + ":" + range.to, range])).values()]
+        .sort((a, b) => b.from - a.from);
+      for (const range of unique) transaction.delete(range.from, range.to);
       transaction.doc.check();
+      transaction.setMeta("pennedPlaceholderDeletion", unique);
       transaction.setMeta(key, { selected: [], range: null, gesture: null, click: null });
       editor.view.dispatch(transaction);
       editor.view.dispatch(closeHistory(editor.state.tr));
@@ -469,7 +758,7 @@ enum MobileBlockSelection {
       if (name === "setContent" || (name === "setEditable" && args.editable === false)) { controller?.cancelPending(); update({ reset: true }); }
       if (name === "selectAllBlocks") {
         if (!canSelect()) return false;
-        return update({ mode: "multi", selected: records(editor.state.doc).map(ref), range: null, gesture: null });
+        return update({ mode: "multi", selected: collapseNested(records(editor.state.doc).map(ref)), range: null, gesture: null });
       }
       if (value().selected.length && ["deleteSelectedBlocks", "duplicateSelectedBlocks", "cutSelectedBlocks",
           "formatSelectedBlocks", "setSelectedBlockType", "setSelectedCalloutColor", "updateCalloutIcon"].includes(name)) {
@@ -484,6 +773,8 @@ enum MobileBlockSelection {
       return [Extension.create({ name: "pennedBlockSelection", priority: 1100,
         onBeforeCreate() { editor = this.editor; mirrorMode = modeChanged; },
         addProseMirrorPlugins() {
+          let decoratedDoc = null, decoratedSelection = null, selectedPaint = DecorationSet.empty;
+          let paintedPosition = null, paintedDX = 0, movingPaint = DecorationSet.empty;
           return [new Plugin({ key,
             filterTransaction(tr) {
               if (skipNativeContentHistory && tr.docChanged) {
@@ -498,6 +789,11 @@ enum MobileBlockSelection {
               init: empty,
               apply(tr, previous) {
                 const patch = tr.getMeta(key);
+                if (tr.docChanged && window.PennedIncrementalNodes) {
+                  const helper = window.PennedIncrementalNodes;
+                  const index = helper.updateNodeIndex(unitIndexes.get(tr.before), tr, selectableUnit, descendUnit);
+                  unitIndexes.set(tr.doc, index);
+                }
                 if (patch?.reset) return empty();
                 let state = previous;
                 if (tr.docChanged) {
@@ -511,7 +807,9 @@ enum MobileBlockSelection {
                   }
                   state = { ...previous, selected: mapped(previous.selected, tr), range: mappedRange(previous.range, tr), gesture, click: null };
                 }
-                const next = patch ? { ...state, ...patch, haptic: state.haptic } : state;
+                let next = patch ? { ...state, ...patch, haptic: state.haptic } : state;
+                if (previous.mode === "off" && next.mode !== "off") next = { ...next, dividerConverted: false };
+                if (tr.getMeta("pennedDividerStyleConversion")) next = { ...next, dividerConverted: true };
                 if (patch?.haptic && !same(state.selected, next.selected)) next.haptic += 1;
                 return previous.selected.length && !next.selected.length
                   ? { ...next, mode: "off", range: null, gesture: null, click: null }
@@ -522,15 +820,23 @@ enum MobileBlockSelection {
               editable(state) { const selected = key.getState(state); return selected.mode === "off" || (selected.gesture?.phase === "active" && selected.gesture.editable); },
               decorations(state) {
                 const selection = key.getState(state), moving = selection.gesture;
-                const selectedPositions = new Set(selection.selected.map(item => item.pos));
-                return DecorationSet.create(state.doc, records(state.doc).map(block => {
-                  const selected = selectedPositions.has(block.pos);
-                  const dx = moving?.phase === "active" && moving.origin.pos === block.pos ? moving.dx : 0;
-                  return Decoration.node(block.pos, block.pos + block.node.nodeSize, {
-                    class: "penned-swipe-block" + (block.scrollable ? " penned-swipe-scrollable" : "") + (selected ? " penned-block-selected" : ""),
-                    ...(dx ? { style: `transform: translateX(${dx}px); transition: none;` } : {}),
-                  });
-                }));
+                if (decoratedDoc !== state.doc || decoratedSelection !== selection.selected) {
+                  const highlights = selection.selected.map(item => recordAt(state.doc, item.pos)).filter(Boolean)
+                    .map(block => Decoration.node(block.pos, block.pos + block.node.nodeSize, { class: "penned-block-selected" }));
+                  selectedPaint = highlights.length ? DecorationSet.create(state.doc, highlights) : DecorationSet.empty;
+                  decoratedDoc = state.doc;
+                  decoratedSelection = selection.selected;
+                  paintedPosition = null;
+                }
+                const block = moving?.phase === "active" && moving.dx ? recordAt(state.doc, moving.origin.pos) : null;
+                if (!block) return selectedPaint;
+                if (paintedPosition !== block.pos || paintedDX !== moving.dx) {
+                  movingPaint = selectedPaint.add(state.doc, [Decoration.node(block.pos, block.pos + block.node.nodeSize,
+                    { style: `transform: translateX(${moving.dx}px); transition: none;` })]);
+                  paintedPosition = block.pos;
+                  paintedDX = moving.dx;
+                }
+                return movingPaint;
               },
               handleTextInput(view) { return key.getState(view.state).mode !== "off"; },
               handleDOMEvents: { keydown(view, event) {

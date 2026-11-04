@@ -3,6 +3,31 @@
   const F = () => global.VellixTableFormulas;
   const control = { editor: null, menu: false, selecting: false, bookmark: null, insertion: null, drag: null, signature: "" };
   const freshID = () => global.crypto.randomUUID();
+  // Table borders and callout edges share pointer capture and release semantics.
+  function trackHorizontalResize(event, { move, finish, cancel }) {
+    const handle = event.currentTarget, pointer = event.pointerId;
+    event.preventDefault(); event.stopPropagation();
+    let active = true;
+    const matches = next => next.pointerId === pointer;
+    const moving = next => { if (matches(next)) move(next); };
+    const cleanup = () => {
+      if (!active) return;
+      active = false;
+      handle.removeEventListener("pointermove", moving);
+      handle.removeEventListener("pointerup", ended);
+      handle.removeEventListener("pointercancel", cancelled);
+      handle.removeEventListener("lostpointercapture", cancelled);
+      if (handle.hasPointerCapture(pointer)) handle.releasePointerCapture(pointer);
+    };
+    const ended = next => { if (active && matches(next)) { cleanup(); finish(next); } };
+    const cancelled = next => { if (active && matches(next)) { cleanup(); cancel(next); } };
+    handle.addEventListener("pointermove", moving);
+    handle.addEventListener("pointerup", ended);
+    handle.addEventListener("pointercancel", cancelled);
+    handle.addEventListener("lostpointercapture", cancelled);
+    handle.setPointerCapture(pointer);
+    return cleanup;
+  }
   function resizeWidths(original, boundary, delta, left) {
     const widths = original.slice(); let offset = left;
     if (boundary === 0) {
@@ -17,6 +42,8 @@
   const color = value => /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(value || "") ? value : null;
   const fonts = { system: "system-ui,sans-serif", rounded: "ui-rounded,system-ui,sans-serif", serif: "ui-serif,Georgia,serif", mono: "ui-monospace,monospace", hachiMaruPop: '"HachiMaruPop",cursive' };
   let api, T;
+  const tableIndexes = new WeakMap(), gridCache = new WeakMap(), currentCache = new WeakMap(), selectedCellsCache = new WeakMap();
+  const isTable = node => node.type.spec.tableRole === "table";
   let availableFunctions;
   function functions() {
     return availableFunctions ||= Object.keys(new global.FormulaParser().functions).filter(name => name !== "WEBSERVICE").sort();
@@ -32,18 +59,26 @@
     return parts.join(node.inlineContent ? "" : "\n").trim();
   }
   function tableRecords(doc) {
+    if (tableIndexes.has(doc)) return tableIndexes.get(doc).records;
     const records = [];
     doc.descendants((node, pos) => { if (node.type.spec.tableRole === "table") records.push({ node, pos }); });
+    tableIndexes.set(doc, { doc, records, changed: records });
     return records;
   }
   function grid(record) {
+    const cached = gridCache.get(record.node);
+    if (cached) { cached.pos = record.pos; return cached; }
     const map = T.TableMap.get(record.node), cells = [];
+    const result = { ...record }, calculations = [], ids = [];
     for (let row = 0; row < map.height; row++) {
       const line = [];
       for (let col = 0; col < map.width; col++) {
         const offset = map.map[row * map.width + col], node = record.node.nodeAt(offset);
-        line.push({ id: node.attrs.id, value: permanentText(node), formula: node.attrs.formula,
-          format: node.attrs.format, attrs: node.attrs, node, pos: record.pos + 1 + offset });
+        const cell = { id: node.attrs.id, value: permanentText(node), formula: node.attrs.formula,
+          format: node.attrs.format, attrs: node.attrs, node, row, col,
+          get pos() { return result.pos + 1 + offset; } };
+        line.push(cell);
+        if (node.attrs.formula || node.attrs.format !== "text" || node.attrs.calculated != null) calculations.push(cell);
       }
       cells.push(line);
     }
@@ -52,25 +87,35 @@
       : rowless ? { rows: 0, columns: map.width }
       : { rows: map.height, columns: map.width };
     const degenerate = columnless || rowless;
-    return { id: record.node.attrs.id, name: record.node.attrs.name || "Table", cells, map, columnless, rowless, degenerate, logical, ...record };
+    record.node.descendants(node => { if (node.attrs.id) ids.push(node.attrs.id); });
+    Object.assign(result, { id: record.node.attrs.id, name: record.node.attrs.name || "Table", cells, map,
+      columnless, rowless, degenerate, logical, calculations, ids,
+      merged: cells.some(line => line.some(cell => cell.node.attrs.rowspan > 1 || cell.node.attrs.colspan > 1)),
+      headerColumn: !degenerate && record.node.content.content.every(row => row.firstChild?.type.spec.tableRole === "header_cell") });
+    gridCache.set(record.node, result);
+    return result;
   }
   function current(state = control.editor.state) {
+    if (currentCache.has(state)) return currentCache.get(state);
     try {
       const rect = T.selectedRect(state);
       const record = { node: rect.table, pos: rect.tableStart - 1 };
-      return { ...grid(record), rect };
-    } catch (_) { return null; }
+      const value = { ...grid(record), rect };
+      currentCache.set(state, value); return value;
+    } catch (_) { currentCache.set(state, null); return null; }
   }
   function selectedCells(table) {
+    if (selectedCellsCache.has(table)) return selectedCellsCache.get(table);
     const positions = table.map.cellsInRect(table.rect);
-    return positions.map(offset => ({ node: table.node.nodeAt(offset), pos: table.pos + 1 + offset,
+    const result = positions.map(offset => ({ node: table.node.nodeAt(offset), pos: table.pos + 1 + offset,
       rect: table.map.findCell(offset) }));
+    selectedCellsCache.set(table, result);
+    return result;
   }
   function context() {
     const table = current();
     if (!table) return null;
     const selected = selectedCells(table), cell = selected[0], attrs = cell?.node.attrs || cellDefaults;
-    const merged = table.cells.some(line => line.some(item => item.node.attrs.rowspan > 1 || item.node.attrs.colspan > 1));
     const contents = cell ? permanentText(cell.node) : "";
     return { tableID: table.id, cellID: attrs.id || "", name: table.name, row: cell?.rect.top || 0, column: cell?.rect.left || 0,
       rowCount: table.logical.rows, columnCount: table.logical.columns, selectedCount: selected.length,
@@ -81,11 +126,11 @@
       format: attrs.format || "text", decimals: attrs.decimals ?? 2, currency: attrs.currency || "USD",
       fillColor: attrs.fillColor || "", textColor: attrs.textColor || "", stripeColor: table.node.attrs.stripeColor || "",
       headerRow: table.degenerate ? false : table.node.firstChild?.firstChild?.type.spec.tableRole === "header_cell",
-      headerColumn: !table.degenerate && table.node.content.content.every(row => row.firstChild?.type.spec.tableRole === "header_cell"),
+      headerColumn: table.headerColumn,
       canDeleteRows: table.logical.rows > 0,
       canDeleteColumns: table.logical.columns > 0,
       canMerge: !table.degenerate && selected.length > 1 && T.mergeCells(control.editor.state),
-      canSplit: !table.degenerate && T.splitCell(control.editor.state), canSort: !table.degenerate && !merged,
+      canSplit: !table.degenerate && T.splitCell(control.editor.state), canSort: !table.degenerate && !table.merged,
       functions: functions() };
   }
   function publish(force = false) {
@@ -286,6 +331,12 @@
     return false;
   }
   function command(operation, args = {}) {
+    const before = control.editor.state.doc;
+    const result = performCommand(operation, args);
+    if (result && before !== control.editor.state.doc) post("tableSnapshot", { document: control.editor.getJSON() });
+    return result;
+  }
+  function performCommand(operation, args = {}) {
     const editor = control.editor;
     if (operation === "close") {
       control.menu = false; control.insertion = null; publish(true); return true;
@@ -500,29 +551,27 @@
         if (!original.length) return;
         const handle = event.currentTarget, start = event.clientX, left = Number(this.node.attrs.leftOffset) || 0;
         let widths = original.slice(), offset = left;
-        control.drag = this; this.dom.classList.add("vellix-table-active"); handle.setPointerCapture(event.pointerId);
+        control.drag = this; this.dom.classList.add("vellix-table-active");
         const move = next => {
           ({ widths, offset } = resizeWidths(original, boundary, next.clientX - start, left));
           Array.from(this.colgroup.children).forEach((column, index) => column.style.width = `${widths[index]}px`);
           this.table.style.width = `${widths.reduce((a, b) => a + b, 0)}px`; this.table.style.marginLeft = `${offset}px`;
         };
         const finish = next => {
-          handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", finish); handle.removeEventListener("pointercancel", cancel);
-          if (handle.hasPointerCapture(next.pointerId)) handle.releasePointerCapture(next.pointerId);
           control.drag = null;
           const pos = this.getPos(), node = this.view.state.doc.nodeAt(pos);
           if (node?.type.name === "table") { const tr = this.view.state.tr; setWidths(tr, { node, pos }, widths.map(w => Math.round(w)), offset); this.view.dispatch(tr); }
           publish(true);
         };
         const cancel = next => { widths = original.slice(); offset = left; finish(next); };
-        handle.addEventListener("pointermove", move); handle.addEventListener("pointerup", finish); handle.addEventListener("pointercancel", cancel);
+        this.resizeCleanup = trackHorizontalResize(event, { move, finish, cancel });
       }
       ignoreMutation(mutation) {
         if (mutation.type === "selection") return false;
         return !this.contentDOM.contains(mutation.target);
       }
       stopEvent(event) { return this.handles.contains(event.target); }
-      destroy() { if (control.drag === this) control.drag = null; }
+      destroy() { this.resizeCleanup?.(); if (control.drag === this) control.drag = null; }
     }
     const nodes = Object.entries(names).map(([source, name]) => {
       const spec = specs[source], isCell = source === "table_cell" || source === "table_header";
@@ -568,26 +617,43 @@
         };
       },
       addProseMirrorPlugins() {
+        let workbook = null, paint = DecorationSet.empty, paintVersion = -1, paintSignature = "";
+        const tablePaints = new Map();
         return [new Plugin({ key,
-          state: { init: () => 0, apply(tr, value) {
+          state: { init: (_config, state) => ({ index: (tableRecords(state.doc), tableIndexes.get(state.doc)), version: 0 }), apply(tr, value) {
             if (control.bookmark) control.bookmark = control.bookmark.map(tr.mapping);
             if (control.insertion) control.insertion = control.insertion.map(tr.mapping);
-            return tr.docChanged || tr.selectionSet ? value + 1 : value;
+            if (!tr.docChanged) return value;
+            const helper = global.PennedIncrementalNodes;
+            const index = helper ? helper.updateNodeIndex(value.index, tr, isTable) : (tableRecords(tr.doc), tableIndexes.get(tr.doc));
+            tableIndexes.set(tr.doc, index);
+            paint = paint.map(tr.mapping, tr.doc);
+            const changed = index.records.length !== value.index.records.length ||
+              index.records.some((record, i) => record.node !== value.index.records[i]?.node);
+            return { index, version: value.version + (changed ? 1 : 0) };
           } },
           appendTransaction(transactions, old, state) {
-            if (transactions.some(tr => tr.docChanged)) {
+            if (!transactions.some(tr => tr.docChanged)) return null;
+            const before = key.getState(old), after = key.getState(state);
+            if (before.version === after.version) return null;
+            const previousNodes = new Set(before.index.records.map(record => record.node));
+            const changedRecords = after.index.records.filter(record => !previousNodes.has(record.node));
+            if (changedRecords.some(record => record.node.childCount === 0)) {
               const legacy = state.tr; let migrated = false;
-              state.doc.descendants((node, pos) => {
+              for (const { node, pos } of changedRecords) {
                 if (node.type.name === "table" && node.childCount === 0) {
                   legacy.replaceWith(legacy.mapping.map(pos), legacy.mapping.map(pos + node.nodeSize), migrateLegacyTable(node));
                   migrated = true;
                 }
-              });
+              }
               if (migrated) return legacy.setMeta(key, true).setMeta("addToHistory", false);
             }
             if (!transactions.some(tr => tr.docChanged && !tr.getMeta(key))) return null;
             const tr = state.tr, seen = new Set();
-            for (const record of tableRecords(state.doc)) {
+            for (const record of after.index.records) if (previousNodes.has(record.node)) {
+              seen.add(record.node.attrs.id); for (const id of grid(record).ids) seen.add(id);
+            }
+            for (const record of changedRecords) {
               const id = record.node.attrs.id;
               if (!id || seen.has(id)) tr.setNodeMarkup(record.pos, undefined, { ...record.node.attrs, id: freshID() });
               else seen.add(id);
@@ -598,32 +664,52 @@
                 }
               });
             }
-            const tables = tableRecords(tr.doc).map(grid);
-            const workbook = F().createWorkbook(tables);
+            const tables = (tr.docChanged && global.PennedIncrementalNodes
+              ? global.PennedIncrementalNodes.updateNodeIndex(after.index, tr, isTable).records : after.index.records).map(grid);
+            if (workbook) workbook.update(tables);
+            else workbook = F().createWorkbook(tables);
             for (const table of tables) {
-              table.node.descendants((node, offset) => {
+              const changedTable = !previousNodes.has(table.node);
+              if (changedTable) table.node.descendants((node, offset) => {
                 if (node.type.name === "table") return false;
                 if (!["tableRow", "tableCell", "tableHeader"].includes(node.type.name)) return;
                 let attrs = { ...node.attrs }, changed = false;
                 if (!attrs.id || seen.has(attrs.id)) { attrs.id = freshID(); changed = true; } seen.add(attrs.id);
-                if (node.type.spec.tableRole === "cell" || node.type.spec.tableRole === "header_cell") {
-                  const rect = table.map.findCell(offset), value = workbook.value(table.id, rect.top, rect.left);
-                  const calculated = attrs.formula || attrs.format !== "text" ? F().display(value, attrs) : null;
-                  if (attrs.calculated !== calculated) { attrs.calculated = calculated; changed = true; }
-                }
                 if (changed) tr.setNodeMarkup(table.pos + 1 + offset, undefined, attrs);
               });
+              for (const cell of table.calculations) {
+                if (!changedTable && !workbook.needsCalculation(table.id, cell.row, cell.col)) continue;
+                const node = tr.doc.nodeAt(cell.pos);
+                const calculated = node.attrs.formula || node.attrs.format !== "text"
+                  ? F().display(workbook.value(table.id, cell.row, cell.col), node.attrs) : null;
+                if (node.attrs.calculated !== calculated) tr.setNodeMarkup(cell.pos, undefined, { ...node.attrs, calculated });
+              }
             }
             return tr.steps.length ? tr.setMeta(key, true).setMeta("addToHistory", false) : null;
           },
           props: {
             decorations(state) {
-              const decorations = [], active = current(state);
-              for (const table of tableRecords(state.doc).map(grid)) {
+              const active = current(state), selectedPositions = new Set(active ? selectedCells(active).map(cell => cell.pos) : []);
+              const signature = JSON.stringify([active?.id, active && state.selection.from - active.pos, active && state.selection.to - active.pos,
+                control.editor?.isFocused, control.editor?.isEditable, control.menu, control.selecting]);
+              const version = key.getState(state).version;
+              if (version === paintVersion && signature === paintSignature) return paint;
+              const tables = tableRecords(state.doc).map(grid), invalidated = [];
+              const ids = new Set(tables.map(table => table.id));
+              for (const id of tablePaints.keys()) if (!ids.has(id)) tablePaints.delete(id);
+              for (const table of tables) {
+                const localSignature = active?.id === table.id ? signature : "";
+                const cached = tablePaints.get(table.id);
+                if (cached?.node === table.node && cached.signature === localSignature &&
+                    !invalidated.some(range => table.pos > range.from && table.pos < range.to)) continue;
+                const end = table.pos + table.node.nodeSize;
+                paint = paint.remove(paint.find(table.pos, end).filter(decoration => decoration.from >= table.pos && decoration.to <= end));
+                invalidated.push({ from: table.pos, to: end });
+                const decorations = [];
                 table.node.descendants((cell, offset) => {
                   if (cell.type.name === "table") return false;
                   if (!["cell", "header_cell"].includes(cell.type.spec.tableRole)) return;
-                  const pos = table.pos + 1 + offset, selected = active?.id === table.id && selectedCells(active).some(value => value.pos === pos);
+                  const pos = table.pos + 1 + offset, selected = active?.id === table.id && selectedPositions.has(pos);
                   const editing = selected && control.editor?.isFocused && !cell.attrs.formula && !control.menu;
                   if (selected) decorations.push(Decoration.node(pos, pos + cell.nodeSize, { class: "vellix-table-selected-cell" }));
                   if (cell.attrs.calculated != null && !editing) {
@@ -638,8 +724,11 @@
                       stopEvent: event => !!event.target.closest?.(".vellix-table-cell-menu") }));
                   }
                 });
+                paint = paint.add(state.doc, decorations);
+                tablePaints.set(table.id, { node: table.node, signature: localSignature });
               }
-              return DecorationSet.create(state.doc, decorations);
+              paintVersion = version; paintSignature = signature;
+              return paint;
             },
             handleDOMEvents: {
               focus() { requestAnimationFrame(() => { control.editor?.view.dispatch(control.editor.state.tr.setMeta(key, true)); publish(); }); return false; },
@@ -692,14 +781,6 @@
         }, true);
       });
     }
-    let savedTables = tableRecords(editor.state.doc).map(record => record.node);
-    editor.on?.("update", () => {
-      const tables = tableRecords(editor.state.doc).map(record => record.node);
-      if (tables.length !== savedTables.length || tables.some((table, index) => table !== savedTables[index])) {
-        savedTables = tables;
-        post("tableSnapshot", { document: editor.getJSON() });
-      }
-    });
     const previous = global.tiptapCommand;
     global.tiptapCommand = async function (name, args = {}) {
       if (name === "tableAction") {
@@ -712,5 +793,5 @@
     };
     publish(true);
   }
-  global.VellixTables = { createExtensions, initialize, command, context, grid, cellStyles, createTable, resizeWidths, setWidths };
+  global.VellixTables = { createExtensions, initialize, command, context, grid, cellStyles, createTable, resizeWidths, setWidths, trackHorizontalResize };
 })(globalThis);

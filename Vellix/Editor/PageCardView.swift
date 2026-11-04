@@ -136,8 +136,8 @@ struct PageCardView: View {
 enum CardImageLoader {
     private static let cache: NSCache<NSString, CardDecodedImage> = {
         let cache = NSCache<NSString, CardDecodedImage>()
-        cache.countLimit = 32
-        cache.totalCostLimit = 48_000_000
+        cache.countLimit = 256
+        cache.totalCostLimit = 256_000_000
         return cache
     }()
     static func image(data: Data) -> CGImage? {

@@ -77,6 +77,8 @@ struct MacEditorPresentations: ViewModifier {
                 if let document = model.nestedPageActionTarget {
                     Button("Open") { openPage(document.id); model.nestedPageActionTarget = nil }
                     Button("Edit Card") { model.editPageCard(document); model.nestedPageActionTarget = nil }
+                    Button("Indent") { model.session.indentPageReference(documentID: document.id); model.nestedPageActionTarget = nil }
+                    Button("Outdent") { model.session.indentPageReference(documentID: document.id, outdent: true); model.nestedPageActionTarget = nil }
                     Button("Move to Trash", role: .destructive) { workspace.requestTrash([document.id]); model.nestedPageActionTarget = nil }
                 }
             }

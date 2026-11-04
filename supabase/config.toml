@@ -6,3 +6,7 @@ entrypoint = "./functions/penned-delete-account/index.ts"
 [functions.penned-publishing]
 verify_jwt = false
 entrypoint = "./functions/penned-publishing/index.ts"
+
+[functions.penned-gallery]
+verify_jwt = false
+entrypoint = "./functions/penned-gallery/index.ts"

@@ -39,6 +39,8 @@ struct DocumentPreviewContent: Equatable {
             ? ["inline-property-presentation-v1", Locale.current.identifier, TimeZone.current.identifier] : []
         let calloutRevision = ([document] + children).contains { TipTapContentAnalyzer.hasCallouts(in: $0.tipTapJSON) }
             ? ["callout-presentation-v6"] : []
+        let dividerRevision = ([document] + children).contains { TipTapContentAnalyzer.hasFourDotDivider(in: $0.tipTapJSON) }
+            ? ["four-dot-presentation-v3-4px"] : []
         let componentRevision = ([document] + children).contains { TemplateComponentDefinition.contains(in: $0.tipTapJSON) }
             ? ["template-component-presentation-v4"] : []
         let attachmentRevision = ([document] + children).contains { !EditorAttachment.paths(in: $0.tipTapJSON).isEmpty }
@@ -47,7 +49,9 @@ struct DocumentPreviewContent: Equatable {
         let toggleRevision = ([document] + children).contains { TipTapContentAnalyzer.hasToggles(in: $0.tipTapJSON) } ? ["toggle-icon-presentation-v1"] : []
         let fontRevision = ([document] + children).contains { $0.appearance.fontStyle == .hachiMaruPop }
             ? ["hachi-font-presentation-v2"] : []
-        let inputs = [["library-preview-v12-named-typography-solid-circles", metadata.base64EncodedString()] + content(document) + inlineRevision + calloutRevision + componentRevision + attachmentRevision + tagRevision + toggleRevision + fontRevision]
+        let sourceRevision = ([document] + children).contains { TipTapContentAnalyzer.hasClipSources(in: $0.tipTapJSON) }
+            ? ["clip-source-presentation-v1", String(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)] : []
+        let inputs = [["library-preview-v14-callout-rows", metadata.base64EncodedString()] + content(document) + inlineRevision + calloutRevision + dividerRevision + componentRevision + attachmentRevision + tagRevision + toggleRevision + fontRevision + sourceRevision]
             + children.sorted { $0.id < $1.id }.map { [$0.id] + content($0) }
         let data = (try? encoder.encode(inputs)) ?? Data()
         return document.id + "-" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()

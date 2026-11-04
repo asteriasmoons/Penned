@@ -20,6 +20,10 @@ struct VellixApp: App {
     #endif
     @StateObject private var startup = LibraryWorkspace()
     @StateObject private var accounts = AppState()
+    #if os(iOS)
+    @StateObject private var webClipper = WebClipperCoordinator()
+    @State private var clipperAccountSettings = false
+    #endif
     @State private var recoveryAccountSettings = false
     @State private var pendingDocumentLink: URL?
     @Environment(\.scenePhase) private var scenePhase
@@ -73,10 +77,27 @@ struct VellixApp: App {
             .task { await accounts.bootstrap()?.value }
             .onOpenURL { url in
                 guard url.scheme?.lowercased() == "penned" else { return }
+                #if os(iOS)
+                if url.host == "clipper" {
+                    clipperAccountSettings = true
+                    webClipper.refresh()
+                    return
+                }
+                #endif
                 pendingDocumentLink = url
                 Task { await openPendingDocumentLink() }
             }
             .task(id: startup.environment?.database.libraryID) { await openPendingDocumentLink() }
+            #if os(iOS)
+            .task(id: workspaceSessionKey + (startup.environment?.database.libraryID ?? "") + String(accounts.isWorking) + String(startup.isSwitching)) {
+                webClipper.connect(accounts: accounts, environment: startup.matches(accounts.currentAccountIdentity) ? startup.environment : nil)
+            }
+            .sheet(isPresented: $clipperAccountSettings) {
+                if let container = accounts.accountContainer {
+                    AccountSettingsView().environmentObject(accounts).environmentObject(startup).modelContainer(container)
+                }
+            }
+            #endif
             .task(id: workspaceSessionKey) {
                 if case .checking = accounts.status { return }
                 guard !Task.isCancelled else { return }
@@ -87,6 +108,9 @@ struct VellixApp: App {
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
                     accounts.bootstrap(force: true)
+                    #if os(iOS)
+                    webClipper.refresh()
+                    #endif
                     startup.environment?.taskNotifications.refresh()
                     startup.environment?.calendar.refresh()
                     Task { await startup.synchronize() }

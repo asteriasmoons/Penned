@@ -413,13 +413,12 @@ fileprivate extension TipTapWebView {
         #else
         let webView = WKWebView(frame: .zero, configuration: configuration)
         #endif
+        if #available(iOS 16.4, macOS 13.3, *) {
+            webView.isInspectable = true
+        }
         webView.navigationDelegate = coordinator
         #if DEBUG && os(iOS)
         webView.diagnosticCoordinator = coordinator
-        if UIDevice.current.userInterfaceIdiom == .pad, coordinator.session.preparesInteractivePresentation,
-           #available(iOS 16.4, *) {
-            webView.isInspectable = true
-        }
         #endif
         coordinator.logInfo("⏱️ STARTUP +\(TipTapEditorStartupTiming.elapsedMS())ms makeWebView created \(ObjectIdentifier(webView).debugDescription)")
 

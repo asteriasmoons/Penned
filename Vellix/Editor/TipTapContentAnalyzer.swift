@@ -5,7 +5,7 @@
 
 import Foundation
 
-struct TipTapAnalysis: Equatable {
+nonisolated struct TipTapAnalysis: Equatable, Sendable {
     var canonicalJSON: String
     var plainText: String
     var previewText: String
@@ -16,17 +16,43 @@ struct TipTapAnalysis: Equatable {
     var isEffectivelyEmpty: Bool
 }
 
+private nonisolated final class CachedTipTapDocument {
+    let object: [String: Any]
+    let analysis: TipTapAnalysis?
+    init(object: [String: Any], analysis: TipTapAnalysis? = nil) {
+        self.object = object
+        self.analysis = analysis
+    }
+}
+
+private nonisolated final class TipTapDocumentAnalysisCache: @unchecked Sendable {
+    let values = NSCache<NSString, CachedTipTapDocument>()
+    init() {
+        values.countLimit = 8
+        values.totalCostLimit = 16 * 1024 * 1024
+    }
+    func remember(_ entry: CachedTipTapDocument, json: String) {
+        values.setObject(entry, forKey: json as NSString, cost: json.utf8.count * 3)
+    }
+}
+
 enum TipTapContentAnalyzer {
+    private nonisolated static let cache = TipTapDocumentAnalysisCache()
     nonisolated static let emptyDocumentJSON = #"{"content":[{"attrs":{"id":"empty"},"type":"paragraph"}],"type":"doc"}"#
 
     nonisolated static func analyze(_ jsonString: String) throws -> TipTapAnalysis {
+        if let analysis = cache.values.object(forKey: jsonString as NSString)?.analysis { return analysis }
         guard let data = jsonString.data(using: .utf8) else {
             throw VellixError.invalidEditorJSON("The payload was not UTF-8 text.")
         }
 
         do {
             let object = try JSONSerialization.jsonObject(with: data)
-            return try analyzeJSONObject(object)
+            let analysis = try analyzeJSONObject(object)
+            if let entry = cache.values.object(forKey: analysis.canonicalJSON as NSString), jsonString != analysis.canonicalJSON {
+                cache.remember(entry, json: jsonString)
+            }
+            return analysis
         } catch let error as VellixError {
             throw error
         } catch {
@@ -47,6 +73,7 @@ enum TipTapContentAnalyzer {
     }
 
     nonisolated static func documentObject(from canonicalJSON: String) -> [String: Any] {
+        if let entry = cache.values.object(forKey: canonicalJSON as NSString) { return entry.object }
         guard
             let data = canonicalJSON.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data)
@@ -57,7 +84,9 @@ enum TipTapContentAnalyzer {
             ]
         }
 
-        return normalizeDocumentObject(object)
+        let normalized = normalizeDocumentObject(object)
+        cache.remember(CachedTipTapDocument(object: normalized), json: canonicalJSON)
+        return normalized
     }
 
     nonisolated static func makeDocumentJSON(content: [Any]) throws -> String {
@@ -142,6 +171,24 @@ enum TipTapContentAnalyzer {
         return contains(documentObject(from: json))
     }
 
+    nonisolated static func hasFourDotDivider(in json: String) -> Bool {
+        func contains(_ node: [String: Any]) -> Bool {
+            let attrs = node["attrs"] as? [String: Any] ?? [:]
+            return (["divider", "horizontalRule"].contains(node["type"] as? String ?? "") &&
+                ["fourCircles", "fourDots"].contains(attrs["style"] as? String ?? ""))
+                || (node["content"] as? [[String: Any]] ?? []).contains(where: contains)
+        }
+        return contains(documentObject(from: json))
+    }
+
+    nonisolated static func hasClipSources(in json: String) -> Bool {
+        func contains(_ node: [String: Any]) -> Bool {
+            (node["type"] as? String == "plainCallout" && (node["attrs"] as? [String: Any])?["clipSource"] is [String: Any])
+                || (node["content"] as? [[String: Any]] ?? []).contains(where: contains)
+        }
+        return contains(documentObject(from: json))
+    }
+
     nonisolated static func hasInlineTags(in json: String) -> Bool {
         func contains(_ node: [String: Any]) -> Bool {
             node["type"] as? String == "inlineTag"
@@ -188,6 +235,9 @@ enum TipTapContentAnalyzer {
             throw VellixError.invalidEditorJSON("The payload was not a valid JSON object.")
         }
 
+        let canonicalJSON = try canonicalJSONString(from: normalized)
+        if let analysis = cache.values.object(forKey: canonicalJSON as NSString)?.analysis { return analysis }
+
         let content = normalized["content"] as? [Any] ?? []
         var fragments: [String] = []
         var headings: [String] = []
@@ -214,8 +264,8 @@ enum TipTapContentAnalyzer {
         let characters = plainText.count
         let readingMinutes = words == 0 ? 0 : max(1, Int(ceil(Double(words) / 225.0)))
 
-        return TipTapAnalysis(
-            canonicalJSON: try canonicalJSONString(from: normalized),
+        let analysis = TipTapAnalysis(
+            canonicalJSON: canonicalJSON,
             plainText: plainText,
             previewText: preview,
             headings: headings,
@@ -224,6 +274,8 @@ enum TipTapContentAnalyzer {
             estimatedReadingMinutes: readingMinutes,
             isEffectivelyEmpty: compactText.isEmpty
         )
+        cache.remember(CachedTipTapDocument(object: normalized, analysis: analysis), json: canonicalJSON)
+        return analysis
     }
 
     private nonisolated static func normalizeDocumentObject(_ object: Any) -> [String: Any] {
@@ -313,6 +365,7 @@ enum TipTapContentAnalyzer {
             }
             if let content = dictionary["content"] as? [Any] {
                 let unwrapped = unwrapRetiredColumns(content)
+                if dictionary["type"] as? String == "plainCalloutRow", unwrapped.isEmpty { return [] }
                 dictionary["content"] = unwrapped
             }
             return [dictionary]
@@ -345,6 +398,9 @@ enum TipTapContentAnalyzer {
         if type == "plainCallout" {
             attrs.removeValue(forKey: "icon")
             attrs["color"] = trimmedString(attrs["color"]) ?? "#ffffff"
+            if let width = attrs["widthPercent"] as? Double, width.isFinite, width > 0 {
+                attrs["widthPercent"] = min(100, max(1, width))
+            } else { attrs.removeValue(forKey: "widthPercent") }
         }
 
         if type == "divider" {
@@ -618,6 +674,10 @@ enum TipTapContentAnalyzer {
         }
 
         if let dictionary = node as? [String: Any] {
+            if dictionary["type"] as? String == "plainCallout",
+               let source = (dictionary["attrs"] as? [String: Any])?["clipSource"] as? [String: Any] {
+                return [source["title"] as? String ?? "", textContent(from: dictionary["content"])].filter { !$0.isEmpty }.joined(separator: " ")
+            }
             if dictionary["type"] as? String == "inlineTag",
                let name = (dictionary["attrs"] as? [String: Any])?["name"] as? String {
                 return "#" + name

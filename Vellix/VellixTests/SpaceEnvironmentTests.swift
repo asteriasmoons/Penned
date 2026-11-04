@@ -57,6 +57,38 @@ struct SpaceEnvironmentTests {
         #expect(session.formattingState == TipTapFormattingState())
     }
 
+    @Test func nativeDividerAvailabilitySurvivesSingleAndMultiBlockSelection() {
+        let session = TipTapEditorSession()
+        let targets = ["divider:dottedCircles", "divider:fourCircles", "divider:thinLine", "divider:thickLine"]
+        let payload: [String: Any] = ["token": "stale-text-token", "targets": targets + ["paragraph", "heading1"]]
+        session.handleRawMessage(["kind": "textConversionState", "payload": payload])
+        #expect(session.textConversionState == TipTapTextConversionState())
+        session.handleRawMessage(["kind": "ready", "payload": ["blockCount": 1]])
+
+        for mode in ["single", "multi"] {
+            session.handleRawMessage(["kind": "selectionMode", "payload": ["mode": mode]])
+            #expect(session.textConversionState == TipTapTextConversionState())
+            session.handleRawMessage(["kind": "textConversionState", "payload": payload])
+            #expect(session.textConversionState.targets == Set(targets))
+            #expect(session.textConversionState.token == nil)
+            session.handleRawMessage(["kind": "selectionMode", "payload": ["mode": mode]])
+            #expect(session.textConversionState.targets == Set(targets), "Repeated mode reports must not disable an unchanged selection")
+            session.handleRawMessage(["kind": "textConversionState", "payload": ["targets": []]])
+            #expect(session.textConversionState.targets.isEmpty)
+            session.handleRawMessage(["kind": "textConversionState", "payload": payload])
+        }
+
+        session.handleRawMessage(["kind": "selectionMode", "payload": ["mode": "off"]])
+        #expect(session.textConversionState == TipTapTextConversionState())
+        session.handleRawMessage(["kind": "textConversionState", "payload": ["token": "text", "targets": ["paragraph", "heading1"]]])
+        #expect(session.textConversionState.token == "text")
+        #expect(session.textConversionState.targets == Set(["paragraph", "heading1"]))
+        session.setEditable(false)
+        session.handleRawMessage(["kind": "textConversionState", "payload": payload])
+        #expect(session.textConversionState == TipTapTextConversionState())
+        #expect(session.saveState == .idle)
+    }
+
     @Test func inlineTextColorBridgeValidatesColorsAndDefaultsOlderFormattingEvents() throws {
         let gradient = try #require(InlineTextColor(kind: .gradient, start: "#abc", end: "#42c4d5", angle: -90))
         #expect(gradient.start == "#AABBCC" && gradient.end == "#42C4D5" && gradient.angle == 270)

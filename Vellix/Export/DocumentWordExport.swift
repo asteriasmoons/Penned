@@ -133,6 +133,21 @@ struct DocumentWordExport {
                     output += blocks(content, page: page, depth: nextDepth, list: numberID)
                 }
             case "blockquote", "callout", "plainCallout":
+                if let source = attrs["clipSource"] as? [String: Any], let href = source["url"] as? String {
+                    let originalColor = color
+                    color = "D5D5D5"
+                    let title: [String: Any] = ["type": "text", "text": source["title"] as? String ?? href,
+                        "marks": [["type": "link", "attrs": ["href": href]]]]
+                    let image = (source["file"] as? [String: Any])?["relativePath"] as? String
+                    let preview = image.map { picture(path: $0, name: "Article thumbnail", maximumWidth: 48, maximumHeight: 30) } ?? ""
+                    let linkedTitle = paragraph(inline([title]))
+                    let heading = image == nil ? linkedTitle
+                        : table("<w:tr><w:tc>\(preview)<w:p/></w:tc><w:tc>\(linkedTitle)</w:tc></w:tr>")
+                    let details = heading + blocks(children, page: page, depth: depth)
+                    output += table("<w:tr><w:tc><w:tcPr><w:shd w:fill=\"292929\"/></w:tcPr>\(details)</w:tc></w:tr>")
+                    color = originalColor
+                    continue
+                }
                 let nested = blocks(children, page: page, depth: depth)
                 let shade = hex(attrs["color"] as? String ?? "#EEEEEE")
                 output += nested.replacingOccurrences(of: "<w:pPr>", with: "<w:pPr><w:ind w:left=\"360\"/><w:pBdr><w:left w:val=\"single\" w:sz=\"18\" w:space=\"8\" w:color=\"\(shade)\"/></w:pBdr>")
@@ -206,7 +221,7 @@ struct DocumentWordExport {
         relationships.append("<Relationship Id=\"\(id)\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/\(type)\" Target=\"\(x(target))\"\(external ? " TargetMode=\"External\"" : "")/>")
         return id
     }
-    private mutating func picture(path: String, name: String) -> String {
+    private mutating func picture(path: String, name: String, maximumWidth: Double? = nil, maximumHeight: Double? = nil) -> String {
         guard let url = snapshot.assets[path], let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return paragraph(run("Image unavailable: " + name)) }
         let data = NSMutableData()
@@ -217,7 +232,7 @@ struct DocumentWordExport {
         let file = "image\(drawingID).png"
         media.append(.init("word/media/" + file, data: data as Data))
         let id = relationship(type: "image", target: "media/" + file)
-        let maxWidth = Double(settings.paper.size.width - 72), maxHeight = Double(settings.paper.size.height - 120)
+        let maxWidth = maximumWidth ?? Double(settings.paper.size.width - 72), maxHeight = maximumHeight ?? Double(settings.paper.size.height - 120)
         let scale = min(1, min(maxWidth / Double(image.width), maxHeight / Double(image.height)))
         let width = Int(Double(image.width) * scale * 12700), height = Int(Double(image.height) * scale * 12700)
         return "<w:p><w:r><w:drawing><wp:inline><wp:extent cx=\"\(width)\" cy=\"\(height)\"/><wp:docPr id=\"\(drawingID)\" name=\"\(x(name))\"/><a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic><pic:nvPicPr><pic:cNvPr id=\"\(drawingID)\" name=\"\(x(name))\"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed=\"\(id)\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"\(width)\" cy=\"\(height)\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"

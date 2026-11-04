@@ -159,8 +159,15 @@ struct MacDocumentBrowser: View {
     }
     private func open(_ document: DocumentRecord) {
         if document.isTrashed { return }
-        if tab.location.destination == .templates, let template = environment.overview.templates.first(where: { environment.overview.templateDocuments[$0.id]?.id == document.id }), template.isBuiltIn {
-            if let created = environment.createDocument(title: template.title, from: template) { workspace.perform { try await workspace.open(created, newTab: true) } }
+        if tab.location.destination == .templates, let template = environment.overview.templates.first(where: { environment.overview.templateDocuments[$0.id]?.id == document.id }) {
+            if template.isBuiltIn {
+                if let created = environment.createDocument(title: template.title, from: template) { workspace.perform { try await workspace.open(created, newTab: true) } }
+            } else {
+                workspace.perform {
+                    let editable = try environment.documentForTemplateEditing(template)
+                    try await workspace.open(editable, newTab: NSEvent.modifierFlags.contains(.command))
+                }
+            }
         } else { workspace.perform { try await workspace.open(document, newTab: NSEvent.modifierFlags.contains(.command)) } }
     }
     private func openSelection() { if let document = records.first(where: { browser.selectedIDs.contains($0.id) }) { open(document) } }
@@ -179,8 +186,8 @@ struct MacDocumentMenu: View {
             Button("Restore") { workspace.environment.restore(document) }
             Button("Delete Permanently", role: .destructive) { workspace.environment.documentPendingDeletion = document }
         } else {
-            Button("Open") { workspace.perform { try await workspace.open(document) } }
-            Button("Open in New Tab") { workspace.perform { try await workspace.open(document, newTab: true) } }
+            Button("Open") { open(newTab: false) }
+            Button("Open in New Tab") { open(newTab: true) }
             Button(document.isFavorite ? "Remove Star" : "Star") { workspace.environment.starDocuments([document.id], isFavorite: !document.isFavorite) }
             Button("Move to Folder") { workspace.environment.requestMove(documentIDs: [document.id]) }.disabled(document.parentDocumentID != nil)
             SpaceTransferActions(item: .document(document.id))
@@ -191,8 +198,20 @@ struct MacDocumentMenu: View {
                     workspace.environment.refresh(); try await workspace.open(copy, newTab: true)
                 }
             }
-            Button("Save as Template") { workspace.environment.saveAsTemplate(document) }
             Button("Move to Trash", role: .destructive) { workspace.requestTrash([document.id]) }
+        }
+    }
+
+    private func open(newTab: Bool) {
+        workspace.perform {
+            let environment = workspace.environment
+            let target: DocumentRecord
+            if workspace.activeTab.location.destination == .templates,
+               let template = environment.overview.templates.first(where: { environment.overview.templateDocuments[$0.id]?.id == document.id }),
+               !template.isBuiltIn {
+                target = try environment.documentForTemplateEditing(template)
+            } else { target = document }
+            try await workspace.open(target, newTab: newTab)
         }
     }
 }

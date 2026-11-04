@@ -25,31 +25,31 @@ enum DocumentExportService {
             let file = directory.appendingPathComponent(DocumentExportNames.filename(snapshot.root.title) + ".docx")
             try writer.write(to: file)
             output = DocumentExportOutput(format: format, files: [file], warnings: snapshot.warnings, directory: directory)
-        case .markdown, .textBundle:
+        case .markdown:
+            progress("Writing Markdown document")
+            let markdown = DocumentMarkdownExport(snapshot: snapshot, settings: settings).text()
+            let file = directory.appendingPathComponent(DocumentExportNames.filename(snapshot.root.title) + ".md")
+            try Data(markdown.utf8).write(to: file, options: .atomic)
+            output = DocumentExportOutput(format: format, files: [file], previewText: markdown, warnings: [], directory: directory)
+        case .textBundle:
             progress("Writing Markdown and assets")
             let markdown = DocumentMarkdownExport(snapshot: snapshot, settings: settings).text()
             let name = DocumentExportNames.filename(snapshot.root.title)
-            let package = format == .textBundle ? directory.appendingPathComponent(name + ".textbundle", isDirectory: true) : directory.appendingPathComponent(name, isDirectory: true)
+            let package = directory.appendingPathComponent(name + ".textbundle", isDirectory: true)
             try FileManager.default.createDirectory(at: package.appendingPathComponent("assets", isDirectory: true), withIntermediateDirectories: true)
-            let text = package.appendingPathComponent(format == .textBundle ? "text.markdown" : name + ".md")
+            let text = package.appendingPathComponent("text.markdown")
             try Data(markdown.utf8).write(to: text, options: .atomic)
             for (path, source) in snapshot.assets {
                 try Task.checkCancellation()
                 try FileManager.default.copyItem(at: source, to: package.appendingPathComponent("assets").appendingPathComponent(snapshot.assetFilename(path)))
             }
-            if format == .textBundle {
-                let info: [String: Any] = ["version": 2, "type": "net.daringfireball.markdown", "transient": false, "creatorIdentifier": Bundle.main.bundleIdentifier ?? "im.lystaria.Vellix"]
-                try JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted, .sortedKeys]).write(to: package.appendingPathComponent("info.json"), options: .atomic)
-            }
-            let archive = directory.appendingPathComponent(name + (format == .textBundle ? ".textpack" : ".zip"))
-            var entries = try archiveEntries(in: package, prefix: format == .textBundle ? name + ".textbundle/" : name + "/")
-            if format == .textBundle { entries.append(.init(name + ".textbundle/assets/", data: Data())) }
+            let info: [String: Any] = ["version": 2, "type": "net.daringfireball.markdown", "transient": false, "creatorIdentifier": Bundle.main.bundleIdentifier ?? "im.lystaria.Vellix"]
+            try JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted, .sortedKeys]).write(to: package.appendingPathComponent("info.json"), options: .atomic)
+            let archive = directory.appendingPathComponent(name + ".textpack")
+            var entries = try archiveEntries(in: package, prefix: name + ".textbundle/")
+            entries.append(.init(name + ".textbundle/assets/", data: Data()))
             try DocumentExportArchive.write(entries, to: archive)
-            let files: [URL]
-            if format == .textBundle { files = [archive] }
-            else if snapshot.assets.isEmpty { files = [text] }
-            else { files = [text, archive] }
-            output = DocumentExportOutput(format: format, files: files, previewText: markdown, warnings: snapshot.warnings, directory: directory)
+            output = DocumentExportOutput(format: format, files: [archive], previewText: markdown, warnings: snapshot.warnings, directory: directory)
         default: throw DocumentExportError.failed("Choose an export format.")
         }
         try Task.checkCancellation()
@@ -72,7 +72,7 @@ enum DocumentExportService {
 
     static func shareArchive(_ output: DocumentExportOutput) throws -> URL {
         if output.files.count == 1, let file = output.files.first { return file }
-        // Markdown's archive already contains its text and all companion assets.
+        // Reuse an existing export archive instead of nesting it in another ZIP.
         if let archive = output.files.first(where: { $0.pathExtension == "zip" }) { return archive }
         let url = output.directory.appendingPathComponent("Images.zip")
         try DocumentExportArchive.write(output.files.map { .init($0.lastPathComponent, file: $0) }, to: url)

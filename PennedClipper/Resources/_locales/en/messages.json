@@ -1,0 +1,10 @@
+{
+    "extension_name": {
+        "message": "Penned Web Clipper",
+        "description": "The display name for the extension."
+    },
+    "extension_description": {
+        "message": "Save complete articles, images and notes as editable documents in your Penned Spaces.",
+        "description": "Description of what the extension does."
+    }
+}

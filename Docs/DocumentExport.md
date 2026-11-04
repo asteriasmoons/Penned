@@ -17,10 +17,12 @@ retains the selected document, including a child page or collection entry.
 - PNG: complete document divided into sequential images, with Fit Document,
   Portrait, Landscape, Square, cover/title/tag/style/font controls, image copying,
   sharing, and Mac saving. Long documents are not truncated to the viewport.
-- Markdown: actual `.md` text with semantic blocks, marks, lists, task syntax,
-  quotes, code fences, tables, links, captions, property values, component
-  responses, nested references, and collection values. When assets exist, the
-  share output also includes a ZIP containing the `.md` and relative `assets/`.
+- Markdown: one complete UTF-8 `.md` file named from the selected document's saved
+  page title, using the existing filename sanitizer. Semantic blocks, marks,
+  lists, task syntax, quotes, code fences, tables, captions, property values,
+  component responses, and collection values remain in document order. Page
+  breaks do not split it. There is no companion ZIP, asset folder, or second
+  share item, regardless of whether the document has images or covers.
 - Word: OOXML `.docx` ZIP with document XML, relationships, styles, numbering,
   embedded PNG images, tables, headings, hyperlinks, and editable text.
 - Email: attachment-format selection and an actual user-controlled mail composer
@@ -48,9 +50,10 @@ appended to the export. PDF, image, and print output keep the actual nested card
 or page preview, including its thumbnail, excerpt, cover, and saved card styling,
 using the editor's existing reference renderer. The full child documents are not
 added as extra export pages. Hidden, unused reference-image elements are excluded
-from asset decoding and missing-image warnings. Markdown and Word references
-emit the child title only (with its private link in Markdown). No recursive export
-option is exposed. Duplicate remains
+from asset decoding and missing-image warnings. The existing plain-Markdown
+serializer excludes nested-page references, images and link destinations; Word
+keeps its existing textual reference fallback. This correction does not change
+those serialization choices. No recursive export option is exposed. Duplicate remains
 a separate operation that clones the owned descendant tree. Exports do not
 traverse parent or sibling bodies.
 The parent collection of an exported entry supplies that entry's property values,
@@ -95,6 +98,9 @@ remain in the OS temporary directory so native sharing can finish reading them.
   fall back to plain text. No synthetic HTML anchors, page-break elements, styling
   spans, or other HTML wrappers are generated. Actual user-authored code blocks
   remain code blocks.
+  Plain Markdown uses no binary asset dependencies; missing assets that it does
+  not reference do not produce warnings. TextBundle remains the separate
+  asset-package export and retains its existing behavior.
 - Word uses a solid-color fallback for gradient text and page backgrounds,
   portable font substitutions, and textual representations for interactive
   components and nonimage attachments. Externally hosted legacy images may be

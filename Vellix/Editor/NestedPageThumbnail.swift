@@ -193,8 +193,13 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
         switch mark.shape {
         case .line:
             context.fill(Path(roundedRect: rect, cornerRadius: rect.height / 2),
-                         with: .color(ink.opacity(mark.blockType == "heading" || mark.blockType == "title" ? 0.7 : 0.46)))
+                         with: .color((mark.blockType == "clipSourceTitle" ? Color(vellixHex: "#D5D5D5") : ink)
+                            .opacity(mark.blockType == "heading" || mark.blockType == "title" ? 0.7 : 0.46)))
         case .container:
+            if ["clipSource", "clipSourceLink"].contains(mark.blockType) {
+                context.fill(rounded, with: .color(tint))
+                return
+            }
             context.fill(rounded, with: .color(tint.opacity(0.12)))
             context.stroke(rounded, with: .color(tint.opacity(0.24)), lineWidth: 0.7)
             if mark.blockType == "blockquote" {
@@ -231,6 +236,10 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
         case .chip:
             context.fill(rounded, with: .color(tint.opacity(0.5)))
         case .image:
+            if let path = mark.imagePath, let image = CardImageLoader.image(path: path, store: attachmentStore) {
+                drawCover(image, rect: rect, in: &context)
+                return
+            }
             context.fill(rounded, with: .color(ink.opacity(0.09)))
             context.stroke(rounded, with: .color(ink.opacity(0.3)), lineWidth: 0.8)
             var mountains = Path()

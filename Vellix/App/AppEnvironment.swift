@@ -89,6 +89,8 @@ final class AppEnvironment: ObservableObject {
     let spaces: SpaceRepository
     let folders: FolderRepository
     let templates: TemplateRepository
+    let templateGallery: TemplateGalleryRepository
+    let templateGalleryCloud: TemplateGalleryCloudStore
     let dailyNotes: DailyNoteRepository
     let tags: DocumentTagRepository
     @Published var selectedTagIDs: Set<String> = []
@@ -188,6 +190,8 @@ final class AppEnvironment: ObservableObject {
         self.spaces = SpaceRepository(database: database)
         self.folders = FolderRepository(database: database)
         self.templates = templates
+        self.templateGallery = TemplateGalleryRepository(database: database)
+        self.templateGalleryCloud = TemplateGalleryCloudStore()
         self.dailyNotes = dailyNotes
         self.documentStyles = DocumentStyleRepository(database: database, store: attachmentStore)
         self.snapshots = snapshots
@@ -208,13 +212,13 @@ final class AppEnvironment: ObservableObject {
         editorCache.onDocumentSaved = { [weak self] document in
             guard let self else { return }
             self.documentPreviews.prewarm([document])
-            if let templateID = document.templateID {
+            let templateID = document.templateID ?? TemplateRepository.documentTemplateID(document.id)
+            if document.templateID != nil || self.overview.templateDocuments[templateID] != nil {
                 if (try? self.templates.hasInteractiveComponents(id: templateID)) == true {
                     self.dailyNoteOnlyTemplateIDs.insert(templateID)
                 } else { self.dailyNoteOnlyTemplateIDs.remove(templateID) }
             }
-            if let templateID = document.templateID,
-               self.overview.templateDocuments[templateID]?.id == document.id {
+            if self.overview.templateDocuments[templateID]?.id == document.id {
                 self.overview.templateDocuments[templateID] = document
             }
         }
@@ -380,33 +384,121 @@ final class AppEnvironment: ObservableObject {
         }
     }
 
+    /// Reads the current Space's personal templates for the document gallery.
+    func personalGalleryTemplates() -> [(template: TemplateRecord, document: DocumentRecord)] {
+        overview.templates.filter { !$0.isBuiltIn }.compactMap { template in
+            guard let document = overview.templateDocuments[template.id] else { return nil }
+            var current = template
+            current.title = document.title
+            current.icon = document.icon
+            current.tipTapJSON = document.tipTapJSON
+            return (template: current, document: document)
+        }
+    }
+
+    var canPublishTemplates: Bool {
+        (try? templatePublisherIdentity()) != nil
+    }
+
+    private func templatePublisherIdentity() throws -> AccountIdentity {
+        guard let identity = try KeychainAccountSessionStore().currentIdentity(),
+              case .apple(let subject) = identity,
+              TemplateGalleryAuthorization.canShowPublishingControls(appleUserID: subject) else {
+            throw PublishingFailure.authenticationRequired
+        }
+        return identity
+    }
+
+    func moveTemplateToCategory(_ template: TemplateRecord, category: String) throws {
+        guard canPublishTemplates else { throw PublishingFailure.authenticationRequired }
+        guard !isSwitchingSpace else { throw LibraryError.staleWorkspace }
+        try templates.setCategory(id: template.id, category: category)
+        refresh()
+    }
+
+    func publishGalleryTemplate(_ selected: TemplateRecord) async throws
+        -> (categories: [GalleryCategory], templates: [GalleryTemplate]) {
+        let owner = try templatePublisherIdentity()
+        guard !isSwitchingSpace, let spaceID = selectedSpaceID,
+              let template = try templates.all().first(where: { $0.id == selected.id && !$0.isBuiltIn }) else {
+            throw LibraryError.staleWorkspace
+        }
+        let generation = workspaceGeneration
+        for model in editorCache.preparedModels where model.document?.templateID == template.id ||
+            template.rootDocumentID.map({ $0 == model.documentID }) == true {
+            try await model.captureAndSave()
+        }
+        async let fetchedCategories = templateGalleryCloud.fetchCategories()
+        async let fetchedTemplates = templateGalleryCloud.fetchTemplates()
+        let categories = try await fetchedCategories
+        var catalog = try await fetchedTemplates
+        guard generation == workspaceGeneration, selectedSpaceID == spaceID, !isSwitchingSpace else {
+            throw LibraryError.staleWorkspace
+        }
+        guard try templatePublisherIdentity() == owner else { throw PublishingFailure.authenticationRequired }
+        try Task.checkCancellation()
+        guard let current = try templates.all().first(where: { $0.id == template.id }) else {
+            throw PublishingFailure.invalidContent("This template no longer exists.")
+        }
+        let category = try TemplateGalleryPublisher.category(for: current, in: categories)
+        let root = try templates.editingDocument(id: current.id, attachmentStore: attachmentStore)
+        let publicationID = TemplateGalleryPublisher.publicationID(templateID: current.id, libraryID: database.libraryID)
+        let existing = catalog.first { $0.id == publicationID }
+        let package = try TemplateGalleryPublisher(database: database, attachmentStore: attachmentStore).prepare(
+            documentID: root.id, categoryID: category.id, title: current.title, owner: owner,
+            galleryTemplateID: publicationID, revision: (existing?.revision ?? 0) + 1)
+        let published = try await templateGalleryCloud.saveTemplate(package, description: current.templateDescription,
+            sortOrder: existing?.sortOrder ?? 0, updating: existing != nil)
+        if let index = catalog.firstIndex(where: { $0.id == published.id }) { catalog[index] = published }
+        else { catalog.append(published) }
+        // The remote write has succeeded; a cache failure must not report a failed publication.
+        try? templateGallery.replaceCatalog(categories: categories, templates: catalog)
+        return (categories, catalog)
+    }
+
+    func saveGalleryTemplate(_ template: GalleryTemplate) async throws -> TemplateRecord {
+        guard !isSwitchingSpace else { throw LibraryError.staleWorkspace }
+        try ensureSpaceForCreation()
+        guard let spaceID = selectedSpaceID else { throw LibraryError.staleWorkspace }
+        let generation = workspaceGeneration
+        let package = try await templateGalleryCloud.fetchPackage(templateID: template.id, expectedRevision: template.revision)
+        try Task.checkCancellation()
+        guard generation == workspaceGeneration, selectedSpaceID == spaceID, !isSwitchingSpace else {
+            throw LibraryError.staleWorkspace
+        }
+        let importer = TemplateGalleryImporter(database: database, attachmentStore: attachmentStore)
+        let saved = try importer.saveTemplate(package, intoSpace: spaceID, description: template.templateDescription)
+        refresh()
+        return saved
+    }
+
     func createTemplate() {
         do {
             try ensureSpaceForCreation()
-            let document = try templates.create()
+            let document = try templates.create(category: canPublishTemplates
+                ? TemplateRepository.unsortedCategory : TemplateRepository.myTemplatesCategory)
             editorCache.prepare(document)
             refresh()
             selectedDestination = .templates
             select(document)
         } catch { report(error) }
+    }
+
+    func documentForTemplateEditing(_ template: TemplateRecord) throws -> DocumentRecord {
+        if let rootID = template.rootDocumentID, let model = editorCache.model(for: rootID) {
+            try model.saveCurrentContent()
+        }
+        let document = try templates.editingDocument(id: template.id, attachmentStore: attachmentStore)
+        editorCache.prepare(document)
+        refresh()
+        return document
     }
 
     func editTemplate(_ template: TemplateRecord) {
         do {
-            let document = try templates.editingDocument(id: template.id, attachmentStore: attachmentStore)
-            editorCache.prepare(document)
+            let document = try documentForTemplateEditing(template)
             selectedDestination = .templates
             select(document)
-        } catch { report(error) }
-    }
-
-    func saveAsTemplate(_ document: DocumentRecord) {
-        do {
-            if let model = editorCache.model(for: document.id) { try model.saveCurrentContent() }
-            let current = try documents.requireDocument(id: document.id)
-            let template = try templates.saveUserTemplate(from: current, title: current.title, attachmentStore: attachmentStore)
-            refresh()
-            editTemplate(template)
         } catch { report(error) }
     }
 

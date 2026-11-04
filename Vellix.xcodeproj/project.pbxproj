@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CF9274FB3093F0D800D92201 /* PennedClipper.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = CF9274E33093F0D800D92201 /* PennedClipper.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		CF927E9930957AA200D92201 /* PennedClipperShare.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = CF927E8F30957AA100D92201 /* PennedClipperShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		CFA16E13301AD193007825F0 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = CFA16E12301AD193007825F0 /* GRDB */; };
 		CFB7A20130D0A10000A17A01 /* Tasks/DocumentTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7A21130D0A10000A17A01 /* Tasks/DocumentTask.swift */; };
 		CFB7A20230D0A10000A17A01 /* Tasks/DocumentTaskRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7A21230D0A10000A17A01 /* Tasks/DocumentTaskRepository.swift */; };
@@ -25,11 +27,28 @@
 		CFB7E10330E1300000A17001 /* Editor/InlineTextColorPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7E11330E1300000A17001 /* Editor/InlineTextColorPresentation.swift */; };
 		CFB7E10430E1300000A17001 /* Documents/InlineTextColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7E11130E1300000A17001 /* Documents/InlineTextColor.swift */; };
 		CFB7E10530E1300000A17001 /* Inspector/MacTextColorInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7E11430E1300000A17001 /* Inspector/MacTextColorInspector.swift */; };
+		CFB7F10130F0100000A17001 /* PennedClipper/ClipperShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7F11130F0100000A17001 /* PennedClipper/ClipperShared.swift */; };
+		CFB7F20B30F0200000A17001 /* PennedClipper/ClipperShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7F11130F0100000A17001 /* PennedClipper/ClipperShared.swift */; };
+		CFB7F20C30F0200000A17001 /* PennedClipper/ClipperShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB7F11130F0100000A17001 /* PennedClipper/ClipperShared.swift */; };
 		D00100000000000000000001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = CFA16E12301AD193007825F0 /* GRDB */; };
 		D00100000000000000000002 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = CFB7D10230E0100000A17001 /* Supabase */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		CF9274F93093F0D800D92201 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CFA16D5F301AC182007825F0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CF9274E23093F0D800D92201;
+			remoteInfo = PennedClipper;
+		};
+		CF927E9730957AA200D92201 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CFA16D5F301AC182007825F0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CF927E8E30957AA100D92201;
+			remoteInfo = PennedClipperShare;
+		};
 		CFA16D75301AC183007825F0 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = CFA16D5F301AC182007825F0 /* Project object */;
@@ -46,8 +65,25 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		CF9275003093F0D800D92201 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				CF927E9930957AA200D92201 /* PennedClipperShare.appex in Embed App Extensions */,
+				CF9274FB3093F0D800D92201 /* PennedClipper.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		CF8C0EA7308548190058BF74 /* PennedMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PennedMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CF9274E33093F0D800D92201 /* PennedClipper.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PennedClipper.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		CF927E8F30957AA100D92201 /* PennedClipperShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PennedClipperShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		CFA16D67301AC182007825F0 /* Vellix.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Vellix.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CFA16D74301AC183007825F0 /* VellixTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VellixTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CFA16D7E301AC183007825F0 /* VellixUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VellixUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -67,9 +103,32 @@
 		CFB7E11230E1300000A17001 /* Editor/InlineTextColorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Editor/InlineTextColorSheet.swift; sourceTree = "<group>"; };
 		CFB7E11330E1300000A17001 /* Editor/InlineTextColorPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Editor/InlineTextColorPresentation.swift; sourceTree = "<group>"; };
 		CFB7E11430E1300000A17001 /* Inspector/MacTextColorInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Inspector/MacTextColorInspector.swift; sourceTree = "<group>"; };
+		CFB7F11130F0100000A17001 /* PennedClipper/ClipperShared.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PennedClipper/ClipperShared.swift; sourceTree = SOURCE_ROOT; };
+		CFB7F20230F0200000A17001 /* PennedWebClipper.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PennedWebClipper.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		CF9274FF3093F0D800D92201 /* Exceptions for "PennedClipper" folder in "PennedClipper" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = CF9274E23093F0D800D92201 /* PennedClipper */;
+		};
+		CF927E9D30957AA200D92201 /* Exceptions for "PennedClipperShare" folder in "PennedClipperShare" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = CF927E8E30957AA100D92201 /* PennedClipperShare */;
+		};
+		CF927EAB30957EE000D92201 /* Exceptions for "PennedClipper" folder in "PennedClipperShare" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				ClipperShared.swift,
+			);
+			target = CF927E8E30957AA100D92201 /* PennedClipperShare */;
+		};
 		CFA16DA5301AC3D4007825F0 /* Exceptions for "Vellix" folder in "Vellix" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -150,6 +209,13 @@
 			);
 			target = CFA16D7D301AC183007825F0 /* VellixUITests */;
 		};
+		CFB7F20430F0200000A17001 /* Exceptions for "PennedWebClipper" folder in "PennedWebClipper" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = CFB7F20130F0200000A17001 /* PennedWebClipper */;
+		};
 		D00100000000000000000003 /* Exceptions for "Vellix" folder in "PennedMac" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -167,6 +233,7 @@
 				Calendar/CalendarAgendaRows.swift,
 				Calendar/CalendarEventDetailSheet.swift,
 				Calendar/CalendarView.swift,
+				Clipper/WebClipperCoordinator.swift,
 				Collections/CollectionDocumentIntegration.swift,
 				Collections/CollectionKanbanView.swift,
 				Collections/CollectionPropertySheets.swift,
@@ -246,6 +313,27 @@
 			path = PennedMac;
 			sourceTree = "<group>";
 		};
+		CF9274E43093F0D800D92201 /* PennedClipper */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				CF9274FF3093F0D800D92201 /* Exceptions for "PennedClipper" folder in "PennedClipper" target */,
+				CF927EAB30957EE000D92201 /* Exceptions for "PennedClipper" folder in "PennedClipperShare" target */,
+			);
+			explicitFolders = (
+				Resources/_locales,
+				Resources/images,
+			);
+			path = PennedClipper;
+			sourceTree = "<group>";
+		};
+		CF927E9030957AA100D92201 /* PennedClipperShare */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				CF927E9D30957AA200D92201 /* Exceptions for "PennedClipperShare" folder in "PennedClipperShare" target */,
+			);
+			path = PennedClipperShare;
+			sourceTree = "<group>";
+		};
 		CFA16D69301AC182007825F0 /* Vellix */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -260,6 +348,14 @@
 			path = Vellix;
 			sourceTree = "<group>";
 		};
+		CFB7F20330F0200000A17001 /* PennedWebClipper */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				CFB7F20430F0200000A17001 /* Exceptions for "PennedWebClipper" folder in "PennedWebClipper" target */,
+			);
+			path = PennedWebClipper;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -269,6 +365,20 @@
 			files = (
 				D00100000000000000000001 /* GRDB in Frameworks */,
 				D00100000000000000000002 /* Supabase in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CF9274E03093F0D800D92201 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CF927E8C30957AA100D92201 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -295,12 +405,20 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CFB7F20630F0200000A17001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		CF8C0953308486D30058BF74 /* Recovered References */ = {
 			isa = PBXGroup;
 			children = (
+				CFB7F11130F0100000A17001 /* PennedClipper/ClipperShared.swift */,
 				CFB7D20130E0200000A17001 /* Vellix/Configuration/Supabase.xcconfig */,
 			);
 			name = "Recovered References";
@@ -309,7 +427,10 @@
 		CFA16D5E301AC182007825F0 = {
 			isa = PBXGroup;
 			children = (
+				CFB7F20330F0200000A17001 /* PennedWebClipper */,
 				CF8C0EA8308548190058BF74 /* PennedMac */,
+				CF9274E43093F0D800D92201 /* PennedClipper */,
+				CF927E9030957AA100D92201 /* PennedClipperShare */,
 				CFA16D68301AC182007825F0 /* Products */,
 				CFA16D69301AC182007825F0 /* Vellix */,
 				CFB7A22030D0A10000A17A01 /* Task Sources */,
@@ -323,10 +444,13 @@
 		CFA16D68301AC182007825F0 /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				CFB7F20230F0200000A17001 /* PennedWebClipper.app */,
 				CFA16D67301AC182007825F0 /* Vellix.app */,
 				CFA16D74301AC183007825F0 /* VellixTests.xctest */,
 				CFA16D7E301AC183007825F0 /* VellixUITests.xctest */,
 				CF8C0EA7308548190058BF74 /* PennedMac.app */,
+				CF9274E33093F0D800D92201 /* PennedClipper.appex */,
+				CF927E8F30957AA100D92201 /* PennedClipperShare.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -406,6 +530,50 @@
 			productReference = CF8C0EA7308548190058BF74 /* PennedMac.app */;
 			productType = "com.apple.product-type.application";
 		};
+		CF9274E23093F0D800D92201 /* PennedClipper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CF9274FC3093F0D800D92201 /* Build configuration list for PBXNativeTarget "PennedClipper" */;
+			buildPhases = (
+				CF9274DF3093F0D800D92201 /* Sources */,
+				CF9274E03093F0D800D92201 /* Frameworks */,
+				CF9274E13093F0D800D92201 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				CF9274E43093F0D800D92201 /* PennedClipper */,
+			);
+			name = PennedClipper;
+			packageProductDependencies = (
+			);
+			productName = PennedClipper;
+			productReference = CF9274E33093F0D800D92201 /* PennedClipper.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		CF927E8E30957AA100D92201 /* PennedClipperShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CF927E9A30957AA200D92201 /* Build configuration list for PBXNativeTarget "PennedClipperShare" */;
+			buildPhases = (
+				CF927E8B30957AA100D92201 /* Sources */,
+				CF927E8C30957AA100D92201 /* Frameworks */,
+				CF927E8D30957AA100D92201 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				CF927E9030957AA100D92201 /* PennedClipperShare */,
+			);
+			name = PennedClipperShare;
+			packageProductDependencies = (
+			);
+			productName = PennedClipperShare;
+			productReference = CF927E8F30957AA100D92201 /* PennedClipperShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		CFA16D66301AC182007825F0 /* Vellix */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = CFA16D88301AC183007825F0 /* Build configuration list for PBXNativeTarget "Vellix" */;
@@ -470,6 +638,31 @@
 			productReference = CFA16D7E301AC183007825F0 /* VellixUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		CFB7F20130F0200000A17001 /* PennedWebClipper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CFB7F20830F0200000A17001 /* Build configuration list for PBXNativeTarget "PennedWebClipper" */;
+			buildPhases = (
+				CFB7F20530F0200000A17001 /* Sources */,
+				CFB7F20630F0200000A17001 /* Frameworks */,
+				CFB7F20730F0200000A17001 /* Resources */,
+				CF9275003093F0D800D92201 /* Embed App Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CF9274FA3093F0D800D92201 /* PBXTargetDependency */,
+				CF927E9830957AA200D92201 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				CFB7F20330F0200000A17001 /* PennedWebClipper */,
+			);
+			name = PennedWebClipper;
+			packageProductDependencies = (
+			);
+			productName = PennedWebClipper;
+			productReference = CFB7F20230F0200000A17001 /* PennedWebClipper.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -483,8 +676,24 @@
 					CF8C0EA6308548190058BF74 = {
 						CreatedOnToolsVersion = 27.0;
 					};
+					CF9274E23093F0D800D92201 = {
+						CreatedOnToolsVersion = 27.0;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
+					};
+					CF927E8E30957AA100D92201 = {
+						CreatedOnToolsVersion = 27.0;
+					};
 					CFA16D66301AC182007825F0 = {
 						CreatedOnToolsVersion = 26.6;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
 					};
 					CFA16D73301AC183007825F0 = {
 						CreatedOnToolsVersion = 26.6;
@@ -493,6 +702,14 @@
 					CFA16D7D301AC183007825F0 = {
 						CreatedOnToolsVersion = 26.6;
 						TestTargetID = CFA16D66301AC182007825F0;
+					};
+					CFB7F20130F0200000A17001 = {
+						CreatedOnToolsVersion = 27.0;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
 					};
 				};
 			};
@@ -514,16 +731,33 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				CFB7F20130F0200000A17001 /* PennedWebClipper */,
 				CFA16D66301AC182007825F0 /* Vellix */,
 				CFA16D73301AC183007825F0 /* VellixTests */,
 				CFA16D7D301AC183007825F0 /* VellixUITests */,
 				CF8C0EA6308548190058BF74 /* PennedMac */,
+				CF9274E23093F0D800D92201 /* PennedClipper */,
+				CF927E8E30957AA100D92201 /* PennedClipperShare */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		CF8C0EA5308548190058BF74 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CF9274E13093F0D800D92201 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CF927E8D30957AA100D92201 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -551,6 +785,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CFB7F20730F0200000A17001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -563,10 +804,26 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CF9274DF3093F0D800D92201 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CF927E8B30957AA100D92201 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CFB7F20C30F0200000A17001 /* PennedClipper/ClipperShared.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		CFA16D63301AC182007825F0 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CFB7F10130F0100000A17001 /* PennedClipper/ClipperShared.swift in Sources */,
 				CFB7E10130E1300000A17001 /* Documents/InlineTextColor.swift in Sources */,
 				CFB7E10230E1300000A17001 /* Editor/InlineTextColorSheet.swift in Sources */,
 				CFB7E10330E1300000A17001 /* Editor/InlineTextColorPresentation.swift in Sources */,
@@ -598,9 +855,27 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CFB7F20530F0200000A17001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CFB7F20B30F0200000A17001 /* PennedClipper/ClipperShared.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		CF9274FA3093F0D800D92201 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CF9274E23093F0D800D92201 /* PennedClipper */;
+			targetProxy = CF9274F93093F0D800D92201 /* PBXContainerItemProxy */;
+		};
+		CF927E9830957AA200D92201 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CF927E8E30957AA100D92201 /* PennedClipperShare */;
+			targetProxy = CF927E9730957AA200D92201 /* PBXContainerItemProxy */;
+		};
 		CFA16D76301AC183007825F0 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = CFA16D66301AC182007825F0 /* Vellix */;
@@ -725,6 +1000,168 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		CF9274FD3093F0D800D92201 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = PennedClipper/PennedClipper.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PLRRW8XCVU;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PennedClipper/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Penned Web Clipper";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = im.lystaria.PennedWebClipper.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CF9274FE3093F0D800D92201 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = PennedClipper/PennedClipper.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PLRRW8XCVU;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PennedClipper/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Penned Web Clipper";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = im.lystaria.PennedWebClipper.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		CF927E9B30957AA200D92201 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = PennedClipperShare/PennedClipperShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PLRRW8XCVU;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PennedClipperShare/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PennedClipperShare;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = im.lystaria.PennedWebClipper.PennedClipperShare;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CF927E9C30957AA200D92201 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = PennedClipperShare/PennedClipperShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PLRRW8XCVU;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PennedClipperShare/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PennedClipperShare;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = im.lystaria.PennedWebClipper.PennedClipperShare;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
 		};
@@ -1086,6 +1523,87 @@
 			};
 			name = Release;
 		};
+		CFB7F20930F0200000A17001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = PennedWebClipper/PennedWebClipper.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PLRRW8XCVU;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PennedWebClipper/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Penned Web Clipper";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = im.lystaria.PennedWebClipper;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CFB7F20A30F0200000A17001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = PennedWebClipper/PennedWebClipper.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PLRRW8XCVU;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PennedWebClipper/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Penned Web Clipper";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = im.lystaria.PennedWebClipper;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1094,6 +1612,24 @@
 			buildConfigurations = (
 				CF8C0EAF3085481B0058BF74 /* Debug */,
 				CF8C0EB03085481B0058BF74 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CF9274FC3093F0D800D92201 /* Build configuration list for PBXNativeTarget "PennedClipper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CF9274FD3093F0D800D92201 /* Debug */,
+				CF9274FE3093F0D800D92201 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CF927E9A30957AA200D92201 /* Build configuration list for PBXNativeTarget "PennedClipperShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CF927E9B30957AA200D92201 /* Debug */,
+				CF927E9C30957AA200D92201 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -1130,6 +1666,15 @@
 			buildConfigurations = (
 				CFA16D8F301AC183007825F0 /* Debug */,
 				CFA16D90301AC183007825F0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CFB7F20830F0200000A17001 /* Build configuration list for PBXNativeTarget "PennedWebClipper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CFB7F20930F0200000A17001 /* Debug */,
+				CFB7F20A30F0200000A17001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

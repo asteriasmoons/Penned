@@ -35,7 +35,6 @@ struct MacInfoInspector: View {
                         }
                     }
                     action("Duplicate Document", icon: "copy") { workspace.perform { try await workspace.flush(); let copy = try environment.documents.duplicate(id: document.id, attachmentStore: environment.attachmentStore); environment.refresh(); try await workspace.open(copy, newTab: true) } }
-                    action("Save as Template", icon: "copy") { environment.saveAsTemplate(document) }
                     Divider()
                     MacSelectionActions(session: model.session)
                     Divider()

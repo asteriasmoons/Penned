@@ -40,6 +40,13 @@ struct EditorTextConversionMenu: View {
                 }
             }
             option("Code Block", target: "codeBlock", selection: selection)
+            if blockSelection {
+                Menu("Divider") {
+                    ForEach(VellixDividerStyle.allCases) { style in
+                        option(style.title, target: "divider:\(style.rawValue)", selection: selection)
+                    }
+                }.disabled(!selection.targets.contains(where: { $0.hasPrefix("divider:") }))
+            }
         } label: {
             if showsTitle {
                 HStack(spacing: 8) {
@@ -81,7 +88,7 @@ struct EditorTextConversionMenu: View {
             }
             guard let token = selection.token else { return }
             session.convertSelectedText(to: target, token: token)
-        }.disabled(!blockSelection && !selection.targets.contains(target))
+        }.disabled((!blockSelection || target.hasPrefix("divider:")) && !selection.targets.contains(target))
     }
 }
 
@@ -97,6 +104,7 @@ enum TextBlockConversion {
   if (typeof Plugin !== 'function') return;
   const originalCommand = window.tiptapCommand;
   let frame = 0, signature = '', serial = 0, destroyed = false;
+  let availabilityDoc = null, availabilityToken = null, availabilityEditable = null, availabilityDividers = '';
   const editable = () => editor.isEditable && !editor.view.composing &&
     (document.documentElement.dataset.vellixSelectionMode || 'off') === 'off';
 
@@ -157,13 +165,34 @@ enum TextBlockConversion {
     return targets;
   }
 
+  function selectedDividers() {
+    if ((document.documentElement.dataset.vellixSelectionMode || 'off') === 'off') return [];
+    const selected = window.PennedBlockSelection?.selectedRecords?.();
+    if (selected) return selected.filter(block => ['divider', 'horizontalRule'].includes(block.node.type.name));
+    const result = [];
+    for (const element of editor.view.dom.querySelectorAll('[data-vellix-selected="true"][data-vellix-selection-node-type="divider"], [data-vellix-selected="true"][data-vellix-selection-node-type="horizontalRule"]')) {
+      const pos = editor.view.posAtDOM(element, 0), node = editor.state.doc.nodeAt(pos);
+      if (node && ['divider', 'horizontalRule'].includes(node.type.name)) result.push({ pos, node });
+    }
+    return result;
+  }
+
   function schedule() {
     if (frame || destroyed) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
       const held = plugin.getState(editor.state);
+      const enabled = editable();
+      const dividers = selectedDividers();
+      const dividerSignature = dividers.map(block => `${block.pos}:${block.node.attrs.style || ''}`).join('|');
+      if (availabilityDoc === editor.state.doc && availabilityToken === held?.token &&
+          availabilityEditable === enabled && availabilityDividers === dividerSignature) return;
+      availabilityDoc = editor.state.doc; availabilityToken = held?.token; availabilityEditable = enabled;
+      availabilityDividers = dividerSignature;
       const payload = { token: editable() ? held?.token ?? null : null,
-        targets: editable() && held ? supportedTargets().filter(target => {
+        targets: dividers.length && !editor.view.composing && editor.schema.nodes.divider
+          ? ['dottedCircles', 'fourCircles', 'thinLine', 'thickLine'].map(style => 'divider:' + style)
+          : editable() && held ? supportedTargets().filter(target => {
           try { return convert(target, held, false); } catch { return false; }
         }) : [] };
       const next = JSON.stringify(payload);

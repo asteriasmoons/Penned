@@ -78,6 +78,7 @@ struct DocumentBrowserView: View {
     @State private var selectedFolderIDs: Set<String> = []
     @State private var confirmTrash = false
     @State private var confirmEmptyTrash = false
+    @State private var documentToRestore: DocumentRecord?
     @State private var availableWidth: CGFloat = 0
     @State private var scrollPosition = ScrollPosition(edge: .top)
 
@@ -189,6 +190,18 @@ struct DocumentBrowserView: View {
         } message: {
             Text("This also removes their nested pages, snapshots and attachments. This cannot be undone.")
         }
+        .confirmationDialog("Restore this document?", isPresented: Binding(
+            get: { documentToRestore != nil },
+            set: { if !$0 { documentToRestore = nil } }
+        ), titleVisibility: .visible, presenting: documentToRestore) { document in
+            Button("Restore") {
+                environment.restore(document)
+                documentToRestore = nil
+            }
+            Button("Cancel", role: .cancel) { documentToRestore = nil }
+        } message: { document in
+            Text(document.title)
+        }
         .onChange(of: documents.map(\.id)) { _, ids in
             selectedIDs.formIntersection(Set(ids))
         }
@@ -280,6 +293,8 @@ struct DocumentBrowserView: View {
             if isSelecting {
                 if selectedIDs.contains(document.id) { selectedIDs.remove(document.id) }
                 else { selectedIDs.insert(document.id) }
+            } else if mode == .trash {
+                documentToRestore = document
             } else if let workspace {
                 Task { do { try await workspace.openDocument(document) } catch { environment.report(error) } }
             } else { environment.select(document) }

@@ -1,0 +1,32 @@
+{
+    "manifest_version": 3,
+    "default_locale": "en",
+
+    "name": "__MSG_extension_name__",
+    "description": "__MSG_extension_description__",
+    "version": "1.0",
+
+    "icons": {
+        "48": "images/icon-512.png",
+        "96": "images/icon-512.png",
+        "128": "images/icon-512.png",
+        "256": "images/icon-512.png",
+        "512": "images/icon-512.png"
+    },
+
+    "background": {
+        "scripts": [ "background.js" ],
+        "type": "module"
+    },
+
+    "action": {
+        "default_popup": "popup.html",
+        "default_title": "Clip to Penned",
+        "default_icon": "images/icon-512.png"
+    },
+
+    "permissions": [ "activeTab", "scripting", "nativeMessaging", "storage" ],
+    "content_security_policy": {
+        "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+    }
+}

@@ -4,7 +4,7 @@ nonisolated enum PublishingProjection {
     static let attributes: [String: Set<String>] = [
         "doc": [], "text": [], "paragraph": [], "caption": [], "heading": ["level"], "hardBreak": [],
         "bulletList": [], "orderedList": ["start", "type"], "listItem": [], "codeBlock": ["language"],
-        "blockquote": ["color"], "callout": ["icon", "color"], "plainCallout": ["color"],
+        "blockquote": ["color"], "callout": ["icon", "color"], "plainCallout": ["color", "widthPercent"], "plainCalloutRow": [],
         "divider": ["style"], "pageBreak": [], "toggleItem": ["open"], "taskList": [], "taskItem": ["checked", "crossed"],
         "templateComponent": ["definition", "response"], "inlineProperty": ["property"],
         "table": ["name", "leftOffset", "stripeColor", "columnless", "rowless", "rowCount", "columnCount", "headerRow"],
@@ -18,6 +18,10 @@ nonisolated enum PublishingProjection {
         guard let type = content["type"] as? String, type != "pageReference", type != "collection" else { return [] }
         var paths: Set<String> = []
         if type == "attachment", let attrs = content["attrs"] as? [String: Any], let file = attrs["file"] as? [String: Any] {
+            for key in ["relativePath", "previewPath"] { if let path = file[key] as? String { paths.insert(path) } }
+        }
+        if type == "plainCallout", let source = (content["attrs"] as? [String: Any])?["clipSource"] as? [String: Any],
+           let file = source["file"] as? [String: Any] {
             for key in ["relativePath", "previewPath"] { if let path = file[key] as? String { paths.insert(path) } }
         }
         for child in content["content"] as? [[String: Any]] ?? [] { paths.formUnion(self.paths(in: child)) }
@@ -49,6 +53,17 @@ nonisolated enum PublishingProjection {
                 for key in ["width", "height"] { if let dimension = file[key] as? Int, dimension > 0, dimension <= 30000 { value[key] = dimension } }
                 if let path = file["previewPath"] as? String, let preview = media[path] { value["previewMediaID"] = preview.id }
                 approved["file"] = value
+            }
+            if type == "plainCallout", let source = attrs["clipSource"] as? [String: Any],
+               let href = source["url"] as? String, let url = InlinePropertyDefinition.safeURL(href) {
+                var value: [String: Any] = ["url": url.absoluteString, "title": source["title"] as? String ?? href]
+                if let file = source["file"] as? [String: Any], let path = file["relativePath"] as? String {
+                    guard let asset = media[path] else { throw PublishingFailure.invalidContent("The source preview image is unavailable.") }
+                    var publishedFile: [String: Any] = ["mediaID": asset.id, "kind": "image"]
+                    if let previewPath = file["previewPath"] as? String, let preview = media[previewPath] { publishedFile["previewMediaID"] = preview.id }
+                    value["file"] = publishedFile
+                }
+                approved["clipSource"] = value
             }
             if !approved.isEmpty { result["attrs"] = approved }
         }

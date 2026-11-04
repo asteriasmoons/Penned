@@ -16,16 +16,16 @@ The previous capture-phase `touchstart` handler immediately dispatched a selecti
 
 Contact now observes passively and queues its initial metadata transaction until after native touchstart propagation. This provisional event snapshot is not a second selected-block store. Its origin maps through intervening input transactions before the ProseMirror gesture state is established. Pending gestures also map through subsequent edits; an actual document edit during an active drag cancels only the transient drag. There is no app-resume dependency, timeout-based reinitialization, WebView recreation or composition-state manipulation.
 
-The plugin reconciles actual block DOM identities on every view update, plus a plugin-owned child-list MutationObserver for NodeView DOM churn without a model change. The original block/contact-target binding is retained until its stream ends, including an inline mark element detached during input reconciliation. Events reaching both bindings are handled once. Removed bindings and the observer are cleaned up when the contact ends or the editor is destroyed. No global gesture listener is introduced.
+The plugin reconciles actual block DOM identities when the model document changes or its child-list MutationObserver reports NodeView DOM churn. Gesture-only updates reuse those bindings. The original block/contact-target binding is retained until its stream ends, including an inline mark element detached during input reconciliation. Events reaching both bindings are handled once. Removed bindings and the observer are cleaned up when the contact ends or the editor is destroyed. No global gesture listener is introduced.
 
 ## Gesture Rules
 
 - Listeners belong to individual model block elements and are installed/removed by the ProseMirror plugin view. No document/window/editor-root pointer recognizer, gutter or handle is added.
 - `touchstart` observes passively and does not dispatch before native input flushes. Taps, existing text selections, composition, multitouch and long presses are not claimed.
-- With no blocks selected, horizontal movement must reach 18 CSS pixels and dominate vertical movement by 1.8:1 before activation. With an existing selection, horizontal activation needs only 8 pixels. Vertical movement reaching 10 pixels before activation is released to scrolling unless resuming from selected content. A pending contact older than 320 ms cannot activate unless it began on selected content, where native text selection is already disabled.
+- With no blocks selected, horizontal movement must reach 12 CSS pixels and dominate vertical movement by 1.8:1 before activation. With an existing selection, horizontal activation needs only 6 pixels. Vertical movement reaching 10 pixels before activation is released to scrolling unless resuming from selected content. A pending contact older than 320 ms cannot activate unless it began on selected content, where native text selection is already disabled.
 - Only cancellable movement is eligible. `preventDefault()` is used after horizontal recognition, never unconditionally on contact or movement. A non-cancellable/cancelled stream is abandoned rather than trying to recover it mid-scroll.
 - Ordinary text blocks declare `touch-action: pan-y pinch-zoom` before contact. Potential horizontal-scroll containers do not receive this restriction. Actual horizontal-scroll areas and interactive controls remain excluded from gesture origins.
-- At 48 CSS pixels of horizontal displacement (24 with an existing selection), the first commit selects only the touched block. It does not search for a nearest neighbor at that threshold, even if keyboard/layout movement has changed its rectangle.
+- At 24 CSS pixels of horizontal displacement (14 with an existing selection), the first commit selects only the touched block. It does not search for a nearest neighbor at that threshold, even if keyboard/layout movement has changed its rectangle.
 - Continuous range extension starts after an additional 6 CSS pixels of deliberate vertical movement. New blocks require entry 4 CSS pixels inside their rendered edge (less for very short blocks); existing selected blocks can be re-entered immediately to shrink. Gaps are sticky. Fast drags include crossed blocks even when no event lands inside them, and can reach the first/last block. Each changed selection produces one haptic; extra movement within the same selection produces none.
 - Selection and its range anchor/head persist after release. Starting another vertical drag on selected content resumes that range after 4 pixels of vertically dominant movement (1.1:1), without another horizontal swipe or reopening editing/the keyboard. A tapped/command-selected block without a saved range establishes one at that block while preserving other independently selected blocks. A slightly sideways start can still transition into vertical continuation before committing. Only selected block surfaces reserve that next contact with `touch-action: none`, declared before contact. Unselected content retains ordinary vertical scrolling. Direction reversal shrinks the range back to its anchor.
 - A following synthetic click is suppressed once. In selection mode, deliberate block taps toggle selection anywhere in its non-control content. Navigation/file-card buttons permit swipe observation while retaining ordinary tap activation; sliders, form inputs, media controls, resizing handles and horizontal scrolling remain excluded.
@@ -85,8 +85,8 @@ selection and toolbar actions retain their existing behavior.
 ### Continued-Selection Responsiveness
 
 Physical-device feedback found continuation too difficult and slow. The resume
-and extension thresholds above now become lighter only after selection exists;
-the initial no-selection swipe retains its deliberate thresholds. Selected
+and extension thresholds above become lighter after selection exists; the
+follow-up below also shortens the initial swipe. Selected
 contacts no longer expire while being held, and tapped selections can resume
 without a missing-range failure. Native scroll motion no longer loses frames
 to the WebView acknowledgement delay, while range updates remain serialized.
@@ -96,6 +96,31 @@ This refinement changes only `MobileBlockSelection.swift`,
 `MobileBlockSelectionScrollDriver.swift`, and this document. No builds, tests,
 or app launches were run; touch sensitivity, speed, and range tracking still
 require physical iPhone/iPad verification.
+
+### Selection Hot-Path Optimization
+
+Further feedback identified slow initial block selection. Source inspection
+found full-registry decoration construction and block-DOM reconciliation on
+every gesture metadata transaction, plus repeated linear selection lookups.
+The initial commit now needs 24 rather than 48 CSS pixels; subsequent swipes
+need 14 rather than 24. Horizontal dominance, long-press protection and normal
+vertical scrolling rules remain intact.
+
+The existing immutable document registry now has position/key indexes, and
+selected-position membership is cached by the immutable plugin selection array.
+Base decorations rebuild only when the document changes; selection paint
+rebuilds when selected references change; only the moving block receives a
+transient transform decoration. DOM bindings refresh on document/child-list
+changes, not every finger sample, while detached contact bindings are still
+cleaned up at release. Native collection-paint lookup also runs only when the
+document or selected references change. These are derived caches; ProseMirror
+remains the only selection authority.
+
+This follow-up changes `MobileBlockSelection.swift` and this document. Highlight
+geometry, native scroll speed, document loading, WebView ownership and Mac are
+unchanged. No builds, tests or runtime profiling were run; actual touch latency,
+typing followed by swiping and nested-block range tracking require iPhone/iPad
+verification.
 
 The standards describe why gesture axis policy must exist before contact and why cancellation cannot be assumed after scrolling starts: [Pointer Events touch-action](https://www.w3.org/TR/pointerevents3/#the-touch-action-css-property), [Touch Events touchmove](https://www.w3.org/TR/touch-events/#the-touchmove-event).
 
@@ -108,6 +133,16 @@ Selected collection block IDs are sent as a changed-only `blockSelectionSurfaces
 ## Mobile Spacing and Selection Appearance
 
 The mobile plugin applies a 10-point sibling gap to the live document, toggle/quote contents and list items. Existing callout-internal spacing, compact property rows and page-break sheet-edge spacing remain intact. The iOS opening preview uses the same 10-point root-block gap; compact library previews and Mac spacing are unchanged.
+
+Checklist alignment correction: that sibling rule previously also added a
+10-point top margin to the text column after a task item's completion label.
+Those two children are horizontal flex columns, not vertically stacked blocks.
+Task items are now excluded from the internal sibling-gap selector, retaining
+zero column margins and the existing shared first-line height for circle/text
+alignment. The 10-point gap between checklist items, selected fonts, reminder
+metadata and completion actions are unchanged. This is a mobile injected-style
+change only, not a font-resource or shared editor-startup change. No builds or
+tests were run; wrapped tasks and reminder rows still need device confirmation.
 
 Text selection surfaces extend six points into the document's side margins for breathing room. The live iOS WebView and its native collection overlay receive matching negative horizontal padding, while the HTML page reserves the same six-point gutter internally. Its maximum width includes both gutters, preserving the existing text column, line wrapping and header alignment on iPhone and iPad. Unlike the former unreserved negative inset, the highlight now stays within the WebView's drawable bounds instead of being clipped at its left edge. Rounded single-paragraph callouts/quotes and cards keep their own fitted surfaces. The opening preview, selection-mode behavior and Mac layout are unchanged.
 

@@ -58,7 +58,8 @@ final class TipTapEditorSession: ObservableObject {
     @Published private(set) var collectionRegions: [TipTapCollectionRegion] = []
     @Published private(set) var renderedDocumentID: String?
     @Published private(set) var placeholderMode = false
-    private var templateEditing = false
+    @Published private(set) var templateEditing = false
+    private var editingContext: (documentID: String, templateID: String?)?
     private(set) var editingEnabled = true
 
     var onEvent: ((TipTapEditorEvent) -> Void)?
@@ -154,6 +155,9 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     func load(documentID: String, canonicalJSON: String, force: Bool = false) {
+        if editingContext?.documentID != documentID {
+            configureDocumentContext(documentID: documentID, templateID: nil)
+        }
         // SwiftUI checks this on every WebView update; no-op checks must not publish state or send bridge commands.
         if !force {
             if isReady, webView != nil, loadedDocumentID == documentID { return }
@@ -282,21 +286,26 @@ final class TipTapEditorSession: ObservableObject {
         guard result as? Bool == true else { throw DocumentTaskError.missingTask }
     }
 
-    func setTemplateEditing(_ enabled: Bool) {
-        templateEditing = enabled
-        if !enabled { placeholderMode = false }
+    func configureDocumentContext(documentID: String, templateID: String?) {
+        if editingContext?.documentID != documentID || editingContext?.templateID != templateID {
+            placeholderMode = false
+        }
+        editingContext = (documentID, templateID)
+        templateEditing = templateID != nil
+        if !templateEditing { placeholderMode = false }
         guard isReady else { return }
-        send(TipTapEditorCommand("setTemplateEditing", args: ["enabled": enabled]))
+        send(TipTapEditorCommand("setTemplateEditing", args: ["enabled": templateEditing,
+            "documentID": documentID, "templateID": templateID.map { $0 as Any } ?? NSNull(), "placeholderMode": placeholderMode]))
     }
 
     func togglePlaceholderMode() {
-        guard templateEditing, isReady else { return }
+        guard templateEditing, isReady, !isLoadingDocument, editingEnabled else { return }
         placeholderMode.toggle()
         send(TipTapEditorCommand("setPlaceholderMode", args: ["active": placeholderMode]))
     }
 
     func placeholderAction(_ action: String, token: String? = nil) {
-        guard templateEditing else { return }
+        guard templateEditing, placeholderMode, isReady, !isLoadingDocument, editingEnabled else { return }
         var args: [String: Any] = ["action": action]
         if let token { args["token"] = token }
         send(TipTapEditorCommand("placeholderAction", args: args))
@@ -601,6 +610,33 @@ final class TipTapEditorSession: ObservableObject {
         send(TipTapEditorCommand("insertBlock", args: ["blockType": "plainCallout", "color": color]))
     }
 
+    func preparePlainCalloutInsertion() async throws -> String {
+        guard isReady, !isLoadingDocument, editingEnabled, let documentID = loadedDocumentID else {
+            throw VellixError.editorBridge("The editor is not ready.")
+        }
+        let generation = loadGeneration
+        guard let token = try await attachmentCommand("plainCalloutCaptureInsertion") as? String else {
+            throw VellixError.editorBridge("Select an insertion point for the callout.")
+        }
+        guard loadedDocumentID == documentID, loadGeneration == generation, editingEnabled else {
+            endPlainCalloutInsertion(token: token)
+            throw VellixError.editorBridge("The document changed. Select the insertion point again.")
+        }
+        return token
+    }
+
+    func insertPlainCallout(color: String, insertionToken: String) async throws {
+        guard isReady, !isLoadingDocument, editingEnabled else { throw VellixError.editorBridge("The editor is not ready.") }
+        let inserted = try await attachmentCommand("insertBlock", args: [
+            "blockType": "plainCallout", "color": color, "insertionToken": insertionToken,
+        ]) as? Bool
+        guard inserted == true else { throw VellixError.editorBridge("The callout insertion point is no longer available.") }
+    }
+
+    func endPlainCalloutInsertion(token: String) {
+        send(TipTapEditorCommand("plainCalloutEndInsertion", args: ["token": token]))
+    }
+
     func setSelectedBlockType(_ blockType: String, level: Int? = nil, color: String? = nil) {
         guard !["heading5", "heading6", "toggleHeading5", "toggleHeading6"].contains(blockType) else { return }
         if ["heading", "toggleListItem"].contains(blockType), let level, !(1...4).contains(level) { return }
@@ -620,6 +656,10 @@ final class TipTapEditorSession: ObservableObject {
 
     func outdentSelectedBlocks() {
         send(TipTapEditorCommand.outdentSelectedBlocks())
+    }
+
+    func indentPageReference(documentID: String, outdent: Bool = false) {
+        send(TipTapEditorCommand("indentPageReference", args: ["documentID": documentID, "outdent": outdent]))
     }
 
     func setSelectedCalloutColor(_ color: String) {
@@ -910,7 +950,9 @@ final class TipTapEditorSession: ObservableObject {
             logger.info("VELLIX-OPEN editorReady blocks=\(blockCount)")
             logger.info("⏱️ STARTUP +\(self.startupElapsedMS())ms editor ready blockCount=\(blockCount)")
             isReady = true
-            setTemplateEditing(templateEditing)
+            if let context = editingContext {
+                configureDocumentContext(documentID: context.documentID, templateID: context.templateID)
+            }
             sendPageReferences()
             setCollections(collectionPayloads)
             send(TipTapEditorCommand("setAttachments", args: ["files": attachmentFiles.map(\.object)]))
@@ -995,6 +1037,7 @@ final class TipTapEditorSession: ObservableObject {
 
         case .selectionModeChanged(let mode):
             logger.info("🔘 TRACE EVENT selectionModeChanged mode=\(mode, privacy: .public) previous=\(self.selectionMode, privacy: .public)")
+            if selectionMode != mode { textConversionState = TipTapTextConversionState() }
             selectionMode = mode
             if mode == "off" {
                 selectedBlockCount = 0
@@ -1015,7 +1058,15 @@ final class TipTapEditorSession: ObservableObject {
             if formattingState != state { formattingState = state }
 
         case .textConversionStateChanged(let state):
-            let current = isReady && !isLoadingDocument && editingEnabled && selectionMode == "off" ? state : TipTapTextConversionState()
+            var current = TipTapTextConversionState()
+            if isReady && !isLoadingDocument && editingEnabled {
+                if selectionMode == "off" {
+                    current = state
+                } else {
+                    // Block conversion has no text bookmark. Keep only its divider choices.
+                    current.targets = Set(state.targets.filter { $0.hasPrefix("divider:") })
+                }
+            }
             if textConversionState != current { textConversionState = current }
 
         case .requestHaptic(let style):
@@ -1338,6 +1389,8 @@ final class DocumentEditorModel: ObservableObject {
     private let snapshotRepository: SnapshotRepository
     private let attachmentStore: AttachmentStore?
     private var pendingCardBlockID: String?
+    private let persistenceQueue = DispatchQueue(label: "penned.editor.persistence", qos: .userInitiated)
+    private let saveGeneration = EditorSaveGeneration()
 
     @Published var document: DocumentRecord? {
         didSet {
@@ -1395,7 +1448,7 @@ final class DocumentEditorModel: ObservableObject {
         didSet { if latestJSON != oldValue { noteTemplateChange() } }
     }
     private var lastAutomaticSnapshotRevision = 0
-    private var saveSequence = 0
+    private var saveSequence = 0 { didSet { saveGeneration.set(saveSequence) } }
     private var templateChangeVersion = 0
     private var confirmedTemplateChangeVersion: Int?
     private var persistentOperations: Set<UUID> = []
@@ -1517,8 +1570,10 @@ final class DocumentEditorModel: ObservableObject {
         taskHistoryRequest = nil
         attachmentEditorRequest = nil
         attachmentActionRequest = nil
+        templateComponentRequest = nil
+        placeholderConversionToken = nil
         templateNeedsSave = record.templateID != nil
-        session.setTemplateEditing(record.templateID != nil)
+        session.configureDocumentContext(documentID: record.id, templateID: record.templateID)
         latestJSON = record.tipTapJSON
         pageReferenceIDs = TipTapContentAnalyzer.pageReferenceIDs(in: record.tipTapJSON)
         session.saveState = .saved(record.updatedAt)
@@ -1637,7 +1692,8 @@ final class DocumentEditorModel: ObservableObject {
         guard let document else { return }
         pendingSaveTask?.cancel()
         saveSequence += 1
-        let updated = try documentRepository.saveEditorJSON(id: document.id, canonicalJSON: latestJSON ?? document.tipTapJSON)
+        let repository = documentRepository, json = latestJSON ?? document.tipTapJSON
+        let updated = try persistenceQueue.sync { try repository.saveEditorJSON(id: document.id, canonicalJSON: json) }
         pendingDocumentID = nil
         self.document = updated
         session.saveState = .saved(updated.updatedAt)
@@ -1666,7 +1722,8 @@ final class DocumentEditorModel: ObservableObject {
         let changedDuringCapture = templateChangeVersion != versionAtRequest
         pendingSaveTask?.cancel()
         saveSequence += 1
-        let updated = try documentRepository.saveEditorJSON(id: id, canonicalJSON: json)
+        let repository = documentRepository
+        let updated = try persistenceQueue.sync { try repository.saveEditorJSON(id: id, canonicalJSON: json) }
         if !changedDuringCapture { latestJSON = updated.tipTapJSON }
         self.document = updated
         confirmedTemplateChangeVersion = changedDuringCapture ? versionAtRequest : templateChangeVersion
@@ -1762,7 +1819,10 @@ final class DocumentEditorModel: ObservableObject {
             #endif
             if cut { session.tableAction("clearContents", tableID: tableContext?.tableID) }
         case .documentChanged(let json):
-            if !EditorAttachment.paths(in: json).isSubset(of: Set(session.attachmentFiles.map { $0.record.relativePath })) {
+            // EditorAttachment.paths parses and walks the entire document. Skip that
+            // whole-document work when the payload cannot reference an attachment.
+            if json.contains("attachment") || json.contains("clipSource"),
+               !EditorAttachment.paths(in: json).isSubset(of: Set(session.attachmentFiles.map { $0.record.relativePath })) {
                 session.refreshAttachments(documentID: documentID, json: json)
             }
             scheduleSave(json)
@@ -1774,6 +1834,7 @@ final class DocumentEditorModel: ObservableObject {
         case .editorError(let message):
             errorMessage = message
         case .requestPlaceholderConversion(let token):
+            guard document?.templateID != nil, session.templateEditing, session.placeholderMode else { return }
             placeholderConversionToken = token
         case .requestCalloutIconPicker(let blockID, let icon, let color):
             calloutIconRequest = CalloutIconRequest(blockID: blockID, icon: icon, color: color)
@@ -1994,12 +2055,17 @@ final class DocumentEditorModel: ObservableObject {
         let documentRepository = documentRepository
         let snapshotRepository = snapshotRepository
         let snapshotBaseRevision = lastAutomaticSnapshotRevision
+        let operation = beginPersistentOperation()
+        let generation = saveGeneration
 
         session.saveState = .saving
         print("💾 TRACE MODEL persist start id=\(documentID) sequence=\(sequence) bytes=\(canonicalJSON.count)")
 
-        Task { [weak self] in
-            guard let self, sequence == self.saveSequence, self.document?.id == documentID else { return }
+        persistenceQueue.async { [weak self] in
+            guard generation.isCurrent(sequence) else {
+                Task { @MainActor [weak self] in self?.endPersistentOperation(operation) }
+                return
+            }
             let result: Result<EditorSaveResult, Error>
             do {
                 let updated = try documentRepository.saveEditorJSON(
@@ -2022,7 +2088,11 @@ final class DocumentEditorModel: ObservableObject {
                 result = .failure(error)
             }
 
-            self.finishEditorSave(result, sequence: sequence)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.endPersistentOperation(operation) }
+                self.finishEditorSave(result, sequence: sequence)
+            }
         }
     }
 
@@ -2179,4 +2249,11 @@ struct CalloutColorRequest: Identifiable, Equatable {
 private struct EditorSaveResult: Sendable {
     var document: DocumentRecord
     var snapshotRevision: Int?
+}
+
+private nonisolated final class EditorSaveGeneration: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    func set(_ next: Int) { lock.withLock { value = next } }
+    func isCurrent(_ candidate: Int) -> Bool { lock.withLock { value == candidate } }
 }

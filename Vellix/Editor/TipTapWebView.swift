@@ -390,6 +390,10 @@ fileprivate extension TipTapWebView {
         #if os(iOS)
         contentController.addUserScript(WKUserScript(source: MobileBlockSelection.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         contentController.addUserScript(WKUserScript(source: MobileEditorInteractions.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        #if DEBUG
+        contentController.addUserScript(WKUserScript(source: MobileEditorInteractions.listDiagnosticsScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        coordinator.logInfo("PENNED-LIST native diagnostics enabled")
+        #endif
         #endif
 
         let configuration = WKWebViewConfiguration()
@@ -410,13 +414,12 @@ fileprivate extension TipTapWebView {
         #else
         let webView = WKWebView(frame: .zero, configuration: configuration)
         #endif
+        if #available(iOS 16.4, macOS 13.3, *) {
+            webView.isInspectable = true
+        }
         webView.navigationDelegate = coordinator
         #if DEBUG && os(iOS)
         webView.diagnosticCoordinator = coordinator
-        if UIDevice.current.userInterfaceIdiom == .pad, coordinator.session.preparesInteractivePresentation,
-           #available(iOS 16.4, *) {
-            webView.isInspectable = true
-        }
         #endif
         coordinator.logInfo("⏱️ STARTUP +\(TipTapEditorStartupTiming.elapsedMS())ms makeWebView created \(ObjectIdentifier(webView).debugDescription)")
 
@@ -511,6 +514,19 @@ final class Coordinator:
         guard message.name == "tiptap" else {
             return
         }
+
+        #if DEBUG && os(iOS)
+        if let dictionary = message.body as? [String: Any],
+           dictionary["kind"] as? String == "listCaretDiagnostic" {
+            if let payload = dictionary["payload"] as? [String: Any],
+               JSONSerialization.isValidJSONObject(payload),
+               let data = try? JSONSerialization.data(withJSONObject: payload, options: .sortedKeys),
+               data.count <= 20_000 {
+                logInfo("PENNED-LIST \(String(decoding: data, as: UTF8.self))")
+            }
+            return
+        }
+        #endif
 
         #if os(iOS)
         if let dictionary = message.body as? [String: Any],

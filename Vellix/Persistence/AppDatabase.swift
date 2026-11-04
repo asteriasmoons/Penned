@@ -146,9 +146,18 @@ final class AppDatabase: @unchecked Sendable {
             tagsChanged = try DocumentTagIndex.reconcile(in: db)
             return value
         }
-        if tasksChanged { NotificationCenter.default.post(name: .vellixTasksChanged, object: self) }
-        if tagsChanged { NotificationCenter.default.post(name: .pennedTagsChanged, object: self) }
-        NotificationCenter.default.post(name: .pennedCollectionsChanged, object: self)
+        let notify: @Sendable () -> Void = { [self, tasksChanged, tagsChanged] in
+            if tasksChanged { NotificationCenter.default.post(name: .vellixTasksChanged, object: self) }
+            if tagsChanged { NotificationCenter.default.post(name: .pennedTagsChanged, object: self) }
+            NotificationCenter.default.post(name: .pennedCollectionsChanged, object: self)
+        }
+        if Thread.isMainThread {
+            notify()
+        } else {
+            // A synchronous editor flush may be waiting for this writer on main.
+            // Posting here can wait for a .main observer and deadlock both queues.
+            DispatchQueue.main.async(execute: notify)
+        }
         return value
     }
 }
@@ -453,6 +462,45 @@ extension DatabaseMigrator {
         }
         migrator.registerMigration("v29_publication_linked_pages") { db in
             try db.execute(sql: "UPDATE publicationJobs SET dirty=1,sequence=sequence+1,retryAt=0 WHERE intent='active' AND blocked=0 AND json_extract(statusJSON,'$.settings.allowFollowLinkedContent')=1")
+        }
+
+        migrator.registerMigration("v30_safari_clip_receipts") { db in
+            // Local delivery receipts prevent duplicate imports after a crash. The actual
+            // article, source metadata, tags and image records use normal document sync.
+            try db.execute(sql: """
+                CREATE TABLE webClipImports (
+                  id TEXT PRIMARY KEY NOT NULL,
+                  libraryID TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+                  documentID TEXT REFERENCES documents(id) ON DELETE SET NULL,
+                  sourceURL TEXT NOT NULL, author TEXT NOT NULL, siteName TEXT NOT NULL,
+                  createdAt DATETIME NOT NULL
+                );
+                """)
+        }
+
+        migrator.registerMigration("v31_template_gallery_cache") { db in
+            // Public gallery metadata is a local cache, not part of private library sync.
+            try db.execute(sql: """
+                CREATE TABLE galleryCategories (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    title TEXT NOT NULL,
+                    sortOrder DOUBLE NOT NULL,
+                    createdAt DATETIME NOT NULL,
+                    updatedAt DATETIME NOT NULL
+                );
+                CREATE TABLE galleryTemplates (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    categoryID TEXT NOT NULL REFERENCES galleryCategories(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    templateDescription TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    sortOrder DOUBLE NOT NULL,
+                    createdAt DATETIME NOT NULL,
+                    updatedAt DATETIME NOT NULL
+                );
+                CREATE INDEX galleryTemplates_category_order
+                    ON galleryTemplates(categoryID, sortOrder);
+                """)
         }
 
         return migrator

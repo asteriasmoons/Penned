@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Clip to Penned</title>
+    <link rel="stylesheet" href="popup.css">
+    <script type="module" src="popup.js"></script>
+</head>
+<body>
+    <main id="clipper" aria-label="Penned Web Clipper">
+        <header>
+            <button id="back" class="icon-button" aria-label="Back" hidden><i data-icon="chevleft"></i></button>
+            <button id="space" class="space-button" aria-label="Choose Space"><img id="space-image" src="images/icon-512.png" alt=""><span id="space-name">Penned</span><i data-icon="chevdown"></i></button>
+            <span class="grow"></span>
+            <button id="settings" class="icon-button" aria-label="Clipper settings"><i data-icon="settingswavy"></i></button>
+            <button id="close" class="icon-button" aria-label="Close clipper"><i data-icon="xmarkwavy"></i></button>
+        </header>
+        <div id="loading" class="loading" role="status" aria-label="Loading article"><span class="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></div>
+        <section id="connect" hidden>
+            <img class="brand" src="images/icon-512.png" alt="Penned">
+            <h1>Connect to Penned</h1>
+            <p>Open Penned and sign in under Account Settings. Your current account and Spaces will appear here.</p>
+            <a class="primary" href="penned://clipper/connect" target="_blank">Connect to Penned</a>
+            <button id="reconnect" class="secondary">Refresh Connection</button>
+        </section>
+        <section id="article" hidden>
+            <label class="visually-hidden" for="title">Article title</label>
+            <textarea id="title" class="title" rows="2" maxlength="1000" placeholder="Article title"></textarea>
+            <label class="visually-hidden" for="notes">Personal notes</label>
+            <textarea id="notes" rows="3" maxlength="50000" placeholder="Add a note" hidden></textarea>
+            <nav id="tools" aria-label="Clip details">
+                <button id="notes-toggle" class="icon-button" aria-label="Personal notes" aria-pressed="false"><i data-icon="writepen"></i></button>
+                <button id="tags-toggle" class="icon-button" aria-label="Tags" aria-pressed="false"><i data-icon="hashtagwavy"></i><span id="tag-count" hidden></span></button>
+                <button id="info-toggle" class="icon-button" aria-label="Article metadata" aria-pressed="false"><i data-icon="infowavy"></i></button>
+            </nav>
+            <div id="destination-panel">
+                <h2>Destination</h2>
+                <button id="destination" class="row destination"><i data-icon="linesfolderfill"></i><span id="folder-name" class="grow">Unsorted</span><i data-icon="chevdown"></i></button>
+            </div>
+            <div id="tags-panel" hidden><label class="search"><i data-icon="searchwavy"></i><input id="tag-search" type="search" placeholder="Search tags" aria-label="Search existing tags"></label><div id="tag-list" class="list" role="group" aria-label="Tags"></div></div>
+            <div id="info-panel" hidden>
+                <h2>Metadata</h2>
+                <label class="field"><span>Author</span><input id="author" maxlength="1000" autocomplete="off"></label>
+                <label class="field"><span>Website</span><input id="website" maxlength="1000" autocomplete="off"></label>
+                <div class="source"><span>Original URL</span><a id="source" target="_blank" rel="noopener noreferrer"></a></div>
+            </div>
+        </section>
+        <section id="picker" hidden>
+            <h1 id="picker-title">Choose Space</h1>
+            <label class="search"><i data-icon="searchwavy"></i><input id="picker-search" type="search" placeholder="Search" aria-label="Search destinations"></label>
+            <div id="picker-list" class="list"></div>
+        </section>
+        <section id="preferences" hidden>
+            <button id="settings-space" class="row destination"><img id="settings-space-image" alt=""><span id="settings-space-name" class="grow"></span><i data-icon="chevdown"></i></button>
+            <h2>Theme</h2>
+            <div id="theme" class="segments" role="group" aria-label="Theme"><button data-theme="system">System</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button></div>
+            <div class="account"><img id="avatar" alt="" hidden><span id="account-name" class="grow"></span></div>
+            <a class="secondary" href="penned://clipper/connect" target="_blank">Manage Account</a>
+        </section>
+        <p id="status" role="status" aria-live="polite" hidden></p>
+        <footer>
+            <button id="save" class="primary" disabled hidden>Save Clip</button>
+            <button id="done" class="primary" hidden>Done</button>
+            <button id="retry" class="secondary" hidden>Retry</button>
+        </footer>
+    </main>
+</body>
+</html>

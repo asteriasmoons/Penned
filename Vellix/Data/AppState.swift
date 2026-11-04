@@ -18,11 +18,27 @@ final class AppState: ObservableObject {
         case deletionPending(AuthUser)
     }
     
-    @Published private(set) var status: SessionStatus = .checking
+    @Published private(set) var status: SessionStatus = .checking {
+        didSet {
+            #if os(iOS)
+            func owner(_ value: SessionStatus) -> AccountIdentity? {
+                if case .signedIn(let user) = value, !user.remoteAuthDeleted { return user.identity }
+                return nil
+            }
+            if owner(oldValue) != owner(status) { try? ClipperShared.disconnect() }
+            #endif
+        }
+    }
     @Published var isPopupPresented: Bool = false
     @Published var hideTabBar: Bool = false
     @Published var errorMessage: String?
-    @Published private(set) var isWorking = false
+    @Published private(set) var isWorking = false {
+        didSet {
+            #if os(iOS)
+            if isWorking { try? ClipperShared.disconnect() }
+            #endif
+        }
+    }
     @Published private(set) var syncState = ""
     @Published private(set) var savedAccounts: [AuthUser] = []
     private(set) var accountContainer: ModelContainer?
@@ -139,6 +155,9 @@ final class AppState: ObservableObject {
 
     func signOut() async {
         guard !isWorking else { return }
+        #if os(iOS)
+        try? ClipperShared.disconnect()
+        #endif
         isWorking = true
         defer { isWorking = false }
         bootstrapTask?.cancel()
@@ -169,6 +188,9 @@ final class AppState: ObservableObject {
 
     func activate(_ user: AuthUser) async throws {
         guard !isWorking else { return }
+        #if os(iOS)
+        try? ClipperShared.disconnect()
+        #endif
         isWorking = true
         defer { isWorking = false; refreshProfile() }
         bootstrapTask?.cancel()

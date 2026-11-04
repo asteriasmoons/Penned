@@ -52,7 +52,7 @@ function color(value: unknown): string {
 const nodes: Record<string, string[]> = {
   doc: [], text: [], paragraph: [], caption: [], heading: ["level"], hardBreak: [],
   bulletList: [], orderedList: ["start", "type"], listItem: [],
-  codeBlock: ["language"], blockquote: ["color"], callout: ["icon", "color"], plainCallout: ["color"],
+  codeBlock: ["language"], blockquote: ["color"], callout: ["icon", "color"], plainCallout: ["color", "widthPercent"], plainCalloutRow: [],
   divider: ["style"], pageBreak: [], toggleItem: ["open"], taskList: [], taskItem: ["checked", "crossed"],
   templateComponent: ["definition", "response"], inlineProperty: ["property"],
   table: ["name", "leftOffset", "stripeColor", "columnless", "rowless", "rowCount", "columnCount", "headerRow"],
@@ -161,7 +161,7 @@ export function sanitizeDocument(input: unknown, links: ReadonlyMap<string, stri
         if (key === "level" && (!Number.isInteger(value) || Number(value) < 1 || Number(value) > 6)) throw new PublishingError(400, "invalid_heading_level");
         if (["colspan", "rowspan"].includes(key) && (!Number.isInteger(value) || Number(value) < 1 || Number(value) > 200)) throw new PublishingError(400, "invalid_table_span");
         if (key === "colwidth" && (!Array.isArray(value) || value.length > 200 || value.some(width => typeof width !== "number" || !Number.isFinite(width) || width < 56 || width > 3000))) throw new PublishingError(400, "invalid_column_width");
-        if (key === "widthPercent" && (typeof value !== "number" || value < 10 || value > 100)) throw new PublishingError(400, "invalid_media_width");
+        if (key === "widthPercent" && (typeof value !== "number" || !Number.isFinite(value) || value < (type === "plainCallout" ? 1 : 10) || value > 100)) throw new PublishingError(400, "invalid_media_width");
         approved[key] = boundedValue(value);
       }
       if (type === "attachment") {
@@ -176,6 +176,19 @@ export function sanitizeDocument(input: unknown, links: ReadonlyMap<string, stri
           reference({ mediaID: file.previewMediaID });
           (approved.file as JSONObject).previewMediaID = uuid(file.previewMediaID);
         }
+      }
+      if (type === "plainCallout" && attrs.clipSource != null) {
+        const source = object(attrs.clipSource), href = safeURL(source.url);
+        if (!["https:", "http:"].includes(new URL(href).protocol)) throw new PublishingError(400, "invalid_source_url");
+        const preview: JSONObject = { url: href, title: string(source.title, 1000) };
+        if (source.file != null) {
+          const file = object(source.file), ref = reference(file), asset = assetMap.get(String(ref.mediaID))!;
+          if (!asset.mimeType.startsWith("image/")) throw new PublishingError(400, "invalid_source_image");
+          const image: JSONObject = { ...ref, kind: "image", mimeType: asset.mimeType };
+          if (file.previewMediaID != null) image.previewMediaID = reference({ mediaID: file.previewMediaID }).mediaID;
+          preview.file = image;
+        }
+        approved.clipSource = preview;
       }
       if (Object.keys(approved).length) result.attrs = approved;
     }

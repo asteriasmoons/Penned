@@ -12,6 +12,51 @@ import AppKit
 
 @MainActor
 struct CollectionTests {
+    @Test func backgroundTemplateCollectionSaveDoesNotWaitForMainQueueObservers() async throws {
+        #expect(Thread.isMainThread)
+        let database = try AppDatabase.makeInMemory()
+        let documents = DocumentRepository(database: database)
+        let owner = try TemplateRepository(database: database).create(title: "Collection template")
+        let collections = CollectionRepository(database: database, documents: documents)
+        let collection = try collections.create(ownerID: owner.id, name: "Saved collection", viewName: "Main", kind: .gallery)
+        let json = try CollectionRepository.blockJSON(collectionID: collection.record.id, documentID: owner.id)
+        let ownerID = owner.id
+        let writerReturned = DispatchSemaphore(value: 0), notified = DispatchSemaphore(value: 0)
+        let observer = NotificationCenter.default.addObserver(forName: .pennedCollectionsChanged, object: database, queue: .main) { _ in
+            #expect(Thread.isMainThread)
+            notified.signal()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        DispatchQueue(label: "penned.tests.collection-save").async {
+            _ = try? documents.saveEditorJSON(id: ownerID, canonicalJSON: json)
+            writerReturned.signal()
+        }
+        // Bound the wait so the old deadlock fails this check instead of hanging
+        // the test runner. Main is intentionally unavailable until this returns.
+        #expect(writerReturned.wait(timeout: .now() + 2) == .success)
+        let delivered = await Task.detached {
+            notified.wait(timeout: .now() + 2) == .success
+        }.value
+        #expect(delivered, "The committed change must still reach main-queue observers")
+        let saved = try documents.requireDocument(id: owner.id)
+        #expect(saved.templateID == owner.templateID)
+        #expect(TipTapContentAnalyzer.collectionIDs(in: saved.tipTapJSON) == Set([collection.record.id]))
+        #expect(try collections.snapshot(id: collection.record.id).views.count == 1)
+    }
+
+    @Test func mainThreadCollectionWritesStillNotifySynchronouslyAfterCommit() throws {
+        #expect(Thread.isMainThread)
+        let f = try Fixture(), notified = DispatchSemaphore(value: 0)
+        let observer = NotificationCenter.default.addObserver(forName: .pennedCollectionsChanged, object: f.database, queue: .main) { _ in
+            notified.signal()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        _ = try f.documents.saveEditorJSON(id: f.owner.id, canonicalJSON: f.owner.tipTapJSON)
+        #expect(notified.wait(timeout: .now()) == .success)
+        #expect(try f.repository.snapshot(id: f.collection.record.id).record.id == f.collection.record.id)
+    }
+
     @Test func deletingCollectionRemovesConfigurationAndKeepsDocumentContent() throws {
         let f = try Fixture(), id = f.collection.record.id
         let field = try f.field("Priority", kind: .text)

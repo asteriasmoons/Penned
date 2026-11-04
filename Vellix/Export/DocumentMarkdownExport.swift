@@ -77,6 +77,11 @@ struct DocumentMarkdownExport {
             }.joined(separator: "\n")
         case "listItem", "taskItem", "doc": return blocks(children, page: page)
         case "blockquote", "callout", "plainCallout":
+            if let source = attrs["clipSource"] as? [String: Any], let href = source["url"] as? String {
+                let title = escape(source["title"] as? String ?? href)
+                return ("[" + title + "](" + destination(href) + ")\n\n" + blocks(children, page: page))
+                    .components(separatedBy: "\n").map { "> " + $0 }.joined(separator: "\n")
+            }
             let prefix = type == "blockquote" ? "" : "[!NOTE]\n"
             return (prefix + blocks(children, page: page)).components(separatedBy: "\n").map { "> " + $0 }.joined(separator: "\n")
         case "toggleItem":

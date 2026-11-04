@@ -125,6 +125,10 @@ struct DocumentEditorView: View {
     @FocusState private var isTitleFocused: Bool
     @State private var showSnapshots = false
     @State private var showAppearance = false
+    @State private var showTemplateGallery = false
+    @State private var galleryImportError: String?
+    @State private var galleryCategories: [GalleryCategory] = []
+    @State private var galleryTemplates: [GalleryTemplate] = []
     @State private var showIconPicker = false
     @State private var showFileImporter = false
     @State private var fileInsertionToken: String?
@@ -134,6 +138,9 @@ struct DocumentEditorView: View {
     @State private var preparingTextColor = false
     @State private var blockquoteColorRequest: BlockquoteColorRequest?
     @State private var calloutColorRequest: CalloutColorRequest?
+    @State private var plainCalloutInsertion: (documentID: String, token: String)?
+    @State private var preparingPlainCalloutInsertion = false
+    @State private var insertingPlainCallout = false
     @State private var propertyEditorRequest: InlinePropertyEditorRequest?
     @State private var collectionEditorRequest: CollectionEditorRequest?
     @State private var collectionEntryIDs = Set<String>()
@@ -170,6 +177,7 @@ struct DocumentEditorView: View {
     @State private var pageDeletionTarget: DocumentRecord?
     @State private var blockDeletionRequest: BlockDeletionRequest?
     @State private var placeholderMode = false
+    @State private var templateMode = false
     @State private var canUseTemplateControls = false
     @State private var editorBanner: EditorStatusBanner?
 
@@ -182,6 +190,7 @@ struct DocumentEditorView: View {
         _collectionRegions = State(initialValue: model.session.collectionRegions)
         _presentationReady = State(initialValue: model.session.isPresentationReady)
         _placeholderMode = State(initialValue: model.session.placeholderMode)
+        _templateMode = State(initialValue: model.session.templateEditing)
         _canUseTemplateControls = State(initialValue: model.session.isReady && !model.session.isLoadingDocument)
     }
 
@@ -194,6 +203,7 @@ struct DocumentEditorView: View {
             }
         }
         .onAppear {
+            environment.documentPreviews.setEditorActive(model.documentID, active: true)
             model.session.setApplicationColorScheme(colorScheme)
             syncLocalState()
             model.prepareForSpaceChange = {
@@ -215,13 +225,14 @@ struct DocumentEditorView: View {
             handleCollectionRequest(request)
         }
         .onReceive(model.session.$placeholderMode) { placeholderMode = $0 }
+        .onReceive(model.session.$templateEditing) { templateMode = $0 }
         .onReceive(model.$taskFeedback) { message in
             guard let message, environment.selectedDocumentID == model.documentID else { return }
             showEditorBanner(message, icon: "clockfill")
             model.taskFeedback = nil
         }
         .onChange(of: placeholderMode) { _, active in
-            guard model.document?.templateID != nil, environment.selectedDocumentID == model.documentID else { return }
+            guard templateMode, environment.selectedDocumentID == model.documentID else { return }
             showEditorBanner(active ? "Placeholder Mode On" : "Placeholder Mode Off", icon: "linedpages")
         }
         .onReceive(model.session.$isReady) { ready in
@@ -422,6 +433,7 @@ struct DocumentEditorView: View {
             environment.select(child)
         }
         .onDisappear {
+            environment.documentPreviews.setEditorActive(model.documentID, active: false)
             #if os(iOS)
             blockSelectionScrollDriver.stop()
             #endif
@@ -467,6 +479,146 @@ struct DocumentEditorView: View {
 
     private var editorAppearancePresentations: some View {
         editorPrimaryPresentations
+        .sheet(isPresented: $showTemplateGallery) {
+            TemplateGalleryView(
+                categories: galleryCategories,
+                publicTemplates: galleryTemplates,
+                publicDocuments: [:],
+                usePersonalTemplate: { template in
+                    showTemplateGallery = false
+                    _ = environment.createDocument(title: template.title, from: template)
+                },
+                usePublicTemplate: { template in
+                    Task {
+                        do {
+                            let package = try await environment.templateGalleryCloud.fetchPackage(
+                                templateID: template.id, expectedRevision: template.revision)
+                            let importer = TemplateGalleryImporter(
+                                database: environment.database,
+                                attachmentStore: environment.attachmentStore)
+                            _ = try importer.importPackage(package, intoSpace: model.document?.spaceID ?? environment.selectedSpaceID)
+                            environment.refresh()
+                            showTemplateGallery = false
+                        } catch {
+                            galleryImportError = error.localizedDescription
+                        }
+                    }
+                },
+                loadPublicPackage: { template in
+                    try await environment.templateGalleryCloud.fetchPackage(
+                        templateID: template.id, expectedRevision: template.revision)
+                },
+                close: { showTemplateGallery = false },
+                allowsManagement: model.document?.templateID != nil,
+                isPublisher: environment.canPublishTemplates,
+                publish: { template in
+                    let catalog = try await environment.publishGalleryTemplate(template)
+                    galleryCategories = catalog.categories
+                    galleryTemplates = catalog.templates
+                },
+                update: { template, title, description, categoryID in
+                    Task {
+                        do {
+                            var package = try await environment.templateGalleryCloud.fetchPackage(templateID: template.id)
+                            package.title = title
+                            package.document.title = title
+                            if let rootIndex = package.nativeSnapshot?.documents.firstIndex(where: {
+                                $0.id == package.nativeSnapshot?.rootDocumentID
+                            }) {
+                                package.nativeSnapshot?.documents[rootIndex].title = title
+                            }
+                            package.categoryID = categoryID
+                            package.revision = template.revision + 1
+                            try await environment.templateGalleryCloud.saveTemplate(package,
+                                description: description, sortOrder: template.sortOrder, updating: true)
+                            galleryTemplates = try await environment.templateGalleryCloud.fetchTemplates()
+                        } catch { galleryImportError = error.localizedDescription }
+                    }
+                },
+                replaceTemplate: { template in
+                    Task {
+                        do {
+                            guard let identity = try KeychainAccountSessionStore().currentIdentity() else {
+                                throw PublishingFailure.authenticationRequired
+                            }
+                            let publisher = TemplateGalleryPublisher(
+                                database: environment.database, attachmentStore: environment.attachmentStore)
+                            let package = try publisher.prepare(documentID: model.documentID,
+                                categoryID: template.categoryID, title: template.title, owner: identity,
+                                galleryTemplateID: template.id, revision: template.revision + 1)
+                            try await environment.templateGalleryCloud.saveTemplate(package,
+                                description: template.templateDescription, sortOrder: template.sortOrder, updating: true)
+                            galleryTemplates = try await environment.templateGalleryCloud.fetchTemplates()
+                        } catch { galleryImportError = error.localizedDescription }
+                    }
+                },
+                removeTemplate: { template in
+                    Task {
+                        do {
+                            try await environment.templateGalleryCloud.deleteTemplate(id: template.id)
+                            galleryTemplates = try await environment.templateGalleryCloud.fetchTemplates()
+                        } catch { galleryImportError = error.localizedDescription }
+                    }
+                },
+                createCategory: { title in
+                    Task {
+                        do {
+                            try await environment.templateGalleryCloud.saveCategory(title: title)
+                            let fresh = try await environment.templateGalleryCloud.fetchCategories()
+                            try? environment.templateGallery.replaceCatalog(categories: fresh, templates: galleryTemplates)
+                            galleryCategories = fresh
+                        } catch { galleryImportError = error.localizedDescription }
+                    }
+                },
+                renameCategory: { category, title in
+                    Task {
+                        do {
+                            try await environment.templateGalleryCloud.saveCategory(
+                                id: category.id, title: title, sortOrder: category.sortOrder)
+                            let fresh = try await environment.templateGalleryCloud.fetchCategories()
+                            try? environment.templateGallery.replaceCatalog(categories: fresh, templates: galleryTemplates)
+                            galleryCategories = fresh
+                        } catch { galleryImportError = error.localizedDescription }
+                    }
+                },
+                removeCategory: { category in
+                    Task {
+                        do {
+                            try await environment.templateGalleryCloud.deleteCategory(id: category.id)
+                            let fresh = try await environment.templateGalleryCloud.fetchCategories()
+                            try? environment.templateGallery.replaceCatalog(categories: fresh, templates: galleryTemplates)
+                            galleryCategories = fresh
+                        } catch { galleryImportError = error.localizedDescription }
+                    }
+                }
+            )
+            .alert("Template Import Failed", isPresented: Binding(
+                get: { galleryImportError != nil },
+                set: { if !$0 { galleryImportError = nil } }
+            )) {
+                Button("OK") { galleryImportError = nil }
+            } message: {
+                Text(galleryImportError ?? "Unable to import this template.")
+            }
+            .task {
+                // Show the persisted local catalog immediately so categories never
+                // vanish while a refresh is in flight or if the network fails.
+                if let cached = try? environment.templateGallery.categories(), !cached.isEmpty { galleryCategories = cached }
+                if let cachedTemplates = try? environment.templateGallery.templates(), !cachedTemplates.isEmpty { galleryTemplates = cachedTemplates }
+                do {
+                    async let categories = environment.templateGalleryCloud.fetchCategories()
+                    async let templates = environment.templateGalleryCloud.fetchTemplates()
+                    let fetchedCategories = try await categories
+                    let fetchedTemplates = try await templates
+                    // A cache-write failure must not discard the data we just fetched.
+                    try? environment.templateGallery.replaceCatalog(categories: fetchedCategories, templates: fetchedTemplates)
+                    galleryCategories = fetchedCategories
+                    galleryTemplates = fetchedTemplates
+                } catch {
+                    // Keep the cached catalog that is already on screen.
+                }
+            }
+        }
         .sheet(isPresented: $showAppearance) {
             DocumentStyleSheet(
                 documentID: model.documentID,
@@ -505,7 +657,12 @@ struct DocumentEditorView: View {
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
         }
-        .sheet(item: $calloutColorRequest) { request in
+        .sheet(item: $calloutColorRequest, onDismiss: {
+            if let insertion = plainCalloutInsertion {
+                model.session.endPlainCalloutInsertion(token: insertion.token)
+                plainCalloutInsertion = nil
+            }
+        }) { request in
             NavigationStack {
                 VellixBlockColorControls(title: "Callout Color", selection: $selectedCalloutColor,
                     onColorChange: { color in
@@ -516,15 +673,31 @@ struct DocumentEditorView: View {
                     })
                     .frame(maxHeight: .infinity, alignment: .top)
                     .navigationTitle("Callout Color")
-                    .pennedSheet(title: "Callout Color", close: { calloutColorRequest = nil }) {
+                    .pennedSheet(title: "Callout Color", close: {
+                        if !insertingPlainCallout { calloutColorRequest = nil }
+                    }) {
                         if request.blockID == nil {
                             Button("Add") {
-                                model.session.insertPlainCallout(color: selectedCalloutColor.vellixHexString(fallback: "#ffffff"))
-                                calloutColorRequest = nil
+                                guard let insertion = plainCalloutInsertion,
+                                      insertion.documentID == model.documentID,
+                                      environment.selectedDocumentID == insertion.documentID,
+                                      !insertingPlainCallout else { return }
+                                insertingPlainCallout = true
+                                Task {
+                                    defer { insertingPlainCallout = false }
+                                    do {
+                                        try await model.session.insertPlainCallout(
+                                            color: selectedCalloutColor.vellixHexString(fallback: "#ffffff"),
+                                            insertionToken: insertion.token)
+                                        calloutColorRequest = nil
+                                    } catch { model.errorMessage = error.localizedDescription }
+                                }
                             }
+                            .disabled(insertingPlainCallout)
                         }
                     }
             }.presentationDetents([.medium]).presentationDragIndicator(.visible)
+                .interactiveDismissDisabled(insertingPlainCallout)
         }
     }
 
@@ -533,7 +706,7 @@ struct DocumentEditorView: View {
         .modifier(InlineTextColorPresentation(request: $textColorRequest, session: model.session))
         .sheet(item: $propertyEditorRequest, onDismiss: resumeEditingAfterProperty) { request in
             InlinePropertyEditorSheet(property: request.property,
-                editingGuidance: model.document?.templateID != nil && placeholderMode, onSave: { property in
+                editingGuidance: templateMode && placeholderMode, onSave: { property in
                 model.session.updateInlineProperty(blockID: request.blockID, property: property)
             }, onDelete: {
                 model.session.deleteInlineProperty(blockID: request.blockID)
@@ -662,6 +835,16 @@ struct DocumentEditorView: View {
                     pageDeletionTarget = nil
                     model.editPageCard(page)
                 }
+                Button("Indent") {
+                    guard !isEditorLocked else { return }
+                    model.session.indentPageReference(documentID: page.id)
+                    pageDeletionTarget = nil
+                }
+                Button("Outdent") {
+                    guard !isEditorLocked else { return }
+                    model.session.indentPageReference(documentID: page.id, outdent: true)
+                    pageDeletionTarget = nil
+                }
                 Button("Delete Page", role: .destructive) {
                     guard !isEditorLocked else { return }
                     model.trashChildPage(id: page.id)
@@ -671,7 +854,7 @@ struct DocumentEditorView: View {
             }
             Button("Cancel", role: .cancel) { pageDeletionTarget = nil }
         } message: {
-            Text("This page and its nested pages will move to Trash. You can restore them later.")
+            Text("Deleting moves this page and its nested pages to Trash. You can restore them later.")
         }
         .alert("Convert this text to placeholder guidance?", isPresented: Binding<Bool>(
             get: { model.placeholderConversionToken != nil },
@@ -837,15 +1020,21 @@ struct DocumentEditorView: View {
 
     @ViewBuilder private func documentBlockControls(isCompact: Bool) -> some View {
         if selectionMode != .off && !isEditorLocked {
-            SelectionActionPill(
-                session: model.session,
-                copyAction: { model.session.copySelectedBlocks() },
-                duplicateAction: { model.session.duplicateSelectedBlocks() },
-                groupAction: { model.groupSelectedBlocksIntoChildPage() },
-                deleteAction: { model.session.deleteSelectedBlocks() },
-                isCompact: isCompact
-            )
-            .padding(.horizontal, isCompact ? 28 : 34)
+            VStack(spacing: isCompact ? 8 : 10) {
+                #if os(iOS)
+                keyboardFormattingToolbar(showsInsertAndDismiss: false, formatsSelectedBlocks: true)
+                    .padding(.horizontal, 8)
+                #endif
+                SelectionActionPill(
+                    session: model.session,
+                    copyAction: { model.session.copySelectedBlocks() },
+                    duplicateAction: { model.session.duplicateSelectedBlocks() },
+                    groupAction: { model.groupSelectedBlocksIntoChildPage() },
+                    deleteAction: { model.session.deleteSelectedBlocks() },
+                    isCompact: isCompact
+                )
+                .padding(.horizontal, isCompact ? 28 : 34)
+            }
             .padding(.bottom, isCompact ? 18 : 26)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
@@ -854,6 +1043,7 @@ struct DocumentEditorView: View {
             EditorFloatingToolbar(
                 session: model.session,
                 appearanceAction: { showAppearance = true },
+                templateGalleryAction: { showTemplateGallery = true },
                 isCompact: isCompact
             )
             .padding(.horizontal, isCompact ? 26 : 34)
@@ -865,7 +1055,7 @@ struct DocumentEditorView: View {
     #if os(iOS)
     @ViewBuilder private var documentKeyboardToolbar: some View {
         if isEditingDocument && isKeyboardVisible && selectionMode == .off && !isEditorLocked {
-            keyboardFormattingToolbar
+            keyboardFormattingToolbar()
                 .padding(.horizontal, 8)
                 .padding(.bottom, EditorKeyboardFormattingToolbar.bottomPadding)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -895,6 +1085,8 @@ struct DocumentEditorView: View {
             isSelectionMode: selectionMode != .off && !isEditorLocked,
             isEditorLocked: isEditorLocked,
             placeholderMode: placeholderMode,
+            templateMode: templateMode,
+            canUseTemplateControls: canUseTemplateControls,
             canSaveTemplate: canUseTemplateControls && !model.isSavingTemplate
                 && (model.templateNeedsSave || hasTitleChanges),
             isSavingTemplate: model.isSavingTemplate,
@@ -942,16 +1134,11 @@ struct DocumentEditorView: View {
                     }
                 }
             }
-        } saveAsTemplateAction: {
-            Task {
-                do { try await model.captureAndSave(); environment.saveAsTemplate(model.document ?? document) }
-                catch { model.errorMessage = error.localizedDescription }
-            }
         }
     }
 
     #if os(iOS)
-    private var keyboardFormattingToolbar: some View {
+    private func keyboardFormattingToolbar(showsInsertAndDismiss: Bool = true, formatsSelectedBlocks: Bool = false) -> some View {
         let taskAction: (() -> Void)? = model.taskContext == nil ? nil : {
             model.openTaskScheduling()
             dismissKeyboard()
@@ -959,24 +1146,36 @@ struct DocumentEditorView: View {
         let templateComponentAction: ((TemplateComponentKind) -> Void)? = model.document?.templateID == nil ? nil : { kind in
             model.templateComponentRequest = TemplateComponentRequest(definition: TemplateComponentDefinition(kind: kind))
         }
+        // In block-selection mode the buttons must act on the selected blocks (cards
+        // included), not the text caret, so they route through formatSelectedBlocks.
+        let format: (String, String?) -> Void = formatsSelectedBlocks
+            ? { model.session.formatSelectedBlocks(action: $0, value: $1) }
+            : { model.session.formatCurrentSelection(action: $0, value: $1) }
+        // List and checklist are block-type conversions, a different command than the
+        // inline/indent formatting above; route them to the selected blocks too.
+        let list: (String, String) -> () -> Void = { caret, blockType in
+            formatsSelectedBlocks
+                ? { model.session.setSelectedBlockType(blockType) }
+                : { model.session.formatCurrentSelection(action: caret) }
+        }
 
         return EditorKeyboardFormattingToolbar(
             session: model.session,
             textColorAction: { presentTextColorEditor() },
-            boldAction: { model.session.formatCurrentSelection(action: "bold") },
-            italicAction: { model.session.formatCurrentSelection(action: "italic") },
-            underlineAction: { model.session.formatCurrentSelection(action: "underline") },
-            strikeAction: { model.session.formatCurrentSelection(action: "strike") },
-            codeAction: { model.session.formatCurrentSelection(action: "code") },
-            alignLeftAction: { model.session.formatCurrentSelection(action: "align", value: "left") },
-            alignCenterAction: { model.session.formatCurrentSelection(action: "align", value: "center") },
-            alignRightAction: { model.session.formatCurrentSelection(action: "align", value: "right") },
-            outdentAction: { model.session.formatCurrentSelection(action: "outdent") },
-            indentAction: { model.session.formatCurrentSelection(action: "indent") },
-            checklistAction: { model.session.formatCurrentSelection(action: "checkList") },
+            boldAction: { format("bold", nil) },
+            italicAction: { format("italic", nil) },
+            underlineAction: { format("underline", nil) },
+            strikeAction: { format("strike", nil) },
+            codeAction: { format("code", nil) },
+            alignLeftAction: { format("align", "left") },
+            alignCenterAction: { format("align", "center") },
+            alignRightAction: { format("align", "right") },
+            outdentAction: { format("outdent", nil) },
+            indentAction: { format("indent", nil) },
+            checklistAction: list("checkList", "checkListItem"),
             taskAction: taskAction,
-            bulletListAction: { model.session.formatCurrentSelection(action: "bulletList") },
-            numberListAction: { model.session.formatCurrentSelection(action: "numberList") },
+            bulletListAction: list("bulletList", "bulletListItem"),
+            numberListAction: list("numberList", "numberedListItem"),
             iconAction: { showIconPicker = true },
             fileAction: { presentFileImporter() },
             insertBlockAction: { model.session.insertBlock($0) },
@@ -985,7 +1184,8 @@ struct DocumentEditorView: View {
             calloutAction: { presentNewCalloutPicker() },
             plainCalloutAction: { presentNewPlainCalloutPicker() },
             templateComponentAction: templateComponentAction,
-            dismissAction: { dismissKeyboard() }
+            dismissAction: { dismissKeyboard() },
+            showsInsertAndDismiss: showsInsertAndDismiss
         )
     }
 
@@ -1040,7 +1240,7 @@ struct DocumentEditorView: View {
     }
 
     private func titleInput(_ prompt: String, text: Binding<String>, appearance: DocumentAppearance, isCompact: Bool) -> some View {
-        TextField(prompt, text: text.singleLinePageTitle, axis: .vertical)
+        TextField(prompt, text: text.singleLinePageTitle(onReturn: { isTitleFocused = false }), axis: .vertical)
             .focused($isTitleFocused)
             .font(appearance.fontStyle.font(size: 24, weight: .black))
             .foregroundStyle(Color(vellixHex: appearance.textColorHex))
@@ -1049,7 +1249,8 @@ struct DocumentEditorView: View {
             .layoutPriority(1)
             .submitLabel(.done)
             .frame(maxWidth: .infinity, alignment: .leading).allowsHitTesting(!isEditorLocked)
-            .onSubmit { model.rename(title: titleText); environment.refresh() }
+            .onSubmit { isTitleFocused = false; persistTitle(); environment.refresh() }
+            .onKeyPress(.return) { isTitleFocused = false; persistTitle(); return .handled }
     }
 
     private func plainDocument(
@@ -1622,20 +1823,22 @@ struct DocumentEditorView: View {
     }
 
     private func coverView(document: DocumentRecord, appearance: DocumentAppearance, isCompact: Bool) -> some View {
-        ZStack {
-            if let localCover {
-                StoredAttachmentImage(relativePath: localCover, contentMode: .fill)
-            } else {
-                ThemeCoverArt(theme: appearance.resolvedCoverTheme)
+        // The frame owns the cover's size; portrait artwork must not size the page.
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+            .overlay {
+                if let localCover {
+                    StoredAttachmentImage(relativePath: localCover, contentMode: .fill)
+                } else {
+                    ThemeCoverArt(theme: appearance.resolvedCoverTheme)
+                }
             }
-        }
-        .frame(maxWidth: .infinity)
-        .aspectRatio(1.78, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: isCompact ? 8 : 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: isCompact ? 8 : 10, style: .continuous)
-                .stroke(VellixSurface.controlInk.opacity(0.08), lineWidth: 1)
-        }
+            .clipShape(RoundedRectangle(cornerRadius: isCompact ? 8 : 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: isCompact ? 8 : 10, style: .continuous)
+                    .stroke(VellixSurface.controlInk.opacity(0.08), lineWidth: 1)
+            }
     }
 
     private func setSelectionMode(_ mode: EditorSelectionMode) {
@@ -1729,8 +1932,24 @@ struct DocumentEditorView: View {
     }
 
     private func presentNewPlainCalloutPicker() {
-        selectedCalloutColor = .white
-        calloutColorRequest = CalloutColorRequest(blockID: nil, color: "#ffffff")
+        guard !preparingPlainCalloutInsertion, calloutColorRequest == nil,
+              !isEditorLocked, selectionMode == .off else { return }
+        let documentID = model.documentID
+        preparingPlainCalloutInsertion = true
+        Task {
+            defer { preparingPlainCalloutInsertion = false }
+            do {
+                let token = try await model.session.preparePlainCalloutInsertion()
+                guard model.documentID == documentID, environment.selectedDocumentID == documentID,
+                      !isEditorLocked, selectionMode == .off else {
+                    model.session.endPlainCalloutInsertion(token: token)
+                    return
+                }
+                plainCalloutInsertion = (documentID, token)
+                selectedCalloutColor = .white
+                calloutColorRequest = CalloutColorRequest(blockID: nil, color: "#ffffff")
+            } catch { model.errorMessage = error.localizedDescription }
+        }
     }
 
     private func persistTitle() {
@@ -1817,6 +2036,8 @@ private struct EditorTopControls: View {
     var isSelectionMode: Bool
     var isEditorLocked: Bool
     var placeholderMode: Bool
+    var templateMode: Bool
+    var canUseTemplateControls: Bool
     var canSaveTemplate: Bool
     var isSavingTemplate: Bool
     var sidebarAction: (() -> Void)?
@@ -1828,7 +2049,6 @@ private struct EditorTopControls: View {
     var placeholderModeAction: () -> Void
     var placeholderAction: (String) -> Void
     var saveTemplateAction: () -> Void
-    var saveAsTemplateAction: () -> Void
 
     var body: some View {
         let controlSize: CGFloat = isCompact ? 46 : 68
@@ -1899,9 +2119,6 @@ private struct EditorTopControls: View {
                     }
                     Menu {
                         Button("Version History", action: moreAction)
-                        if document.templateID == nil {
-                            Button("Save as Template", action: saveAsTemplateAction)
-                        }
                     } label: {
                         editorAssetIcon("dotswavy", padding: isCompact ? 2 : 4)
                     }
@@ -1920,20 +2137,22 @@ private struct EditorTopControls: View {
     }
 
     @ViewBuilder private var templateControls: some View {
-        if document.templateID != nil {
+        if document.templateID != nil && templateMode {
             Button(action: placeholderModeAction) {
                 editorAssetIcon("linedpages", padding: isCompact ? 2 : 4)
                     .foregroundStyle(placeholderMode ? VellixSurface.controlInk : Color.gray)
             }
-            .disabled(isEditorLocked)
+            .disabled(isEditorLocked || !canUseTemplateControls)
             .accessibilityLabel("Placeholder Mode")
             .accessibilityValue(placeholderMode ? "On" : "Off")
             .help("Placeholder Mode")
             .contextMenu {
-                Button("Convert Text to Guidance") { placeholderAction("convert") }
-                Button("Convert Guidance to Content") { placeholderAction("ordinary") }
-                Button("Clear Guidance") { placeholderAction("clear") }
+                Button("Convert Text to Guidance") { placeholderAction("convert") }.disabled(!placeholderMode)
+                Button("Convert Guidance to Content") { placeholderAction("ordinary") }.disabled(!placeholderMode)
+                Button("Clear Guidance") { placeholderAction("clear") }.disabled(!placeholderMode)
             }
+        }
+        if document.templateID != nil {
             Button(action: saveTemplateAction) {
                 editorAssetIcon("checkwavy", padding: isCompact ? 2 : 4)
                     .foregroundStyle(canSaveTemplate ? VellixSurface.controlInk : Color.gray)
@@ -2537,6 +2756,7 @@ private struct EditorFloatingToolbar: View {
     @State private var canPaste = false
     @State private var showsHistoryBar = false
     var appearanceAction: () -> Void
+    var templateGalleryAction: () -> Void
     var isCompact: Bool
 
     private var editorAvailable: Bool { session.isReady && !session.isLoadingDocument && session.isPresentationReady }
@@ -2551,6 +2771,7 @@ private struct EditorFloatingToolbar: View {
                 HStack {
                     HStack(spacing: isCompact ? 16 : 26) {
                         assetToolbarButton("paintbrush", title: "Document Appearance", action: appearanceAction)
+                        assetToolbarButton("hashtagwavy", title: "Templates", action: templateGalleryAction)
                         assetToolbarButton("undo", title: "Undo, Paste and Redo", enabled: editorAvailable) {
                             refreshPasteAvailability()
                             showsHistoryBar = true
@@ -2688,6 +2909,8 @@ private struct EditorKeyboardFormattingToolbar: View {
     var plainCalloutAction: () -> Void
     var templateComponentAction: ((TemplateComponentKind) -> Void)?
     var dismissAction: () -> Void
+    // Insert and Dismiss-keyboard controls do not apply while blocks are selected.
+    var showsInsertAndDismiss: Bool = true
 
     var body: some View {
         HStack(spacing: 0) {
@@ -2719,24 +2942,26 @@ private struct EditorKeyboardFormattingToolbar: View {
                 .padding(.trailing, 2)
             }
 
-            divider
-            if let taskAction {
-                toolbarButton("Checklist Task Scheduling", assetName: "clockfill", action: taskAction)
+            if showsInsertAndDismiss {
                 divider
+                if let taskAction {
+                    toolbarButton("Checklist Task Scheduling", assetName: "clockfill", action: taskAction)
+                    divider
+                }
+                EditorInsertMenu(
+                    iconAction: iconAction,
+                    fileAction: fileAction,
+                    insertBlockAction: insertBlockAction,
+                    insertDividerAction: insertDividerAction,
+                    pageBreakAction: pageBreakAction,
+                    calloutAction: calloutAction,
+                    plainCalloutAction: plainCalloutAction,
+                    templateComponentAction: templateComponentAction
+                )
+                divider
+                toolbarButton("Dismiss Keyboard", assetName: "chevdown", action: dismissAction)
+                    .padding(.trailing, 4)
             }
-            EditorInsertMenu(
-                iconAction: iconAction,
-                fileAction: fileAction,
-                insertBlockAction: insertBlockAction,
-                insertDividerAction: insertDividerAction,
-                pageBreakAction: pageBreakAction,
-                calloutAction: calloutAction,
-                plainCalloutAction: plainCalloutAction,
-                templateComponentAction: templateComponentAction
-            )
-            divider
-            toolbarButton("Dismiss Keyboard", assetName: "chevdown", action: dismissAction)
-                .padding(.trailing, 4)
         }
         .frame(height: Self.height)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))

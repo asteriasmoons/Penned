@@ -206,6 +206,18 @@ struct DocumentLaunchTests {
         #expect(!TipTapContentAnalyzer.hasCallouts(in: document.tipTapJSON))
     }
 
+    @Test func fourDotDividerDetectionIncludesNestedAndLegacyStylesOnly() throws {
+        for style in ["fourCircles", "fourDots", "dottedCircles", "thinLine", "thickLine"] {
+            let json = try TipTapContentAnalyzer.makeDocumentJSON(content: [[
+                "type": "plainCallout", "content": [[
+                    "type": "divider", "attrs": ["id": "divider", "style": style]
+                ]]
+            ]])
+            #expect(TipTapContentAnalyzer.hasFourDotDivider(in: json) == ["fourCircles", "fourDots"].contains(style))
+        }
+        #expect(!TipTapContentAnalyzer.hasFourDotDivider(in: DocumentRecord(title: "Plain").tipTapJSON))
+    }
+
     @Test func inlineRendererRevisionInvalidatesAffectedImagesButKeepsOtherPreviewKeys() throws {
         func oldKey(_ document: DocumentRecord) throws -> String {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]

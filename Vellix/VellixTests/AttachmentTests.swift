@@ -7,6 +7,30 @@ import GRDB
 
 @MainActor
 struct AttachmentTests {
+    @Test func clipperCatalogueImagesReuseAndInvalidateInputs() async throws {
+        let worker = WebClipperCatalogueImages(), data = try png()
+        let requests = ["space": ClipperThumbnailRequest(data: data, size: 32)]
+        let first = try #require(await worker.render(ownerID: "account-a", names: ["sf:folder"], requests: requests, displayScale: 2))
+        let thumbnail = try #require(first.thumbnails["space"])
+        let encoded = try #require(Data(base64Encoded: String(thumbnail.dropFirst("data:image/png;base64,".count))))
+        let source = try #require(CGImageSourceCreateWithData(encoded as CFData, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        #expect(image.width == 64 && image.height == 64)
+        #expect(first.icons["sf:folder"]?.hasPrefix("data:image/png;base64,") == true)
+        let repeated = try #require(await worker.render(ownerID: "account-a", names: ["sf:folder"], requests: requests, displayScale: 2))
+        #expect(repeated.thumbnails == first.thumbnails && repeated.icons == first.icons)
+        let changed = try #require(await worker.render(ownerID: "account-a", names: [],
+            requests: ["space": ClipperThumbnailRequest(data: Data([0]), size: 32)], displayScale: 2))
+        #expect(changed.thumbnails.isEmpty && changed.icons.isEmpty)
+        await worker.resetAccount()
+        let switched = try #require(await worker.render(ownerID: "account-b", names: [], requests: requests, displayScale: 1))
+        #expect(switched.thumbnails["space"] != thumbnail)
+        let cancelled = Task { await worker.render(ownerID: "account-b", names: [], requests: [:], displayScale: 1) }
+        cancelled.cancel()
+        let result = await cancelled.value
+        #expect(result?.icons == nil && result?.thumbnails == nil)
+    }
+
     private func png() throws -> Data {
         let context = try #require(CGContext(data: nil, width: 40, height: 10, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))

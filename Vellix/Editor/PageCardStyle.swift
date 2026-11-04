@@ -67,11 +67,20 @@ struct PageCardStyle: Codable, Equatable {
         (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
+    private static let decodeCache: NSCache<NSString, CardStyleBox> = {
+        let cache = NSCache<NSString, CardStyleBox>(); cache.countLimit = 512; return cache
+    }()
     static func decode(_ json: String?) -> PageCardStyle? {
-        guard let data = json?.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(Self.self, from: data)
+        guard let json, let data = json.data(using: .utf8) else { return nil }
+        let key = json as NSString
+        if let cached = decodeCache.object(forKey: key) { return cached.style }
+        guard let style = try? JSONDecoder().decode(Self.self, from: data) else { return nil }
+        decodeCache.setObject(CardStyleBox(style), forKey: key)
+        return style
     }
 }
+
+private final class CardStyleBox { let style: PageCardStyle; init(_ style: PageCardStyle) { self.style = style } }
 
 struct PageCardEditorRequest: Identifiable {
     var blockID: String?

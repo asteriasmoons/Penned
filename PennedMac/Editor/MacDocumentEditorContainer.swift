@@ -12,6 +12,8 @@ struct MacDocumentEditorContainer: View {
     @State private var locked = false
     @State private var title = ""
     @State private var publishingDocument: DocumentRecord?
+    @State private var templateMode = false
+    @State private var placeholderMode = false
     @FocusState private var titleFocused: Bool
     private var active: Bool { workspace.activeTab.location.documentID == model.documentID }
     var body: some View {
@@ -47,6 +49,8 @@ struct MacDocumentEditorContainer: View {
         .onChange(of: colorScheme) { _, value in model.session.setApplicationColorScheme(value) }
         .onChange(of: titleFocused) { _, focused in if !focused { persistTitle() } }
         .onReceive(model.$document) { document in if !titleFocused, let document { title = document.title } }
+        .onReceive(model.session.$templateEditing) { templateMode = $0 }
+        .onReceive(model.session.$placeholderMode) { placeholderMode = $0 }
         .onReceive(NotificationCenter.default.publisher(for: .vellixTasksChanged).receive(on: RunLoop.main)) { _ in model.refreshTaskHistoryPage() }
         .onReceive(model.session.$isReady) { ready in if ready && active { focusEditor() } }
         .onReceive(model.$nestedPageToOpen) { document in
@@ -63,7 +67,11 @@ struct MacDocumentEditorContainer: View {
             Spacer()
             if model.document?.templateID != nil {
                 Button("Save Template") { workspace.perform { _ = try await model.saveTemplateEdits() } }.disabled(!model.templateNeedsSave)
+            }
+            if model.document?.templateID != nil && templateMode {
                 MacIconButton("Toggle Placeholder Editing", icon: "selectsparkle") { model.session.togglePlaceholderMode() }
+                    .foregroundStyle(placeholderMode ? Color.accentColor : Color.secondary)
+                    .disabled(locked || !model.session.isReady || model.session.isLoadingDocument)
             }
             MacEditorSaveStatus(session: model.session)
             MacIconButton(locked ? "Unlock Editor" : "Lock Editor", icon: locked ? "eyeslash" : "eye") { locked.toggle() }
@@ -136,10 +144,13 @@ private struct MacDocumentSurface: View {
                                     TaskHistoryPageHeader(task: task, appearance: appearance, title: $title,
                                         saveTitle: { model.rename(title: $0) }, titleFocused: titleFocused, titleSize: 24, locked: locked)
                                 } else {
-                                TextField("Untitled", text: $title, axis: .vertical).textFieldStyle(.plain)
+                                TextField("Untitled", text: $title.singleLinePageTitle(onReturn: { titleFocused.wrappedValue = false }), axis: .vertical).textFieldStyle(.plain)
                                     .font(appearance.fontStyle.font(size: 24, weight: .black))
                                     .foregroundStyle(Color(vellixHex: appearance.textColorHex)).focused(titleFocused)
-                                    .onSubmit { model.rename(title: title) }.disabled(locked)
+                                    .lineLimit(nil).fixedSize(horizontal: false, vertical: true).layoutPriority(1)
+                                    .onSubmit { titleFocused.wrappedValue = false; model.rename(title: title) }
+                                    .onKeyPress(.return) { titleFocused.wrappedValue = false; model.rename(title: title); return .handled }
+                                    .disabled(locked)
                                 }
                                 MacIconButton("Document Icon", icon: document.icon ?? "linedpages") { workspace.showIconPicker = true }
                                     .foregroundStyle(Color(vellixHex: appearance.textColorHex))

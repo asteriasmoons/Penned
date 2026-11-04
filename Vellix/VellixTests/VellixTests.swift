@@ -801,6 +801,39 @@ struct VellixTests {
         #expect(!model.templateNeedsSave)
         let saved = try await model.saveTemplateEdits()
         #expect(!saved)
+        #expect(!model.session.templateEditing)
+        model.session.placeholderAction("convert")
+        #expect(!model.session.placeholderMode)
+    }
+
+    @Test func legacyLinkedTemplateEditingCreatesAnIndependentAuthoringTree() throws {
+        let environment = try makeEnvironment()
+        let json = try TipTapContentAnalyzer.makeDocumentJSON(content: [["type": "paragraph",
+            "attrs": ["id": "prompt", "placeholderEnabled": true,
+                "placeholderGuidance": [["type": "text", "text": "Answer here", "marks": [["type": "italic"]]]]], "content": []]])
+        let source = try environment.documents.create(DocumentDraft(title: "Original", tipTapJSON: json))
+        let child = try environment.documents.create(DocumentDraft(title: "Nested", parentDocumentID: source.id, tipTapJSON: json))
+        let original = try environment.documents.saveEditorJSON(id: source.id,
+            canonicalJSON: TipTapContentAnalyzer.appendingPageReferences(to: source.tipTapJSON, documentIDs: [child.id]))
+        let legacy = TemplateRecord(id: TemplateRepository.documentTemplateID(source.id), title: "Legacy Template",
+            templateDescription: "", tipTapJSON: original.tipTapJSON, category: "Unsorted", isBuiltIn: false,
+            rootDocumentID: source.id, spaceID: source.spaceID)
+        try environment.database.write { try legacy.insert($0) }
+        let editable = try environment.documentForTemplateEditing(legacy)
+        #expect(editable.id != source.id && editable.templateID == legacy.id)
+        #expect(environment.editorCache.prepare(editable).session.templateEditing)
+        #expect(try environment.documents.requireDocument(id: source.id) == original)
+        let nested = try #require(environment.documents.children(of: editable.id).first)
+        #expect(nested.id != child.id && nested.templateID == legacy.id)
+        #expect(nested.tipTapJSON.contains("Answer here"))
+        #expect(try environment.documents.requireDocument(id: child.id) == child)
+        let copy = try environment.templates.instantiate(id: legacy.id, title: "Filled Copy", spaceID: source.spaceID,
+            folderID: nil, parentID: nil, attachmentStore: environment.attachmentStore)
+        let model = environment.editorCache.prepare(copy)
+        #expect(copy.templateID == nil && copy.templateOriginID == legacy.id)
+        #expect(!model.session.templateEditing && !model.session.placeholderMode)
+        #expect(copy.tipTapJSON.contains("Answer here"))
+        #expect(try environment.documents.children(of: copy.id).allSatisfy { $0.templateID == nil })
     }
 
     @Test func templateCreatesValidDocument() throws {
@@ -808,6 +841,7 @@ struct VellixTests {
         let source = try environment.documents.create(DocumentDraft(title: "My Plan",
             tipTapJSON: TipTapContentAnalyzer.starterDocument(title: "My Plan", lines: ["Overview", "Milestones"])))
         let template = try environment.templates.saveUserTemplate(from: source, title: "My Plan Template")
+        #expect(template.category == TemplateRepository.myTemplatesCategory)
         let document = try environment.documents.create(
             DocumentDraft(
                 title: template.title,
@@ -818,6 +852,29 @@ struct VellixTests {
 
         #expect(document.templateOriginID == template.id)
         #expect(document.plainText.contains("Milestones"))
+    }
+
+    @Test func galleryHidesUnsortedFromRegularUsersButRetainsPublisherCategories() {
+        let unsorted = GalleryCategory(id: "staging", title: "  uNsOrTeD  ")
+        let planning = GalleryCategory(id: "planning", title: "Planning")
+        let categories = [unsorted, planning]
+        #expect(TemplateGalleryAuthorization.visibleCategories(categories, isPublisher: false).map(\.id) == [planning.id])
+        #expect(TemplateGalleryAuthorization.visibleCategories(categories, isPublisher: true).map(\.id) == categories.map(\.id))
+        #expect(!TemplateGalleryAuthorization.canShowPublishingControls(appleUserID: nil))
+        #expect(!TemplateGalleryAuthorization.canShowPublishingControls(appleUserID: "not-the-gallery-publisher"))
+    }
+
+    @Test func privateTemplateDefaultsToMyTemplatesAndPublisherDraftCanUseUnsorted() throws {
+        let app = try makeEnvironment()
+        let personal = try app.templates.create(title: "Private Template")
+        let publisherDraft = try app.templates.create(title: "Publisher Draft", category: TemplateRepository.unsortedCategory)
+        let personalID = try #require(personal.templateID)
+        let publisherDraftID = try #require(publisherDraft.templateID)
+        let records = try app.templates.all()
+        #expect(records.first { $0.id == personalID }?.category == TemplateRepository.myTemplatesCategory)
+        #expect(records.first { $0.id == publisherDraftID }?.category == TemplateRepository.unsortedCategory)
+        app.refresh()
+        #expect(Set(app.personalGalleryTemplates().map { $0.document.id }) == [personal.id, publisherDraft.id])
     }
 
     @Test func structuredTemplatesCloneNestedPagesFormattingAndGuidanceIndependently() throws {
@@ -868,6 +925,99 @@ struct VellixTests {
         #expect(try environment.documents.requireDocument(id: first.id).templateOriginID == nil)
         #expect(try environment.documents.requireDocument(id: firstChild.id).plainText == "Actual answer")
         #expect(try environment.documents.requireDocument(id: source.id).folderID == folder.id)
+    }
+
+    @Test func gallerySaveCreatesAnIndependentPersonalTemplateWithPersistentCategoryAndAssets() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = AttachmentStore(rootURL: directory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let app = AppEnvironment(database: try AppDatabase.makeInMemory(), attachmentStore: store)
+        try app.bootstrap()
+        let source = try app.documents.create(DocumentDraft(title: "Gallery Source",
+            tipTapJSON: TipTapContentAnalyzer.starterDocument(title: "", lines: ["Permanent instruction"])))
+        let child = try app.documents.create(DocumentDraft(title: "Nested Page", parentDocumentID: source.id,
+            tipTapJSON: TipTapContentAnalyzer.makeDocumentJSON(content: [[
+                "type": "paragraph", "attrs": ["id": "guidance", "placeholderEnabled": true,
+                    "placeholderGuidance": [["type": "text", "text": "Your answer", "marks": [["type": "italic"]]]]],
+                "content": []
+            ]])))
+        let rootJSON = try TipTapContentAnalyzer.appendingPageReferences(to: source.tipTapJSON, documentIDs: [child.id])
+        let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+        let cover = try app.documentStyles.importImage(png, documentID: source.id)
+        var appearance = DocumentAppearance.defaultForTheme(.lunarClouds)
+        appearance.showsCover = true
+        _ = try app.documents.updateAppearance(id: source.id, cover: cover.relativePath, appearance: appearance)
+        let savedSource = try app.documents.saveEditorJSON(id: source.id, canonicalJSON: rootJSON)
+        let package = try TemplateGalleryPublisher(database: app.database, attachmentStore: store).prepare(
+            documentID: source.id, categoryID: "planning", title: "Saved from Gallery", owner: .apple("gallery-save-test"))
+        let ordinaryIDs = Set(try app.documents.allDocuments().map(\.id))
+        let importer = TemplateGalleryImporter(database: app.database, attachmentStore: store)
+        let spaceID = try #require(source.spaceID)
+        let template = try importer.saveTemplate(package, intoSpace: spaceID, description: "A reusable plan")
+        let rootID = try #require(template.rootDocumentID)
+        let root = try app.documents.requireDocument(id: rootID)
+        let nested = try #require(app.documents.children(of: root.id).first)
+        #expect(template.category == TemplateRepository.myTemplatesCategory)
+        #expect(template.templateDescription == "A reusable plan" && !template.isBuiltIn)
+        #expect(root.title == package.title && root.templateID == template.id && nested.templateID == template.id)
+        #expect(root.id != source.id && nested.id != child.id)
+        #expect(root.appearance == appearance)
+        #expect(root.cover != cover.relativePath)
+        let savedCover = try #require(root.cover)
+        #expect(try Data(contentsOf: store.validatedFileURL(relativePath: savedCover)) == png)
+        #expect(nested.tipTapJSON.contains("Your answer") && nested.tipTapJSON.contains("italic"))
+        #expect(TipTapContentAnalyzer.pageReferenceIDs(in: root.tipTapJSON) == [nested.id])
+        #expect(Set(try app.documents.allDocuments().map(\.id)) == ordinaryIDs)
+        #expect(try app.documents.requireDocument(id: source.id).tipTapJSON == savedSource.tipTapJSON)
+        app.refresh()
+        #expect(app.personalGalleryTemplates().contains { $0.template.id == template.id })
+        #expect(app.personalGalleryTemplates().first { $0.template.id == template.id }?.template.category == TemplateRepository.myTemplatesCategory)
+        #expect(try TemplateRepository(database: app.database).all().first { $0.id == template.id }?.category == TemplateRepository.myTemplatesCategory)
+
+        let copy = try app.templates.instantiate(id: template.id, title: "Use Saved Template", spaceID: source.spaceID,
+            folderID: nil, parentID: nil, attachmentStore: store)
+        #expect(copy.templateID == nil && copy.templateOriginID == template.id)
+        #expect(try app.documents.children(of: copy.id).allSatisfy { $0.templateID == nil })
+        let ordinaryImport = try importer.importPackage(package, intoSpace: source.spaceID)
+        #expect(ordinaryImport.templateID == nil)
+        #expect(try app.documents.children(of: ordinaryImport.id).allSatisfy { $0.templateID == nil })
+        #expect(try app.templates.all().count == 1)
+        let existingDocuments = Set(try app.documents.editorDocuments().map(\.id))
+        var incomplete = package
+        incomplete.nativeSnapshot?.attachmentFiles = [:]
+        var rejected = false
+        do { _ = try importer.saveTemplate(incomplete, intoSpace: spaceID) }
+        catch { rejected = true }
+        #expect(rejected)
+        #expect(try app.templates.all().count == 1)
+        #expect(Set(try app.documents.editorDocuments().map(\.id)) == existingDocuments)
+    }
+
+    @Test func gallerySaveRetainsIndependentCollectionsAndTheirTemplateOwnedEntries() throws {
+        let app = try makeEnvironment()
+        let source = try app.documents.create(DocumentDraft(title: "Collection Template"))
+        let repository = app.collections.repository
+        let collection = try repository.create(ownerID: source.id, name: "Projects", viewName: "Main", kind: .gallery)
+        let entry = try repository.addEntry(collectionID: collection.record.id, title: "Project One")
+        _ = try app.documents.saveEditorJSON(id: source.id,
+            canonicalJSON: CollectionRepository.blockJSON(collectionID: collection.record.id, documentID: source.id))
+        let package = try TemplateGalleryPublisher(database: app.database, attachmentStore: app.attachmentStore).prepare(
+            documentID: source.id, categoryID: "planning", title: "Reusable Projects", owner: .apple("gallery-collection-test"))
+        let spaceID = try #require(source.spaceID)
+        let template = try TemplateGalleryImporter(database: app.database, attachmentStore: app.attachmentStore)
+            .saveTemplate(package, intoSpace: spaceID)
+        let rootID = try #require(template.rootDocumentID)
+        let root = try app.documents.requireDocument(id: rootID)
+        let collectionID = try #require(repository.collectionIDs(forDocument: root.id).first)
+        let imported = try repository.snapshot(id: collectionID)
+        #expect(collectionID != collection.record.id && imported.record.documentID == root.id)
+        #expect(imported.name == collection.name && imported.views.first?.kind == .gallery)
+        #expect(TipTapContentAnalyzer.collectionIDs(in: root.tipTapJSON) == [collectionID])
+        let entryID = try #require(imported.entries.first?.id)
+        let importedEntry = try app.documents.requireDocument(id: entryID)
+        #expect(importedEntry.id != entry.id && importedEntry.parentDocumentID == root.id)
+        #expect(importedEntry.templateID == template.id && importedEntry.title == entry.title)
+        #expect(try repository.snapshot(id: collection.record.id).entries.first?.id == entry.id)
     }
 
     @Test func templateThumbnailMetadataIncludesSavedCoverBeforeItsEditorHasOpened() throws {

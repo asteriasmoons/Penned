@@ -25,6 +25,7 @@
   function createWorkbook(tables, Parser = global.FormulaParser) {
     if (!Parser) throw new Error("The formula engine is unavailable.");
     const byName = new Map(), byID = new Map(), cache = new Map(), active = new Set(), parsers = [];
+    const dependencies = new Map(), dependents = new Map(), volatile = new Set();
     let evaluations = 0;
     for (const table of tables) {
       byID.set(table.id, table);
@@ -32,6 +33,45 @@
       byName.set(name, byName.has(name) ? null : table);
     }
     const ErrorType = Parser.FormulaError;
+    const cellKey = (table, row, col) => `${table.id}:${row}:${col}`;
+    function forget(key) {
+      for (const dependency of dependencies.get(key) || []) {
+        const readers = dependents.get(dependency); readers?.delete(key);
+        if (!readers?.size) dependents.delete(dependency);
+      }
+      dependencies.delete(key); cache.delete(key); volatile.delete(key);
+    }
+    function invalidate(keys) {
+      const affected = new Set(keys), pending = [...affected];
+      for (let index = 0; index < pending.length; index++) {
+        for (const reader of dependents.get(pending[index]) || []) if (!affected.has(reader)) { affected.add(reader); pending.push(reader); }
+      }
+      for (const key of affected) forget(key);
+      return affected;
+    }
+    function update(next) {
+      let topology = next.length !== tables.length;
+      const changed = new Set(volatile);
+      for (const table of next) {
+        const old = byID.get(table.id);
+        if (!old || old.name !== table.name || old.cells.length !== table.cells.length ||
+            old.cells.some((line, row) => line.length !== table.cells[row]?.length)) { topology = true; continue; }
+        if (old.node && old.node === table.node) continue;
+        table.cells.forEach((line, row) => line.forEach((cell, col) => {
+          const before = old.cells[row][col];
+          if (cell.id !== before.id) topology = true;
+          if (cell.value !== before.value || cell.formula !== before.formula || cell.format !== before.format) changed.add(cellKey(table, row, col));
+        }));
+      }
+      tables = next;
+      byID.clear(); byName.clear();
+      for (const table of tables) {
+        byID.set(table.id, table);
+        const name = table.name.toLowerCase(); byName.set(name, byName.has(name) ? null : table);
+      }
+      if (topology) { cache.clear(); dependencies.clear(); dependents.clear(); volatile.clear(); }
+      else invalidate(changed);
+    }
     function referenceTable(ref, owner) {
       if (!ref.sheet || ref.sheet.toLowerCase() === owner.name.toLowerCase()) return owner;
       const table = byName.get(ref.sheet.toLowerCase());
@@ -39,15 +79,24 @@
       return table;
     }
     function value(table, row, col) {
+      if (!table) throw ErrorType.REF;
+      const key = cellKey(table, row, col);
+      const owner = [...active].at(-1);
+      if (owner) {
+        if (!dependencies.has(owner)) dependencies.set(owner, new Set());
+        if (!dependents.has(key)) dependents.set(key, new Set());
+        dependencies.get(owner).add(key); dependents.get(key).add(owner);
+      }
       if (++evaluations > 50000 || active.size > 128) throw ErrorType.NUM;
       if (row < 0 || col < 0) throw ErrorType.REF;
       const cell = table.cells[row]?.[col];
       if (!cell) return null;
-      const key = `${table.id}:${row}:${col}`;
       if (cache.has(key)) return cache.get(key);
       if (active.has(key)) return new ErrorType("#CYCLE!");
       if (!cell.formula) return scalar(cell.value, cell.format);
       if (cell.formula.length > 2048) throw ErrorType.NUM;
+      forget(key);
+      if (/\b(?:NOW|TODAY|RAND|RANDBETWEEN)\s*\(/i.test(cell.formula)) volatile.add(key);
       active.add(key);
       try {
         // Reuse one parser per dependency depth; recursive formulas never mutate a parent's parser.
@@ -82,6 +131,8 @@
       } finally { active.delete(key); }
     }
     return {
+      update,
+      needsCalculation(tableID, row, col) { return !cache.has(`${tableID}:${row}:${col}`); },
       value(tableID, row, col) {
         evaluations = 0;
         try { return value(byID.get(tableID), row, col); }

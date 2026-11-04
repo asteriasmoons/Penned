@@ -264,5 +264,171 @@ enum MobileEditorInteractions {
   publishHistory(true);
 })();
 """#
+
+    #if DEBUG
+    // Temporary, read-only list diagnostics. Installed by the native host, not the JS bundle.
+    static let listDiagnosticsScript = #"""
+(() => {
+  const editor = document.querySelector(".tiptap-editor")?.editor;
+  if (!editor || editor.storage.pennedListDiagnostics) return;
+  editor.storage.pennedListDiagnostics = true;
+  const root = editor.view.dom;
+  const originalCommand = window.tiptapCommand;
+  let count = 0, frame = null, pending = null, selectionBudget = 0;
+  const safe = fn => { try { return fn(); } catch { return null; } };
+  const rect = element => {
+    const r = element?.getBoundingClientRect();
+    return r ? [r.x, r.y, r.width, r.height].map(n => Math.round(n * 100) / 100) : null;
+  };
+  const brief = node => node ? {
+    type: node.type.name, size: node.nodeSize, children: node.childCount,
+    indent: node.attrs.indent ?? null, align: node.attrs.textAlign ?? null,
+    placeholder: node.attrs.placeholderEnabled === true,
+    projection: node.attrs.placeholderProjection === true,
+  } : null;
+  function path(position) {
+    return Array.from({ length: Math.min(position.depth + 1, 12) }, (_, depth) => ({
+      ...brief(position.node(depth)), index: position.index(depth),
+    }));
+  }
+  function elementInfo(element) {
+    if (!(element instanceof Element)) return null;
+    const style = getComputedStyle(element), before = getComputedStyle(element, "::before");
+    return {
+      tag: element.tagName, classes: [...element.classList].slice(0, 8), rect: rect(element),
+      editable: element.getAttribute("contenteditable"),
+      display: style.display, height: style.height, minHeight: style.minHeight,
+      lineHeight: style.lineHeight, whiteSpace: style.whiteSpace,
+      margin: [style.marginTop, style.marginLeft], padding: [style.paddingTop, style.paddingLeft],
+      before: { display: before.display, float: before.cssFloat, height: before.height,
+        width: before.width, contentLength: before.content?.length ?? 0 },
+    };
+  }
+  function nativeSelection() {
+    const selection = window.getSelection();
+    const describe = (node, offset) => node ? {
+      node: node.nodeName, parent: node.parentElement?.tagName ?? null, offset,
+      pos: safe(() => editor.view.posAtDOM(node, offset)),
+    } : null;
+    return selection ? {
+      anchor: describe(selection.anchorNode, selection.anchorOffset),
+      focus: describe(selection.focusNode, selection.focusOffset),
+      rect: safe(() => rect(selection.rangeCount ? selection.getRangeAt(0) : null)),
+    } : null;
+  }
+  function write(event, extra = {}) {
+    if (count >= 120 || editor.isDestroyed) return;
+    try {
+      const { selection } = editor.state, position = selection.$from;
+      const dom = position.depth ? editor.view.nodeDOM(position.before()) : root;
+      const element = dom instanceof Element ? dom : dom?.parentElement;
+      const parent = position.depth ? position.node(-1) : position.parent;
+      const index = position.depth ? position.index(position.depth - 1) : 0;
+      const neighbors = [];
+      for (let i = Math.max(0, index - 1); i < Math.min(parent.childCount, index + 2); i++) {
+        neighbors.push({ index: i, ...brief(parent.child(i)) });
+      }
+      const inline = [];
+      for (let i = 0; i < Math.min(position.parent.childCount, 6); i++) {
+        const child = position.parent.child(i);
+        inline.push({ type: child.type.name, size: child.nodeSize,
+          textLength: child.isText ? child.text.length : 0,
+          newlineOnly: child.isText ? /^[\r\n]+$/.test(child.text) : false });
+      }
+      window.webkit?.messageHandlers?.tiptap?.postMessage({ kind: "listCaretDiagnostic", payload: {
+        version: "list-caret-v1", sequence: ++count, event,
+        selection: selection.toJSON(), offset: position.parentOffset,
+        path: path(position), block: brief(position.parent), inline, neighbors,
+        numbered: editor.isActive("orderedList"), focused: editor.view.hasFocus(),
+        composing: editor.view.composing, authoring: root.classList.contains("vellix-placeholder-authoring"),
+        dom: elementInfo(element), item: elementInfo(element?.closest("li")),
+        caret: safe(() => {
+          const r = editor.view.coordsAtPos(selection.head);
+          return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+        }), native: nativeSelection(), ...extra,
+      } });
+    } catch {
+      // Diagnostics must never interrupt an editing event or command.
+    }
+  }
+  function after(event, extra = {}) {
+    pending = { event, extra };
+    if (frame !== null) return;
+    frame = requestAnimationFrame(() => {
+      frame = null;
+      const next = pending;
+      pending = null;
+      if (next) write(next.event, next.extra);
+    });
+  }
+  function nearbyList(position = editor.state.selection.$from) {
+    for (let depth = position.depth; depth > 0; depth--) {
+      if (position.node(depth).type.name === "orderedList") return true;
+    }
+    return !!safe(() => position.doc.resolve(position.before()).nodeBefore?.type.name === "orderedList");
+  }
+  function pointer(event) {
+    if (!(event.target instanceof Element) || !root.contains(event.target)) return;
+    const hit = safe(() => editor.view.posAtCoords({ left: event.clientX, top: event.clientY }));
+    if (!event.target.closest("ol") && !nearbyList() && !(hit && nearbyList(editor.state.doc.resolve(hit.pos)))) return;
+    selectionBudget = 4;
+    const extra = { point: [event.clientX, event.clientY], target: event.target.tagName,
+      hit: hit ? { ...hit, path: path(editor.state.doc.resolve(hit.pos)) } : null };
+    write("tap.before", extra);
+    after("tap.after", extra);
+  }
+  function key(event) {
+    if (!["Enter", "Backspace"].includes(event.key) || !nearbyList()) return;
+    selectionBudget = 4;
+    write("key.before", { key: event.key });
+    after("key.after", { key: event.key });
+  }
+  function input(event) {
+    if (!["insertParagraph", "deleteContentBackward"].includes(event.inputType) || !nearbyList()) return;
+    selectionBudget = 4;
+    write("input.before", { input: event.inputType, cancelable: event.cancelable });
+    after("input.after", { input: event.inputType });
+  }
+  function changed() {
+    if (!selectionBudget) return;
+    selectionBudget--;
+    after("selection.after");
+  }
+  function command(name, args) {
+    if (name !== "formatCurrentSelection" || args?.action !== "numberList") return originalCommand(name, args);
+    const oldDoc = editor.state.doc, oldSelection = editor.state.selection;
+    selectionBudget = 4;
+    write("number.before");
+    const finish = result => {
+      const extra = { result: typeof result === "boolean" ? result : typeof result,
+        documentChanged: editor.state.doc !== oldDoc, selectionChanged: !editor.state.selection.eq(oldSelection) };
+      write("number.after", extra);
+      after("number.frame", extra);
+      return result;
+    };
+    const fail = error => { write("number.error", { error: error?.name || "Error" }); throw error; };
+    try {
+      const result = originalCommand(name, args);
+      return result && typeof result.then === "function" ? result.then(finish, fail) : finish(result);
+    } catch (error) { return fail(error); }
+  }
+  window.tiptapCommand = command;
+  document.addEventListener("pointerup", pointer, true);
+  document.addEventListener("keydown", key, true);
+  document.addEventListener("beforeinput", input, true);
+  editor.on("selectionUpdate", changed);
+  editor.on("destroy", () => {
+    if (frame !== null) cancelAnimationFrame(frame);
+    document.removeEventListener("pointerup", pointer, true);
+    document.removeEventListener("keydown", key, true);
+    document.removeEventListener("beforeinput", input, true);
+    editor.off("selectionUpdate", changed);
+    if (window.tiptapCommand === command) window.tiptapCommand = originalCommand;
+    delete editor.storage.pennedListDiagnostics;
+  });
+  write("installed");
+})();
+"""#
+    #endif
 }
 #endif

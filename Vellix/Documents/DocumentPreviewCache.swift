@@ -11,6 +11,10 @@ final class DocumentPreviewCache: ObservableObject {
     @Published private(set) var contentRevision = 0
     private var contents: [String: DocumentPreviewContent] = [:]
     private var observation: AnyCancellable?
+    private var activeEditors: Set<String> = []
+    private var deferredRecords: [String: DocumentRecord] = [:]
+    private var needsContentRefresh = false
+    private var refreshTask: Task<Void, Never>?
     private let memory = NSCache<NSString, PreviewImageBox>()
     private var pending: [String: Task<CGImage?, Never>] = [:]
     private var tail: Task<Void, Never>?
@@ -49,7 +53,30 @@ final class DocumentPreviewCache: ObservableObject {
             latestFiles[String(url.lastPathComponent.prefix(36))] = url
         }
         observation = NotificationCenter.default.publisher(for: .pennedCollectionsChanged, object: collections.database)
-            .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refreshContents() }
+            .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.scheduleContentRefresh() }
+    }
+
+    func setEditorActive(_ documentID: String, active: Bool) {
+        if active { activeEditors.insert(documentID); refreshTask?.cancel() }
+        else {
+            activeEditors.remove(documentID)
+            if activeEditors.isEmpty { scheduleContentRefresh() }
+        }
+    }
+
+    private func scheduleContentRefresh() {
+        needsContentRefresh = true
+        refreshTask?.cancel()
+        guard activeEditors.isEmpty else { return }
+        refreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled, let self, self.activeEditors.isEmpty else { return }
+            if self.needsContentRefresh { self.needsContentRefresh = false; self.refreshContents() }
+            let pending = self.deferredRecords.values.compactMap { record in try? self.documents.requireDocument(id: record.id) }
+                .filter { !$0.isTrashed }
+            self.deferredRecords.removeAll()
+            self.prewarm(pending)
+        }
     }
 
     func content(for document: DocumentRecord) -> DocumentPreviewContent {
@@ -105,6 +132,8 @@ final class DocumentPreviewCache: ObservableObject {
     }
 
     func resetForSpaceChange() {
+        refreshTask?.cancel(); refreshTask = nil
+        activeEditors.removeAll(); deferredRecords.removeAll(); needsContentRefresh = false
         pending.values.forEach { $0.cancel() }
         pending.removeAll(); tail = nil; contents.removeAll()
         beginLibraryPresentation()
@@ -122,6 +151,10 @@ final class DocumentPreviewCache: ObservableObject {
     }
 
     func prewarm(_ records: [DocumentRecord]) {
+        guard activeEditors.isEmpty else {
+            for record in records { deferredRecords[record.id] = record }
+            return
+        }
         // Metadata is ready before Home draws; image rendering stays off its first-frame path.
         for record in records {
             guard documents.spaceID == nil || documents.spaceID == record.spaceID else { continue }
@@ -137,6 +170,10 @@ final class DocumentPreviewCache: ObservableObject {
 
     func image(for document: DocumentRecord, colorScheme: ColorScheme = .dark) async -> CGImage? {
         guard documents.spaceID == nil || documents.spaceID == document.spaceID else { return nil }
+        guard activeEditors.isEmpty else {
+            deferredRecords[document.id] = document
+            return latestImages.object(forKey: document.id as NSString)?.image
+        }
         let content = content(for: document)
         let key = content.cacheKey(for: colorScheme)
         if let cached = memory.object(forKey: key as NSString) { return cached.image }
@@ -152,6 +189,11 @@ final class DocumentPreviewCache: ObservableObject {
         let task = Task { [weak self] () -> CGImage? in
             await prior?.value
             guard let self else { return nil }
+            guard !Task.isCancelled else { return nil }
+            guard self.activeEditors.isEmpty else {
+                self.deferredRecords[document.id] = document
+                return nil
+            }
             guard contents[document.id]?.cacheKey(for: colorScheme) == key else { return nil }
             do {
                 let image = try await render(content, colorScheme: colorScheme)
@@ -204,6 +246,11 @@ final class DocumentPreviewCache: ObservableObject {
             try await Task.sleep(for: .milliseconds(50))
         }
         guard session.bridgeErrorMessage == nil else { throw PreviewError.renderUnavailable }
+        if TipTapContentAnalyzer.hasClipSources(in: document.tipTapJSON) {
+            let hasSourceCard = try await webView.callAsyncJavaScript("return !!document.querySelector('.penned-clip-source');",
+                arguments: [:], in: nil, contentWorld: .page) as? Bool ?? false
+            guard hasSourceCard else { throw PreviewError.renderUnavailable }
+        }
         // Set metadata in the same renderer before measuring or capturing any collection atom.
         _ = try await webView.callAsyncJavaScript("return window.tiptapCommand('setCollections', {collections: collections});",
             arguments: ["collections": content.payloads], in: nil, contentWorld: .page)
@@ -282,6 +329,17 @@ final class DocumentPreviewCache: ObservableObject {
                 image.style.cssText = 'position:absolute;inset:8px;object-fit:contain;margin:0;max-width:none;border:0;';
                 image.style.width = width + 'px';
                 image.style.height = height + 'px';
+                icon.replaceWith(image);
+                await image.decode();
+            }
+            for (const icon of document.querySelectorAll('.penned-clip-saved .vellix-property-calendar')) {
+                const style = getComputedStyle(icon);
+                const {width, height} = icon.getBoundingClientRect();
+                const png = await rasterizedIcon(style.webkitMaskImage || style.maskImage, width, height, style.color);
+                if (!png) continue;
+                const image = document.createElement('img');
+                image.src = png;
+                image.style.cssText = `display:inline-block;flex:0 0 ${width}px;width:${width}px;height:${height}px;margin:0;border:0;max-width:none;object-fit:contain;`;
                 icon.replaceWith(image);
                 await image.decode();
             }

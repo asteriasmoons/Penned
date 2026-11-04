@@ -151,6 +151,9 @@ nonisolated struct EditorAttachment: Identifiable, Sendable {
             if node["type"] as? String == "attachment",
                let attrs = node["attrs"] as? [String: Any], let file = attrs["file"] as? [String: Any],
                let path = file["relativePath"] as? String { paths.insert(path) }
+            if node["type"] as? String == "plainCallout",
+               let source = (node["attrs"] as? [String: Any])?["clipSource"] as? [String: Any],
+               let file = source["file"] as? [String: Any], let path = file["relativePath"] as? String { paths.insert(path) }
             for child in node["content"] as? [[String: Any]] ?? [] { paths.formUnion(walk(child)) }
             return paths
         }

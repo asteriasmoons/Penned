@@ -22,7 +22,20 @@ final class PublishingDocumentBuilder {
     }
 
     func prepare(documentID: String, owner: AccountIdentity, authorAvatarData: Data? = nil, includeLinkedPages: Bool = false) throws -> PreparedPublication {
-        var result = try prepareSingle(documentID: documentID, owner: owner, authorAvatarData: authorAvatarData)
+        try prepare(documentID: documentID, owner: owner, authorAvatarData: authorAvatarData,
+            includeLinkedPages: includeLinkedPages, owningTemplateID: nil)
+    }
+
+    func prepareTemplate(documentID: String, templateID: String, owner: AccountIdentity) throws -> PreparedPublication {
+        guard !templateID.isEmpty else { throw PublishingFailure.invalidContent("Choose a saved template to publish.") }
+        return try prepare(documentID: documentID, owner: owner, authorAvatarData: nil,
+            includeLinkedPages: true, owningTemplateID: templateID)
+    }
+
+    private func prepare(documentID: String, owner: AccountIdentity, authorAvatarData: Data?,
+                         includeLinkedPages: Bool, owningTemplateID: String?) throws -> PreparedPublication {
+        var result = try prepareSingle(documentID: documentID, owner: owner, authorAvatarData: authorAvatarData,
+            owningTemplateID: owningTemplateID)
         guard includeLinkedPages else { return result }
         let repository = DocumentRepository(database: database)
         var prepared = [documentID: result], records = [documentID: try repository.requireDocument(id: documentID)]
@@ -31,7 +44,8 @@ final class PublishingDocumentBuilder {
             var parent = record.parentDocumentID, visited = Set<String>()
             while let id = parent, visited.insert(id).inserted {
                 if id == documentID { return true }
-                guard let ancestor = try repository.document(id: id), !ancestor.isTrashed, !ancestor.isArchived else { return false }
+                guard let ancestor = try repository.document(id: id), !ancestor.isTrashed, !ancestor.isArchived,
+                      ancestor.templateID == owningTemplateID else { return false }
                 parent = ancestor.parentDocumentID
             }
             return false
@@ -42,7 +56,8 @@ final class PublishingDocumentBuilder {
                 let record = try repository.requireDocument(id: target)
                 guard try descendant(record) else { continue }
                 guard pending.count < 1001 else { throw PublishingFailure.invalidContent("A publication supports up to 1,000 linked child pages.") }
-                prepared[target] = try prepareSingle(documentID: target, owner: owner, onlyVisibleEntryFields: true)
+                prepared[target] = try prepareSingle(documentID: target, owner: owner, onlyVisibleEntryFields: true,
+                    owningTemplateID: owningTemplateID)
                 records[target] = record; pending.append(target)
             }
         }
@@ -94,18 +109,23 @@ final class PublishingDocumentBuilder {
         }
     }
 
-    private func prepareSingle(documentID: String, owner: AccountIdentity, authorAvatarData: Data? = nil, onlyVisibleEntryFields: Bool = false) throws -> PreparedPublication {
+    private func prepareSingle(documentID: String, owner: AccountIdentity, authorAvatarData: Data? = nil,
+                               onlyVisibleEntryFields: Bool = false, owningTemplateID: String? = nil) throws -> PreparedPublication {
         guard database.libraryID != "*", let library = try LibraryRepository(database: database).library(id: database.libraryID),
               library.ownerKey == owner.libraryOwnerKey || (library.id == LibraryRecord.localID && library.ownerKey == nil) else { throw LibraryError.wrongOwner }
         let repository = DocumentRepository(database: database)
         let record = try repository.requireDocument(id: documentID)
-        guard !record.isTrashed, !record.isArchived, record.templateID == nil else { throw PublishingFailure.invalidContent("Open an active document to publish it.") }
+        guard !record.isTrashed, !record.isArchived, record.templateID == owningTemplateID else {
+            throw PublishingFailure.invalidContent(owningTemplateID == nil
+                ? "Open an active document to publish it." : "The selected template is unavailable.")
+        }
         guard record.tipTapJSON.utf8.count <= 2 * 1024 * 1024 else { throw PublishingFailure.invalidContent("The document exceeds the 2 MB publication limit.") }
         guard let root = try JSONSerialization.jsonObject(with: Data(record.tipTapJSON.utf8)) as? [String: Any], root["type"] as? String == "doc" else {
             throw PublishingFailure.invalidContent("Invalid document content.")
         }
         let visible = try PublishingVisibleContent.prepare(root, document: record, repository: repository,
-            collections: CollectionRepository(database: database, documents: repository), onlyVisibleEntryFields: onlyVisibleEntryFields)
+            collections: CollectionRepository(database: database, documents: repository), onlyVisibleEntryFields: onlyVisibleEntryFields,
+            owningTemplateID: owningTemplateID)
         let appearance = try repository.effectiveAppearance(for: record)
         guard var appearanceObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(appearance)) as? [String: Any] else { throw PublishingFailure.invalidContent("Invalid document appearance.") }
         appearanceObject.removeValue(forKey: "customizedFields")

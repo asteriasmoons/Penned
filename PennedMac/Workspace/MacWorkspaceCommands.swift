@@ -20,8 +20,6 @@ struct MacWorkspaceCommands: Commands {
         }
         CommandGroup(replacing: .saveItem) {
             Button("Save") { workspace?.perform { try await workspace?.flush() } }.keyboardShortcut("s").disabled(workspace == nil)
-            Button("Save as Template") { if let document = workspace?.activeEditor?.document { workspace?.environment.saveAsTemplate(document) } }
-                .disabled(workspace?.activeEditor == nil)
         }
         CommandGroup(replacing: .undoRedo) {
             Button("Undo") { edit("undo:") { $0.undo() } }.keyboardShortcut("z")

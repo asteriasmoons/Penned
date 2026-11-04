@@ -192,6 +192,7 @@ struct HomeView: View {
             libraryRow("Spaces", icon: "spaces") { open(.spaces) }
             libraryRow("Templates", icon: "copy") { open(.templates) }
             libraryRow("All Tags", icon: "hashtagwavy") { open(.tags) }
+            libraryRow("Trash", icon: "trash") { open(.trash) }
         }
     }
 

@@ -347,6 +347,7 @@ final class DocumentRepository: @unchecked Sendable {
 
     func saveEditorJSON(id: String, canonicalJSON: String, in db: Database) throws -> DocumentRecord {
         var record = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
+        guard canonicalJSON != record.tipTapJSON else { return record }
         let analysis = try TipTapContentAnalyzer.analyze(canonicalJSON)
 
         guard analysis.canonicalJSON != record.tipTapJSON else { return record }
@@ -610,10 +611,9 @@ final class DocumentRepository: @unchecked Sendable {
 
     static func upsertSearchIndex(_ record: DocumentRecord, in db: Database) throws {
         try deleteSearchIndex(id: record.id, in: db)
-        if record.templateID != nil {
-            try db.execute(sql: "UPDATE templates SET title = ?, icon = ?, tipTapJSON = ?, updatedAt = ? WHERE rootDocumentID = ?",
-                arguments: [record.title, record.icon, record.tipTapJSON, record.updatedAt, record.id])
-        }
+        let templateID = record.templateID ?? TemplateRepository.documentTemplateID(record.id)
+        try db.execute(sql: "UPDATE templates SET title = ?, icon = ?, tipTapJSON = ?, updatedAt = ? WHERE id = ? AND rootDocumentID = ?",
+            arguments: [record.title, record.icon, record.tipTapJSON, record.updatedAt, templateID, record.id])
         guard record.templateID == nil, !record.isTrashed && !record.isArchived else {
             return
         }
@@ -827,6 +827,9 @@ final class FolderRepository: @unchecked Sendable {
 }
 
 final class TemplateRepository: @unchecked Sendable {
+    static let unsortedCategory = "Unsorted"
+    static let myTemplatesCategory = "My Templates"
+    static func documentTemplateID(_ id: String) -> String { "template-mode-" + id }
     private let database: AppDatabase
     var spaceID: String?
 
@@ -843,25 +846,39 @@ final class TemplateRepository: @unchecked Sendable {
         }
     }
 
+    func setCategory(id: String, category: String) throws {
+        let name = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 80 else { throw VellixError.impossibleMove("Choose a category name of up to 80 characters.") }
+        try database.write { db in
+            var template = try requireTemplate(id, in: db)
+            guard !template.isBuiltIn else { throw VellixError.impossibleMove("Duplicate this template before moving it.") }
+            guard template.category != name else { return }
+            template.category = name
+            template.updatedAt = Date()
+            try template.update(db)
+        }
+    }
+
     func previewDocuments() throws -> [String: DocumentRecord] {
         try database.read { db in
             let documents = try DocumentRecord.fetchAll(db, sql: """
                 SELECT d.* FROM templates t
-                JOIN documents d ON d.id = t.rootDocumentID AND d.templateID = t.id
+                JOIN documents d ON d.id = t.rootDocumentID
+                    AND (d.templateID = t.id OR (d.templateID IS NULL AND t.id = 'template-mode-' || d.id))
                     AND d.spaceID IS t.spaceID
-                WHERE d.parentDocumentID IS NULL AND d.isTrashed = 0 AND d.isArchived = 0
+                WHERE (d.parentDocumentID IS NULL OR t.id = 'template-mode-' || d.id) AND d.isTrashed = 0 AND d.isArchived = 0
                     AND \(LibraryAccess.spaces("t.spaceID")) AND (? IS NULL OR t.spaceID = ?)
                 """, arguments: [spaceID, spaceID])
-            return Dictionary(uniqueKeysWithValues: documents.compactMap { document in
-                document.templateID.map { ($0, document) }
+            return Dictionary(uniqueKeysWithValues: documents.map { document in
+                (document.templateID ?? Self.documentTemplateID(document.id), document)
             })
         }
     }
 
-    func create(title: String = "Untitled Template") throws -> DocumentRecord {
+    func create(title: String = "Untitled Template", category: String = TemplateRepository.myTemplatesCategory) throws -> DocumentRecord {
         try database.write { db in
             var template = TemplateRecord(title: title, templateDescription: "", tipTapJSON: TipTapContentAnalyzer.emptyDocumentJSON,
-                category: "Mine", isBuiltIn: false, spaceID: try spaceID ?? SpaceOwnership.defaultSpace(in: db))
+                category: category, isBuiltIn: false, spaceID: try spaceID ?? SpaceOwnership.defaultSpace(in: db))
             try template.insert(db)
             let document = DocumentRecord(title: title, spaceID: template.spaceID, templateID: template.id)
             try document.insert(db)
@@ -876,7 +893,7 @@ final class TemplateRepository: @unchecked Sendable {
         do {
             return try database.write { db in
                 var template = TemplateRecord(title: title.trimmedNonEmpty ?? document.title, templateDescription: "",
-                    icon: document.icon, tipTapJSON: document.tipTapJSON, category: "Mine", isBuiltIn: false, spaceID: document.spaceID)
+                    icon: document.icon, tipTapJSON: document.tipTapJSON, category: Self.myTemplatesCategory, isBuiltIn: false, spaceID: document.spaceID)
                 _ = try SpaceOwnership.document(document.id, scope: spaceID, in: db)
                 try template.insert(db)
                 let root = try cloneTree(sourceID: document.id, title: template.title, templateID: template.id,
@@ -897,9 +914,20 @@ final class TemplateRepository: @unchecked Sendable {
         var paths: [String] = []
         do {
             return try database.write { db in
-                let template = try requireTemplate(id, in: db)
+                var template = try requireTemplate(id, in: db)
                 guard !template.isBuiltIn else { throw VellixError.impossibleMove("Duplicate this template before editing it.") }
-                return try materialize(template, store: attachmentStore, paths: &paths, in: db)
+                let source = try materialize(template, store: attachmentStore, paths: &paths, in: db)
+                if source.templateID == template.id { return source }
+                // Legacy Template Mode linked ordinary documents directly. Author on
+                // an independent template tree, never in the user's original page.
+                let root = try cloneTree(sourceID: source.id, title: template.title, templateID: template.id,
+                    originID: nil, spaceID: template.spaceID, folderID: nil, parentID: nil,
+                    store: attachmentStore, paths: &paths, in: db)
+                template.rootDocumentID = root.id
+                template.tipTapJSON = root.tipTapJSON
+                template.updatedAt = Date()
+                try template.update(db)
+                return root
             }
         } catch {
             for path in paths { try? attachmentStore?.removeFile(relativePath: path) }
@@ -1012,7 +1040,15 @@ final class TemplateRepository: @unchecked Sendable {
     }
 
     func materialize(_ template: TemplateRecord, store: AttachmentStore?, paths: inout [String], in db: Database) throws -> DocumentRecord {
-        if let id = template.rootDocumentID, let document = try DocumentRecord.fetchOne(db, key: id) { return document }
+        if let id = template.rootDocumentID, let document = try DocumentRecord.fetchOne(db, key: id) {
+            if document.templateID == nil {
+                _ = try SpaceOwnership.document(id, scope: template.spaceID, in: db)
+                guard document.spaceID == template.spaceID, !document.isTrashed, !document.isArchived else {
+                    throw VellixError.documentNotFound(id)
+                }
+            }
+            return document
+        }
         let analysis = try TipTapContentAnalyzer.analyze(StructuredTemplateContent.independentTasks(template.tipTapJSON))
         var root = DocumentRecord(title: template.title, icon: template.icon, tipTapJSON: analysis.canonicalJSON,
             plainText: analysis.plainText, previewText: analysis.previewText, spaceID: template.spaceID, templateID: template.id)

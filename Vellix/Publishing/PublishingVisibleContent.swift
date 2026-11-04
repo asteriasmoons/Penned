@@ -3,11 +3,12 @@ import Foundation
 // Visible previews are always safe; child bodies are added separately only for opted-in publications.
 enum PublishingVisibleContent {
     static func prepare(_ root: [String: Any], document: DocumentRecord, repository: DocumentRepository,
-                        collections: CollectionRepository, onlyVisibleEntryFields: Bool = false) throws -> [String: Any] {
+                        collections: CollectionRepository, onlyVisibleEntryFields: Bool = false,
+                        owningTemplateID: String? = nil) throws -> [String: Any] {
         var referenced = Set<String>()
         let visibleCollectionIDs = Set(try collections.collectionIDs(forDocument: document.id))
         func page(_ record: DocumentRecord) throws -> [String: Any] {
-            guard !record.isTrashed, !record.isArchived, record.templateID == nil else {
+            guard !record.isTrashed, !record.isArchived, record.templateID == owningTemplateID else {
                 throw PublishingFailure.invalidContent("A referenced page is unavailable.")
             }
             var preview: [String: Any] = ["title": record.title, "excerpt": String(record.previewText.prefix(400)),
@@ -78,7 +79,8 @@ enum PublishingVisibleContent {
             let attrs = node["attrs"] as? [String: Any] ?? [:]
             if node["type"] as? String == "pageReference", let id = attrs["documentID"] as? String {
                 referenced.insert(id)
-                guard let record = try repository.document(id: id), !record.isTrashed, !record.isArchived, record.templateID == nil else {
+                guard let record = try repository.document(id: id), !record.isTrashed, !record.isArchived,
+                      record.templateID == owningTemplateID else {
                     return ["type": "privateReference"]
                 }
                 return try page(record)
