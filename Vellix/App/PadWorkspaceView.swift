@@ -20,7 +20,20 @@ struct PadWorkspaceView: View {
     var body: some View {
         GeometryReader { geometry in
             let metrics = PadWorkspaceMetrics(width: geometry.size.width, height: windowSize.height > 0 ? windowSize.height : geometry.size.height)
-            let overlaysSidebar = metrics.overlaysSidebar || workspace.activeTab.location.destination == .settings
+            // Decide split-vs-overlay from the live geometry (which updates reliably
+            // on rotation), not a cached window size. Landscape / regular width shows
+            // the sidebar alongside the shrunk content; portrait / narrow overlays it.
+            let compactSidebar = geometry.size.width < 1000 || geometry.size.height > geometry.size.width
+            let overlaysSidebar = compactSidebar || workspace.activeTab.location.destination == .settings
+            // The width the library content actually gets: full width, less the
+            // sidebar only while it pushes (split mode). Derived from live
+            // geometry so it is correct the instant the device rotates — the
+            // gallery reads this instead of its own onGeometryChange, which lags
+            // the rotation/padding change and left cards sized for the wrong width.
+            let splitPush = sidebarVisible && !overlaysSidebar
+            let galleryContentWidth = max(0, geometry.size.width - (splitPush ? metrics.sidebarWidth : 0))
+            let galleryColumns = PadWorkspaceMetrics.galleryColumns(
+                width: PadWorkspaceMetrics.galleryWidth(available: galleryContentWidth), preferred: Int.max)
             ZStack(alignment: .leading) {
                 // This content tree never moves between conditional split/overlay hierarchies.
                 workspaceContent
@@ -36,22 +49,33 @@ struct PadWorkspaceView: View {
                 PadWorkspaceSidebar(workspace: workspace, close: toggleSidebar)
                     .frame(width: min(metrics.sidebarWidth, max(0, geometry.size.width - 44)))
                     .frame(maxHeight: .infinity)
-                    .background(VellixSurface.sidebar)
+                    .background { PadWorkspaceBlurSurface(style: .dark).ignoresSafeArea(edges: .vertical) }
                     .overlay(alignment: .trailing) { Rectangle().fill(VellixSurface.hairline).frame(width: 1) }
                     .offset(x: sidebarVisible ? 0 : -metrics.sidebarWidth - 1)
                     .allowsHitTesting(sidebarVisible).accessibilityHidden(!sidebarVisible)
             }
             .clipped()
-            .environment(\.pennedGalleryColumns, metrics.preferredColumns)
+            .simultaneousGesture(TapGesture().onEnded {
+                environment.traceDocumentOpeningSurfaceTap(source: "ipad-workspace-root", workspaceBusy: workspace.isBusy)
+                print("🛠️ PENNED-OPEN workspace-root-tap sidebar=\(sidebarVisible) overlay=\(overlaysSidebar) busy=\(workspace.isBusy) selected=\(environment.selectedDocumentID ?? "nil") pending=\(environment.pendingDocumentID ?? "nil")")
+            })
+            .environment(\.pennedGalleryColumns, galleryColumns)
+            .environment(\.pennedGalleryContentWidth, galleryContentWidth)
             .onAppear {
-                if !initializedSidebar { sidebarVisible = !metrics.overlaysSidebar; initializedSidebar = true }
+                if !initializedSidebar { sidebarVisible = !compactSidebar; initializedSidebar = true }
+            }
+            .onChange(of: compactSidebar) { _, compact in
+                // Rotating to landscape reveals the sidebar beside the docs;
+                // rotating to portrait tucks it away behind the toggle.
+                sidebarVisible = !compact
             }
         }
-        .background(VellixSurface.appBackground)
+        .background { Color.black.ignoresSafeArea() }
         #if os(iOS)
         .background(PadWindowSizeProbe { windowSize = $0 })
         #endif
         .environment(\.pennedWorkspace, workspace)
+        .environment(\.pennedPadBlurEnabled, true)
         .fontDesign(.rounded).foregroundStyle(VellixSurface.ink).tint(VellixSurface.violet)
         .onAppear {
             let accountState = accounts
@@ -63,7 +87,7 @@ struct PadWorkspaceView: View {
         .onChange(of: workspace.observedLocation) { _, _ in workspace.capture() }
         .onChange(of: environment.pendingDocumentID) { _, _ in workspace.capture() }
         .onChange(of: environment.selectedSpaceID) { _, _ in workspace.resetForSpaceChange() }
-        .onChange(of: environment.overview.all) { _, _ in workspace.reconcile() }
+        .onChange(of: environment.libraryGeneration) { _, _ in workspace.reconcile() }
         .onChange(of: workspace.activeTab.location.destination) { _, destination in
             if destination == .settings {
                 sidebarBeforeSettings = sidebarVisible
@@ -72,6 +96,12 @@ struct PadWorkspaceView: View {
                 sidebarBeforeSettings = nil
                 sidebarVisible = previous
             }
+        }
+        .onChange(of: workspace.isBusy, initial: true) { _, busy in
+            print("🛠️ PENNED-OPEN workspace-disabled-state busy=\(busy) selected=\(environment.selectedDocumentID ?? "nil") pending=\(environment.pendingDocumentID ?? "nil")")
+        }
+        .onChange(of: sidebarVisible) { _, visible in
+            print("🛠️ PENNED-OPEN sidebar-visibility visible=\(visible)")
         }
         .disabled(workspace.isBusy)
     }
@@ -92,18 +122,15 @@ struct PadWorkspaceView: View {
                         .allowsHitTesting(tab.id == workspace.activeID && environment.selectedDocumentID == nil)
                         .accessibilityHidden(tab.id != workspace.activeID || environment.selectedDocumentID != nil)
                 }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay {
-                ZStack {
-                    PadEditorDeck(cache: environment.editorCache, selectedID: environment.selectedDocumentID,
-                                  inspector: environment.isInspectorVisible, sidebarAction: editorSidebarAction)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if environment.pendingDocumentID != nil {
-                        ProgressView("Opening document").padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-                    }
+                // Keep the editor in the keyboard-safe layout, not in the library's overlay.
+                PadEditorDeck(cache: environment.editorCache, selectedID: environment.selectedDocumentID,
+                              inspector: environment.isInspectorVisible, sidebarAction: editorSidebarAction)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if environment.pendingDocumentID != nil {
+                    ProgressView("Opening document").padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -135,7 +162,7 @@ struct PadWorkspaceView: View {
                 .accessibilityLabel("Workspace actions").help("Workspace actions")
         }
         .padding(.horizontal, 16).frame(minHeight: 60)
-        .background(VellixSurface.appBackground)
+        .background(Color.black)
         .overlay(alignment: .bottom) { Rectangle().fill(VellixSurface.hairline).frame(height: 0.5) }
     }
 
@@ -148,10 +175,23 @@ struct PadWorkspaceView: View {
 struct PadIconButton: View {
     let title: String
     let icon: String
+    let backgroundSize: CGFloat
     let action: () -> Void
-    init(_ title: String, icon: String, action: @escaping () -> Void) { self.title = title; self.icon = icon; self.action = action }
+    init(_ title: String, icon: String, backgroundSize: CGFloat = 40, action: @escaping () -> Void) {
+        self.title = title; self.icon = icon; self.backgroundSize = backgroundSize; self.action = action
+    }
     var body: some View {
-        Button(action: action) { LibraryIcon(name: icon, size: 20).frame(width: 40, height: 40).contentShape(Circle()) }
+        Button(action: action) {
+            LibraryIcon(name: icon, size: 20)
+                .frame(width: backgroundSize, height: backgroundSize)
+                .background {
+                    #if os(iOS)
+                    PadWorkspaceBlurSurface(style: .dark).clipShape(Circle())
+                    #endif
+                }
+                .frame(width: 40, height: 40)
+                .contentShape(Circle())
+        }
             .buttonStyle(.plain).accessibilityLabel(title).help(title)
     }
 }
@@ -174,7 +214,15 @@ private struct PadEditorDeck: View {
                 .allowsHitTesting(selectedID == model.documentID)
                 .accessibilityHidden(selectedID != model.documentID)
             }
-        }.allowsHitTesting(selectedID != nil).accessibilityHidden(selectedID == nil)
+        }
+        .allowsHitTesting(selectedID != nil)
+        .accessibilityHidden(selectedID == nil)
+        .onChange(of: selectedID, initial: true) { _, id in
+            print("🛠️ PENNED-OPEN editor-deck selected=\(id ?? "nil") preparedIDs=\(cache.preparedModels.map(\.documentID))")
+        }
+        .onChange(of: cache.preparedModels.map(\.documentID)) { _, ids in
+            print("🛠️ PENNED-OPEN editor-deck models-changed selected=\(selectedID ?? "nil") preparedIDs=\(ids)")
+        }
     }
 }
 
@@ -232,14 +280,16 @@ private struct PadWorkspacePane: View {
             switch destination {
             case .home: HomeView(environment: environment, search: search)
             case .calendar: CalendarView(model: calendar)
-            case .recents: DocumentBrowserView(mode: .recent, documents: environment.overview.recent)
-            case .favorites: DocumentBrowserView(mode: .favorites, documents: environment.overview.favorites)
-            case .folders: DocumentBrowserView(mode: .folders, documents: [])
+            case .dailyNotes: DocumentBrowserView(mode: .dailyNotes, summaries: environment.overview.dailyNotes)
+            case .connect: ConnectPlaceholderView()
+            case .recents: DocumentBrowserView(mode: .recent, summaries: environment.overview.recent)
+            case .favorites: DocumentBrowserView(mode: .favorites, summaries: environment.overview.favorites)
+            case .folders: DocumentBrowserView(mode: .folders)
             case .allDocuments:
                 if let id = browsingLocation.folderID {
-                    DocumentBrowserView(mode: .folder(id), documents: environment.overview.all.filter { id == "__unsorted" ? $0.folderID == nil : $0.folderID == id },
+                    DocumentBrowserView(mode: .folder(id),
                         displayTitle: id == "__unsorted" ? "Unsorted" : environment.overview.folders.first { $0.id == id }?.title)
-                } else { DocumentBrowserView(mode: .all, documents: environment.overview.all) }
+                } else { DocumentBrowserView(mode: .all) }
             case .spaces: PadSpaceManagementView()
             case .templates: TemplatesView()
             case .tags: TagBrowserView()
@@ -322,11 +372,10 @@ private struct PadTasksView: View {
 
 private struct PadCollectionsView: View {
     @EnvironmentObject private var environment: AppEnvironment
-    @State private var owners: [DocumentRecord] = []
-    private var revision: String { environment.overview.all.map { $0.id + String($0.revision) + String($0.updatedAt.timeIntervalSince1970) }.joined() }
+    @State private var owners: [DocumentSummary] = []
     var body: some View {
-        DocumentBrowserView(mode: .all, documents: owners, displayTitle: "Collections")
-            .task(id: revision) { reload() }
+        DocumentBrowserView(mode: .all, summaries: owners, allowsPagination: false, displayTitle: "Collections")
+            .task(id: environment.libraryGeneration) { reload() }
             .onReceive(NotificationCenter.default.publisher(for: .pennedCollectionsChanged)) { _ in reload() }
     }
     private func reload() {
@@ -334,7 +383,7 @@ private struct PadCollectionsView: View {
             owners = try environment.documents.editorDocuments().filter { document in
                 guard !document.isTrashed, !document.isArchived, document.templateID == nil else { return false }
                 return try !environment.collections.repository.collectionIDs(forDocument: document.id).isEmpty
-            }
+            }.map(DocumentSummary.init)
         } catch { environment.report(error) }
     }
 }

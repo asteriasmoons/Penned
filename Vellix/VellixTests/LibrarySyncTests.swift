@@ -6,6 +6,34 @@ import Testing
 
 @Suite @MainActor
 struct LibrarySyncTests {
+    @Test func nestedDatabaseReadFailsWithoutCommittingTheOuterWrite() throws {
+        let (root, database, _) = try fixture()
+        let repository = DocumentRepository(database: database)
+        let page = try repository.create(DocumentDraft(title: "Original"))
+
+        #expect(throws: VellixError.nestedDatabaseAccess(attempted: "read", current: "metadataWrite")) {
+            try database.writeMetadata { db in
+                try db.execute(sql: "UPDATE documents SET title=? WHERE id=?", arguments: ["Do not commit", page.id])
+                _ = try root.read { try LibraryAccess.current(in: $0) }
+            }
+        }
+        #expect(try repository.requireDocument(id: page.id).title == "Original")
+    }
+
+    @Test func readScopeSurvivesARejectedNestedWriteAndAsyncReadsKeepTheirOwnScope() async throws {
+        let (root, database, _) = try fixture()
+        let other = root.scoped(to: "*")
+        let actual = try database.read { db in
+            #expect(throws: VellixError.nestedDatabaseAccess(attempted: "metadataWrite", current: "read")) {
+                try other.writeMetadata { _ in }
+            }
+            return try LibraryAccess.current(in: db)
+        }
+        #expect(actual == database.libraryID)
+        let eachScope = try await other.readAsync { try LibraryAccess.current(in: $0) }
+        #expect(eachScope == "*")
+    }
+
     @Test func pendingBatchesPrioritizeSpaceMetadataAndDecodeOnlySelectedRecords() throws {
         let (_, database, store) = try fixture()
         try store.enable(confirmed: true)
@@ -18,6 +46,44 @@ struct LibrarySyncTests {
         #expect(batch.count == 100 && batch.map { $0.row.recordName } == Array(names.prefix(100)))
         #expect(try store.pending(recordNames: []).isEmpty)
         #expect(try store.pending().count == 106)
+    }
+
+    @Test func openEditorDefersImportWithoutBlockingUnrelatedUploads() async throws {
+        let (_, database, sync) = try fixture()
+        let files = try attachmentStore()
+        let app = AppEnvironment(database: database, attachmentStore: files, createsDefaultSpace: false)
+        try sync.enable(confirmed: true)
+        let page = try app.documents.create(DocumentDraft(title: "Incoming title"))
+        let other = try app.documents.create(DocumentDraft(title: "Unrelated local document"))
+        let items = try sync.pending()
+        let remote = try #require(items.first { $0.row.table == "documents" && $0.row.values["id"]?.text == page.id })
+        let otherName = try #require(items.first { $0.row.table == "documents" && $0.row.values["id"]?.text == other.id }).row.recordName
+        _ = try app.documents.updateTitle(id: page.id, title: "Local edit")
+        try sync.stageIncoming(sync.makeRecord(remote, attachments: files), attachments: files)
+        app.selectedDocumentID = page.id
+
+        var imported = false
+        let appliedWhileOpen = try await app.withLibraryImportPreparation(deferringWhileEditorOpen: true) {
+            imported = true
+            _ = try sync.applyIncoming()
+        }
+        #expect(!appliedWhileOpen && !imported && !app.isSwitchingSpace)
+        #expect(try sync.incomingCount() == 1)
+        #expect(try app.documents.requireDocument(id: page.id).title == "Local edit")
+        #expect(try sync.pendingRecordNames().contains(remote.row.recordName))
+        let sendable = try sync.pendingRecordNames(excludingStagedConflicts: true)
+        #expect(!sendable.contains(remote.row.recordName) && sendable.contains(otherName))
+        let uploadMutations = try sync.currentUploadMutations(recordNames: [remote.row.recordName, otherName])
+        #expect(uploadMutations[remote.row.recordName] == nil && uploadMutations[otherName] != nil)
+
+        app.selectedDocumentID = nil
+        let appliedAfterClose = try await app.withLibraryImportPreparation(deferringWhileEditorOpen: true) {
+            _ = try sync.applyIncoming()
+        }
+        #expect(appliedAfterClose)
+        #expect(try sync.incomingCount() == 0)
+        #expect(try app.documents.requireDocument(id: page.id).title == "Incoming title")
+        #expect(try sync.conflicts().contains { $0.row.recordName == remote.row.recordName && $0.row.values["title"]?.text == "Local edit" })
     }
 
     @Test func immediateRequestsStartWithoutATimerAndRetainWritesQueuedDuringATransfer() async throws {
@@ -119,6 +185,48 @@ struct LibrarySyncTests {
         #expect(try DocumentSearchService(database: second).search("authored").map(\.documentID).contains(page.id))
     }
 
+    @Test func legacyTemplateModeLinkSyncsWithoutConvertingItsOrdinaryPage() throws {
+        let (_, first, source) = try fixture(), (_, second, target) = try fixture()
+        let files = try attachmentStore(), targetFiles = try attachmentStore()
+        try source.enable(confirmed: true); try target.enable(confirmed: true)
+        let page = try DocumentRepository(database: first).create(DocumentDraft(title: "Ordinary page"))
+        let template = TemplateRecord(id: TemplateRepository.documentTemplateID(page.id), title: "Legacy Template",
+            templateDescription: "", tipTapJSON: page.tipTapJSON, category: TemplateRepository.unsortedCategory,
+            isBuiltIn: false, rootDocumentID: page.id, spaceID: page.spaceID)
+        try first.write { try template.insert($0) }
+
+        try deliver(source, to: target, sourceFiles: files, targetFiles: targetFiles)
+
+        #expect(try target.incomingCount() == 0)
+        let imported = try DocumentRepository(database: second).requireDocument(id: page.id)
+        #expect(imported.templateID == nil && imported.spaceID == page.spaceID)
+        #expect(try TemplateRepository(database: second).previewDocuments()[template.id]?.id == page.id)
+    }
+
+    @Test func automaticOwnershipRecoveryRetainsQueuedEditsAndOtherPauses() throws {
+        let (_, database, sync) = try fixture()
+        try sync.enable(confirmed: true)
+        _ = try DocumentRepository(database: database).create(DocumentDraft(title: "Offline edit"))
+        let queued = try sync.pendingRecordNames()
+        #expect(!queued.isEmpty)
+
+        try sync.pause(VellixError.impossibleMove(SpaceOwnership.relationshipViolation).localizedDescription)
+        #expect(try sync.needsLegacyOwnershipRecovery())
+        _ = try sync.applyIncoming()
+        try sync.finishLegacyOwnershipRecovery()
+        #expect(try sync.state() == nil)
+        #expect(try sync.pendingRecordNames() == queued)
+
+        for reason in [LibrarySyncError.zoneRemoved.localizedDescription,
+                       LibrarySyncError.invalidRecord(SpaceOwnership.relationshipViolation).localizedDescription] {
+            try sync.pause(reason)
+            #expect(try !sync.needsLegacyOwnershipRecovery())
+            try sync.finishLegacyOwnershipRecovery()
+            #expect(throws: (any Error).self) { try sync.state() }
+        }
+        #expect(try sync.pendingRecordNames() == queued)
+    }
+
     @Test func dependenciesWaitAcrossBatchesAndConflictsRetainRecoverableRichText() throws {
         let (_, first, source) = try fixture(), (_, second, target) = try fixture()
         let sourceFiles = try attachmentStore(), targetFiles = try attachmentStore()
@@ -140,6 +248,54 @@ struct LibrarySyncTests {
         try target.recover(conflictID: conflict.id)
         #expect(try DocumentRepository(database: second).requireDocument(id: page.id).tipTapJSON.contains("Do not lose this text"))
         #expect(try target.pending().contains { $0.row.table == "documents" })
+    }
+
+    @Test func headingLabelMetadataSurvivesSavesSnapshotsAndIndependentSyncEdits() throws {
+        let (_, first, source) = try fixture(), (_, second, target) = try fixture()
+        let sourceFiles = try attachmentStore(), targetFiles = try attachmentStore()
+        try source.enable(confirmed: true)
+        try target.enable(confirmed: true)
+        let docs = DocumentRepository(database: first), other = DocumentRepository(database: second)
+        var label = HeadingLabelSettings(["presentation": "label", "shape": "ribbon", "iconEnabled": true, "icon": "heartfill"])
+        func json(_ settings: HeadingLabelSettings?, text: String = "Daily Flow") throws -> String {
+            var attrs: [String: Any] = ["id": "heading-label-test", "level": 2]
+            if let settings { attrs["label"] = settings.payload }
+            return try TipTapContentAnalyzer.makeDocumentJSON(content: [
+                ["type": "heading", "attrs": attrs, "content": [["type": "text", "text": text]]]
+            ])
+        }
+        func readLabel(_ page: DocumentRecord) throws -> HeadingLabelSettings {
+            let nodes = TipTapContentAnalyzer.documentObject(from: page.tipTapJSON)["content"] as? [[String: Any]]
+            let attrs = try #require(nodes?.first?["attrs"] as? [String: Any])
+            #expect(attrs["id"] as? String == "heading-label-test")
+            #expect(attrs["level"] as? Int == 2)
+            return try #require(HeadingLabelSettings.configuration(attrs))
+        }
+        let page = try docs.create(DocumentDraft(title: "Labels", tipTapJSON: json(label)))
+        let preserved = try docs.saveEditorJSON(id: page.id, canonicalJSON: json(nil, text: "Morning Flow"))
+        #expect(try readLabel(preserved) == label)
+        let miniature = DocumentThumbnailLayout(json: preserved.tipTapJSON, title: preserved.title)
+        #expect(miniature.marks.contains { $0.shape == .headingLabel("Morning Flow", level: 2, settings: label) })
+        let snapshots = SnapshotRepository(database: first)
+        let snapshot = try snapshots.create(document: preserved, reason: .manual)
+        label.enabled = false
+        let ordinary = try docs.saveEditorJSON(id: page.id, canonicalJSON: json(label))
+        #expect(try !readLabel(ordinary).enabled)
+        label.enabled = true
+        #expect(try readLabel(snapshots.restore(snapshotID: snapshot.id)) == label)
+        try deliver(source, to: target, sourceFiles: sourceFiles, targetFiles: targetFiles)
+        #expect(try readLabel(other.requireDocument(id: page.id)) == label)
+
+        var local = label, remote = label
+        local.shape = .pill
+        remote.surface = .glass
+        _ = try other.saveEditorJSON(id: page.id, canonicalJSON: json(local, text: "Morning Flow"))
+        _ = try docs.saveEditorJSON(id: page.id, canonicalJSON: json(remote, text: "Morning Flow"))
+        try deliver(source, to: target, sourceFiles: sourceFiles, targetFiles: targetFiles)
+        let merged = try readLabel(other.requireDocument(id: page.id))
+        #expect(merged.shape == .pill)
+        #expect(merged.surface == .glass)
+        #expect(merged.icon == "heartfill")
     }
 
     @Test func tombstonesDeleteOnlyTheirOwnedContentAndRetainOfflineAssets() throws {
@@ -167,7 +323,7 @@ struct LibrarySyncTests {
         let template = try templates.create(title: "Daily template")
         let docs = DocumentRepository(database: first)
         var task = DocumentTaskMetadata()
-        task.history = [TaskCompletedOccurrence(id: "finished-occurrence", completedAt: Date().timeIntervalSince1970)]
+        task.history = [TaskCompletedOccurrence(id: "finished-occurrence", scheduledAt: nil, completedAt: Date().timeIntervalSince1970)]
         let json = try TipTapContentAnalyzer.makeDocumentJSON(content: [["type": "taskList", "content": [["type": "taskItem",
             "attrs": ["id": "tracked-block", "checked": true, "trackedTask": task.object],
             "content": [["type": "paragraph", "content": [["type": "text", "text": "Completed work"]]]]]]]])
@@ -271,6 +427,7 @@ struct LibrarySyncTests {
         _ = try docs.updateTitle(id: page.id, title: "Newer offline edit")
         try sync.acknowledge(record)
         try sync.stageIncoming(record, attachments: files)
+        #expect(try sync.pendingRecordNames(excludingStagedConflicts: true).contains(old.row.recordName))
         _ = try sync.applyIncoming()
         #expect(try docs.requireDocument(id: page.id).title == "Newer offline edit")
         #expect(try sync.pending().contains(where: { $0.row.recordName == old.row.recordName }))

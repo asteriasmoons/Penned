@@ -132,7 +132,7 @@ private struct MacMenuActionStyle: PrimitiveButtonStyle {
 struct MacForm<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
-        Form { content }.formStyle(.grouped).scrollContentBackground(.hidden).background(VellixSurface.appBackground)
+        Form { content }.formStyle(.grouped).scrollContentBackground(.hidden)
     }
 }
 

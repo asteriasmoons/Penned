@@ -42,7 +42,8 @@ struct MacStyleInspector: View {
                 ForEach(VellixDividerStyle.allCases) { style in
                     Button { model.session.insertDivider(style) } label: {
                         Group {
-                            if style == .thinLine || style == .thickLine { Rectangle().frame(height: style == .thinLine ? 1 : 3) }
+                            if style == .washiTape { WashiTapeShape().frame(height: 10) }
+                            else if style == .thinLine || style == .thickLine { Rectangle().frame(height: style == .thinLine ? 1 : 3) }
                             else { HStack(spacing: 4) { ForEach(0..<(style == .fourCircles ? 4 : 7), id: \.self) { _ in Circle().frame(width: 3, height: 3) } } }
                         }.foregroundStyle(VellixSurface.ink).padding(.horizontal, 8).frame(maxWidth: .infinity).frame(height: 30)
                             .background(VellixSurface.subtleFill, in: RoundedRectangle(cornerRadius: 6))

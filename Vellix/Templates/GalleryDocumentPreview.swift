@@ -94,13 +94,25 @@ private struct GalleryPreviewBlocks: View {
     var spacing: CGFloat
 
     var body: some View {
+        let groups = PageCardPreviewGroup.groups(nodes, documents: referencedDocuments, includePlainCallouts: true)
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(nodes.enumerated()), id: \.offset) { index, node in
+            ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
+                let node = group.nodes[0]
                 let consecutiveProperties = index > 0 && node["type"] as? String == "inlineProperty"
-                    && nodes[index - 1]["type"] as? String == "inlineProperty"
-                GalleryPreviewBlock(node: node, appearance: appearance, depth: depth,
-                    collections: collections, referencedDocuments: referencedDocuments)
-                    .padding(.top, index == 0 ? 0 : (consecutiveProperties ? 4 : spacing))
+                    && groups[index - 1].nodes.last?["type"] as? String == "inlineProperty"
+                Group {
+                    if group.smallCards || group.plainCallouts {
+                        PageCardFlowLayout(smallCards: group.nodes.map { _ in true }) {
+                            ForEach(Array(group.nodes.enumerated()), id: \.offset) { _, item in
+                                GalleryPreviewBlock(node: item, appearance: appearance, depth: depth,
+                                    collections: collections, referencedDocuments: referencedDocuments)
+                            }
+                        }
+                    } else {
+                        GalleryPreviewBlock(node: node, appearance: appearance, depth: depth,
+                            collections: collections, referencedDocuments: referencedDocuments)
+                    }
+                }.padding(.top, index == 0 ? 0 : (consecutiveProperties ? 4 : spacing))
             }
         }
     }
@@ -150,6 +162,49 @@ private struct GalleryPreviewBlock: View {
                     .padding(.vertical, 16)
             }
         case "table": ImmediateTablePreview(node: node, appearance: appearance)
+        case "listGrid": ListGridPreview(node: node, appearance: appearance)
+        case "tabs":
+            let panels = nodes.filter { $0["type"] as? String == "tabPanel" }
+            let ids = panels.compactMap { ($0["attrs"] as? [String: Any])?["id"] as? String }
+            let active = (attrs["activeTab"] as? String).flatMap { ids.contains($0) ? $0 : nil } ?? ids.first
+            let activeContent = (panels.first { ($0["attrs"] as? [String: Any])?["id"] as? String == active }?["content"]
+                as? [[String: Any]]) ?? []
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(activeContent.prefix(40).enumerated()), id: \.offset) { _, child in
+                    GalleryPreviewBlock(node: child, appearance: appearance, depth: depth + 1,
+                        collections: collections, referencedDocuments: referencedDocuments)
+                }
+            }
+        case "minimalFields":
+            let records = nodes.filter { $0["type"] as? String == "minimalRecord" }
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(records.prefix(12).enumerated()), id: \.offset) { _, record in
+                    let children = record["content"] as? [[String: Any]] ?? []
+                    let titleContent = (children.first { $0["type"] as? String == "minimalRecordTitle" }?["content"] as? [[String: Any]]) ?? []
+                    let fields = children.filter { $0["type"] as? String == "minimalField" }
+                    VStack(alignment: .leading, spacing: 4) {
+                        InlineTextPreview.text(titleContent, appearance: appearance, size: 18, weight: .bold)
+                        ForEach(Array(fields.prefix(8).enumerated()), id: \.offset) { _, field in
+                            let kids = field["content"] as? [[String: Any]] ?? []
+                            let labelContent = (kids.first { $0["type"] as? String == "minimalFieldLabel" }?["content"] as? [[String: Any]]) ?? []
+                            let valueContent = (kids.first { $0["type"] as? String == "minimalFieldValue" }?["content"] as? [[String: Any]]) ?? []
+                            VStack(alignment: .leading, spacing: 2) {
+                                InlineTextPreview.text(labelContent, appearance: appearance, size: 12, weight: .bold)
+                                    .foregroundStyle(.secondary)
+                                ForEach(Array(valueContent.prefix(6).enumerated()), id: \.offset) { _, child in
+                                    GalleryPreviewBlock(node: child, appearance: appearance, depth: depth + 1,
+                                        collections: collections, referencedDocuments: referencedDocuments)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.leading, 12)
+                }
+            }
+        case "heading" where HeadingLabelSettings.configuration(attrs)?.enabled == true:
+            if let label = HeadingLabelSettings.configuration(attrs) {
+                HeadingLabelTile(settings: label, attrs: attrs, nodes: nodes, appearance: appearance)
+            }
         case "paragraph", "caption", "heading", "codeBlock":
             let guided = nodes.isEmpty && attrs["placeholderEnabled"] as? Bool == true
             let inline = guided ? (attrs["placeholderGuidance"] as? [[String: Any]] ?? []) : nodes
@@ -169,11 +224,26 @@ private struct GalleryPreviewBlock: View {
                         collections: collections, referencedDocuments: referencedDocuments)
                 }
             }
+        case "iconCallout":
+            let settings = IconCalloutSettings(attrs)
+            HStack(alignment: .top, spacing: 8) {
+                IconCalloutGlyph(settings: settings,
+                    image: WashiTapePreview.documentImage(path: settings.imagePath, attachments: environment.attachments, store: environment.attachmentStore))
+                calloutBody(ink: settings.inkColor).padding(.vertical, 2)
+            }
+            .padding(.vertical, 10).padding(.horizontal, 12)
+            .background(Color(vellixHex: settings.backgroundColor), in: RoundedRectangle(cornerRadius: 12))
         case "callout", "plainCallout":
             if type == "plainCallout", let source = attrs["clipSource"] as? [String: Any],
                let href = source["url"] as? String, InlinePropertyDefinition.safeURL(href) != nil {
                 GallerySourceDocumentPreview(source: source, nodes: nodes, appearance: appearance,
                     depth: depth, collections: collections, referencedDocuments: referencedDocuments)
+            } else if type == "plainCallout" {
+                let settings = IconCalloutSettings(attrs, plain: true)
+                calloutBody(ink: settings.inkColor).padding(.vertical, 2)
+                    .padding(.vertical, 10).padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, minHeight: settings.minimumHeight.map { CGFloat($0) }, alignment: .topLeading)
+                    .background(Color(vellixHex: settings.backgroundColor), in: RoundedRectangle(cornerRadius: 12))
             } else {
             HStack(alignment: populatedIconCallout ? .top : .firstTextBaseline, spacing: 11) {
                 if type == "callout" {
@@ -220,23 +290,29 @@ private struct GalleryPreviewBlock: View {
                 }
             }
         case "divider", "horizontalRule":
-            if ["fourCircles", "fourDots"].contains(attrs["style"] as? String ?? "") {
+            if attrs["style"] as? String == "washiTape" {
+                WashiTapePreview(color: (attrs["color"] as? String).map { Color(vellixHex: $0) },
+                    image: WashiTapePreview.documentImage(path: attrs["imagePath"], attachments: environment.attachments, store: environment.attachmentStore),
+                    photo: WashiTapeRequest.photo(attrs["remotePhoto"]), tapeSize: WashiTapeSize(attrs["tapeSize"]))
+            } else if ["fourCircles", "fourDots"].contains(attrs["style"] as? String ?? "") {
                 HStack(spacing: 18) {
                     ForEach(0..<4, id: \.self) { _ in
-                        Circle().fill(Color(vellixHex: appearance.textColorHex)).frame(width: 4, height: 4)
+                        Circle().fill(color).frame(width: 4, height: 4)
                     }
                 }.frame(maxWidth: .infinity, minHeight: 30)
+            } else if ["dottedCircles", "tinyDots"].contains(attrs["style"] as? String ?? "") {
+                DividerDotsPreview(color: color, customColor: attrs["color"] is String)
             } else {
             #if os(iOS)
             if attrs["style"] == nil || ["thinLine", "thickLine"].contains(attrs["style"] as? String ?? "") {
-                Rectangle().fill(color.opacity(attrs["style"] as? String == "thickLine" ? 1 : 0.5))
+                Rectangle().fill(color.opacity(attrs["color"] is String || attrs["style"] as? String == "thickLine" ? 1 : 0.5))
                     .frame(height: attrs["style"] as? String == "thickLine" ? 2 : 1)
                     .padding(.horizontal, 6).frame(height: 20)
             } else {
                 Rectangle().fill(color.opacity(0.20)).frame(height: 1).padding(.vertical, 8)
             }
             #else
-            Rectangle().fill(color.opacity(0.20)).frame(height: attrs["style"] as? String == "thickLine" ? 4 : 1).padding(.vertical, 8)
+            Rectangle().fill(color.opacity(attrs["color"] is String ? 1 : 0.20)).frame(height: attrs["style"] as? String == "thickLine" ? 4 : 1).padding(.vertical, 8)
             #endif
             }
         case "pageReference":
@@ -245,15 +321,29 @@ private struct GalleryPreviewBlock: View {
                 if let style = child.cardStyle {
                     PageCardView(document: child, style: style,
                         photo: CardImageLoader.image(path: style.imagePath, store: environment.attachmentStore), fillsDocumentWidth: style.size.fillsDocumentWidth,
-                        attachmentStore: environment.attachmentStore, containingFontStyle: appearance.fontStyle)
+                        fillsCardSlot: !style.size.fillsDocumentWidth,
+                        attachmentStore: environment.attachmentStore, containingFontStyle: appearance.fontStyle, previews: environment.documentPreviews)
                 } else { NestedPageRow(document: child, appearance: appearance, open: {}) }
             }
         case "inlineProperty":
             if let property = InlinePropertyDefinition.decode(attrs["property"]) {
                 InlinePropertyPreview(property: property, appearance: appearance)
             }
+        case "informationCard":
+            children(nodes.filter {
+                !((attrs["hideTitle"] as? Bool == true && $0["type"] as? String == "informationCardTitle") ||
+                  (attrs["hideDescription"] as? Bool == true && $0["type"] as? String == "informationCardDescription"))
+            })
         default: children(nodes)
         }
+    }
+
+    private func calloutBody(ink: String) -> some View {
+        var colors = appearance
+        colors.textColorHex = ink
+        return GalleryPreviewBlocks(nodes: nodes, appearance: colors, depth: depth + 1,
+            collections: collections, referencedDocuments: referencedDocuments, spacing: 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func children(_ values: [[String: Any]]) -> some View {

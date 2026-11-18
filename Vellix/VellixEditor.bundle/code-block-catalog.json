@@ -1,0 +1,38 @@
+{
+  "languages": [
+    {"id":"other","name":"Other"}, {"id":"yaml","name":"YAML"}, {"id":"xml","name":"XML","grammar":"markup"},
+    {"id":"vbnet","name":"Visual Basic .NET"}, {"id":"typescript","name":"TypeScript"}, {"id":"swift","name":"Swift"},
+    {"id":"sql","name":"SQL"}, {"id":"shell","name":"Shell","grammar":"shell-session"}, {"id":"scala","name":"Scala"},
+    {"id":"rust","name":"Rust"}, {"id":"ruby","name":"Ruby"}, {"id":"r","name":"R"}, {"id":"python","name":"Python"},
+    {"id":"prolog","name":"Prolog"}, {"id":"php","name":"PHP"}, {"id":"perl","name":"Perl"}, {"id":"objectivec","name":"Objective-C"},
+    {"id":"matlab","name":"MATLAB"}, {"id":"markdown","name":"Markdown"}, {"id":"lua","name":"Lua"}, {"id":"kotlin","name":"Kotlin"},
+    {"id":"julia","name":"Julia"}, {"id":"json","name":"JSON"}, {"id":"javascript","name":"JavaScript"}, {"id":"java","name":"Java"},
+    {"id":"html","name":"HTML","grammar":"markup"}, {"id":"haskell","name":"Haskell"}, {"id":"groovy","name":"Groovy"}, {"id":"go","name":"Go"},
+    {"id":"dockerfile","name":"Dockerfile","grammar":"docker"}, {"id":"dart","name":"Dart"}, {"id":"css","name":"CSS"},
+    {"id":"csharp","name":"C#"}, {"id":"cpp","name":"C++"}, {"id":"bash","name":"Bash"}, {"id":"ada","name":"Ada"},
+    {"id":"plaintext","name":"Plain Text"}
+  ],
+  "aliases": {"js":"javascript","ts":"typescript","py":"python","sh":"shell","zsh":"bash","c":"cpp","c++":"cpp","c#":"csharp","objc":"objectivec","md":"markdown","yml":"yaml","docker":"dockerfile","text":"plaintext","plain":"plaintext"},
+  "colorRoles": ["background","text","gutter","lineNumber","selection","cursor","activeLine","keyword","string","comment","number","type","function","variable","operator"],
+  "themes": [
+    {"id":"vscode-dark","name":"VS Code Dark","colors":["#1e1e1e","#d4d4d4","#1b1b1b","#858585","#264f78","#aeafad","#252526","#569cd6","#ce9178","#6a9955","#b5cea8","#4ec9b0","#dcdcaa","#9cdcfe","#d4d4d4"]},
+    {"id":"tokyo-night-storm","name":"Tokyo Night Storm","colors":["#24283b","#c0caf5","#202436","#737da7","#364a82","#c0caf5","#292e42","#bb9af7","#9ece6a","#747da6","#ff9e64","#2ac3de","#7aa2f7","#c0caf5","#89ddff"]},
+    {"id":"tokyo-night-day","name":"Tokyo Night Day","colors":["#e1e2e7","#3760bf","#d9dbe3","#6172a0","#bac6e6","#3760bf","#d7dae5","#9854f1","#587539","#68749b","#b15c00","#007197","#2e7de9","#3760bf","#006c86"]},
+    {"id":"tokyo-night","name":"Tokyo Night","colors":["#1a1b26","#a9b1d6","#171823","#737b9f","#33467c","#c0caf5","#202231","#bb9af7","#9ece6a","#70789f","#ff9e64","#2ac3de","#7aa2f7","#c0caf5","#89ddff"]},
+    {"id":"sublime","name":"Sublime","colors":["#272822","#f8f8f2","#24251f","#979989","#49483e","#f8f8f0","#31322b","#f92672","#e6db74","#a19f87","#ae81ff","#66d9ef","#a6e22e","#fd971f","#f92672"]},
+    {"id":"nord","name":"Nord","colors":["#2e3440","#d8dee9","#292e39","#8490a5","#434c5e","#d8dee9","#3b4252","#81a1c1","#a3be8c","#8998ad","#b48ead","#8fbcbb","#88c0d0","#d8dee9","#81a1c1"]},
+    {"id":"noctis-lilac","name":"Noctis Lilac","colors":["#f2f1f8","#403a56","#eae8f3","#79728b","#dcd6ef","#5c477d","#e9e5f5","#963f92","#167a70","#736789","#a05126","#146c7a","#6747a8","#465183","#9b3b51"]},
+    {"id":"material-light","name":"Material Light","colors":["#fafafa","#37474f","#f1f3f3","#697c86","#d4e3ec","#426b7d","#edf1f3","#7c4dff","#558522","#657780","#aa5d15","#00838f","#315cb0","#37474f","#087e8b"]},
+    {"id":"material-dark","name":"Material Dark","colors":["#263238","#eeffff","#212c31","#84989f","#40545e","#ffcc00","#303e45","#c792ea","#c3e88d","#879da5","#f78c6c","#ffcb6b","#82aaff","#eeffff","#89ddff"]},
+    {"id":"gruvbox-light","name":"Gruvbox Light","colors":["#fbf1c7","#3c3836","#f2e5bc","#746556","#ebdbb2","#3c3836","#f4e8bb","#9d0006","#5a7000","#756456","#8f3f71","#076678","#865b00","#427b58","#af3a03"]},
+    {"id":"gruvbox-dark","name":"Gruvbox Dark","colors":["#282828","#ebdbb2","#232323","#a89984","#504945","#ebdbb2","#3c3836","#fb4934","#b8bb26","#a89984","#d3869b","#83a598","#fabd2f","#8ec07c","#fe8019"]},
+    {"id":"github-light","name":"GitHub Light","colors":["#ffffff","#24292f","#f6f8fa","#656d76","#c8e1ff","#0969da","#f6f8fa","#cf222e","#0a3069","#57606a","#0550ae","#953800","#8250df","#24292f","#0550ae"]},
+    {"id":"github-dark","name":"GitHub Dark","colors":["#0d1117","#c9d1d9","#0b1016","#8b949e","#264f78","#58a6ff","#161b22","#ff7b72","#a5d6ff","#8b949e","#79c0ff","#ffa657","#d2a8ff","#c9d1d9","#ff7b72"]},
+    {"id":"dracula","name":"Dracula","colors":["#282a36","#f8f8f2","#232530","#9299b8","#44475a","#f8f8f2","#313342","#ff79c6","#f1fa8c","#8b9bcc","#bd93f9","#8be9fd","#50fa7b","#f8f8f2","#ff79c6"]},
+    {"id":"darcula","name":"Darcula","colors":["#2b2b2b","#a9b7c6","#252525","#939393","#214283","#bbbbbb","#323232","#cc7832","#8ba67a","#989898","#6897bb","#a9b7c6","#ffc66d","#b587b3","#a9b7c6"]},
+    {"id":"bbedit","name":"BBEdit","colors":["#ffffff","#222222","#f5f5f5","#696969","#c4d9f5","#000000","#eef3fa","#0000ff","#a31515","#547d36","#7a3e9d","#007080","#004ab0","#303030","#515151"]},
+    {"id":"aura","name":"Aura","colors":["#15141b","#edecee","#17161e","#77738a","#39304d","#a277ff","#252236","#a277ff","#61ffca","#888398","#ffca85","#61d0ff","#61d0ff","#edecee","#ffca85"]},
+    {"id":"atom-one","name":"Atom One","colors":["#282c34","#abb2bf","#242830","#8791a4","#3e4451","#528bff","#2c313a","#c678dd","#98c379","#8791a4","#d19a66","#e5c07b","#61afef","#e06c75","#56b6c2"]},
+    {"id":"auto","name":"Auto","colors":[]}
+  ]
+}

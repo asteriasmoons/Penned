@@ -16,6 +16,33 @@ private final class TipTapWKWebView: WKWebView {
     #if DEBUG
     weak var diagnosticCoordinator: Coordinator?
 
+    deinit {
+        guard PennedKeyboardTrace.enabled else { return }
+        let identifier = PennedKeyboardTrace.identity(self)
+        let stamp = PennedKeyboardTrace.Stamp()
+        Task { @MainActor in
+            PennedKeyboardTrace.record("wk.destroy", "destroyedWK=\(identifier)", live: true, stamp: stamp)
+        }
+    }
+
+    override var isHidden: Bool {
+        didSet {
+            if oldValue != isHidden {
+                diagnosticCoordinator?.session.renderRecovery.record("webview-hidden-changed", ["hidden": isHidden])
+                PennedKeyboardTrace.record("wk.hidden", session: diagnosticCoordinator?.session, webView: self, "hidden=\(isHidden)")
+            }
+        }
+    }
+
+    override var alpha: CGFloat {
+        didSet {
+            if (oldValue == 0) != (alpha == 0) {
+                diagnosticCoordinator?.session.renderRecovery.record("webview-alpha-changed", ["alpha": alpha])
+                PennedKeyboardTrace.record("wk.alpha", session: diagnosticCoordinator?.session, webView: self, "alpha=\(alpha)")
+            }
+        }
+    }
+
     override func removeFromSuperview() {
         TipTapHostLifecycleTrace.record("removeFromSuperview.before", webView: self, includeStack: superview != nil)
         super.removeFromSuperview()
@@ -24,11 +51,13 @@ private final class TipTapWKWebView: WKWebView {
 
     override func didMoveToSuperview() {
         super.didMoveToSuperview()
+        diagnosticCoordinator?.session.renderRecovery.record("webview-superview-changed")
         TipTapHostLifecycleTrace.record("didMoveToSuperview", webView: self, includeStack: superview == nil)
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        diagnosticCoordinator?.session.renderRecovery.record("webview-window-changed")
         TipTapHostLifecycleTrace.record("didMoveToWindow", webView: self, includeStack: window == nil)
     }
     #endif
@@ -37,12 +66,20 @@ private final class TipTapWKWebView: WKWebView {
 #if DEBUG
 @MainActor
 private enum TipTapHostLifecycleTrace {
+    static let enabled = ProcessInfo.processInfo.arguments.contains("-PennedEditorRenderTrace")
     private static var sequence = 0
     private static let logger = Logger(subsystem: "im.lystaria.Vellix", category: "TipTapHostTrace")
 
     static func record(_ event: String, webView: WKWebView?, container: UIView? = nil,
                        coordinator: Coordinator? = nil, documentID: String? = nil, includeStack: Bool = false) {
-        guard UIDevice.current.userInterfaceIdiom == .pad,
+        if PennedKeyboardTrace.enabled, !event.hasPrefix("updateUIView"), event != "host.request" {
+            PennedKeyboardTrace.record("wk.host.\(event)",
+                session: (coordinator ?? (webView as? TipTapWKWebView)?.diagnosticCoordinator)?.session,
+                webView: webView,
+                "docHint=\(PennedKeyboardTrace.documentToken(documentID)) host=\(PennedKeyboardTrace.identity(container)) parent=\(PennedKeyboardTrace.identity(webView?.superview)) window=\(PennedKeyboardTrace.identity(webView?.window)) hostWindow=\(PennedKeyboardTrace.identity(container?.window))",
+                live: true)
+        }
+        guard enabled, UIDevice.current.userInterfaceIdiom == .pad,
               let coordinator = coordinator ?? (webView as? TipTapWKWebView)?.diagnosticCoordinator,
               coordinator.session.preparesInteractivePresentation, sequence < 2_000 else { return }
         sequence += 1
@@ -92,7 +129,7 @@ private enum TipTapEditorStartupTiming {
     }
 }
 
-enum TipTapEditorAssetCache {
+nonisolated enum TipTapEditorAssetCache {
     static let cachedDocument: (html: String, baseURL: URL)? = {
         guard let bundleURL = Bundle.main.url(
             forResource: "VellixEditor",
@@ -120,6 +157,10 @@ enum TipTapEditorAssetCache {
                 of: "<script src=\"./\(path)\"></script>",
                 with: "<script>\n\(safeJS)\n</script>"
             )
+        }
+        if let syntax = try? String(contentsOf: bundleURL.appendingPathComponent("code-syntax.js"), encoding: .utf8) {
+            html = html.replacingOccurrences(of: #"<script src="./code-syntax.js"></script>"#,
+                with: "<script>\n\(syntax.replacingOccurrences(of: "</script>", with: "<\\/script>"))\n</script>")
         }
         let tableCSS = try String(contentsOf: bundleURL.appendingPathComponent("vellix-tables.css"), encoding: .utf8)
         html = html.replacingOccurrences(of: #"<link rel="stylesheet" href="./vellix-tables.css" />"#,
@@ -165,13 +206,24 @@ final class TipTapEditorWebViewStore {
         activeHost = container
         container.owningStore = self
         container.host(webView)
+        #if os(iOS)
+        coordinator.session.renderRecovery.hostEvent("host-claimed", container: container, ownsHost: ownsHost(container))
+        #endif
     }
 
     func ownsHost(_ container: TipTapWebViewContainer) -> Bool {
         activeHost === container && container.owningStore === self
     }
 
+    func discardUnusedRuntime() {
+        coordinator.cleanUp(webView)
+        webView.stopLoading()
+    }
+
     fileprivate func releaseHost(_ container: TipTapWebViewContainer) -> Bool {
+        #if os(iOS)
+        coordinator.session.renderRecovery.hostEvent("host-release", container: container, ownsHost: ownsHost(container))
+        #endif
         guard ownsHost(container) else { return false }
         activeHost = nil
         return true
@@ -188,6 +240,27 @@ final class TipTapWebViewContainer: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         onLayout?()
+        // Self-heal: if this container is the active host but the shared web view
+        // was detached by an out-of-order dismantle during view churn, re-attach it.
+        if let owningStore, owningStore.ownsHost(self), owningStore.webView.superview !== self {
+            host(owningStore.webView)
+        }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        #if DEBUG
+        if PennedKeyboardTrace.enabled {
+            PennedKeyboardTrace.record("wk.host.containerWindow", session: owningStore?.coordinator.session,
+                webView: hostedWebView, "host=\(PennedKeyboardTrace.identity(self)) window=\(PennedKeyboardTrace.identity(window))",
+                live: true)
+        }
+        #endif
+        // When this container is on screen, make it the active host. Churn that
+        // tears down a previous host then cannot leave the editor's web view
+        // detached while this container is visible — it re-adopts the web view.
+        guard window != nil, let owningStore else { return }
+        owningStore.claimHost(self)
     }
 
     func host(_ webView: WKWebView) {
@@ -246,8 +319,12 @@ extension TipTapWebView: UIViewRepresentable {
         TipTapHostLifecycleTrace.record("makeUIView.begin", webView: store.webView, container: container,
                                        coordinator: context.coordinator, documentID: documentID)
         #endif
-        container.onLayout = { [weak session, weak coordinator = context.coordinator] in
+        container.onLayout = { [weak container, weak session, weak coordinator = context.coordinator] in
             session?.editorDidLayout()
+            if let container {
+                session?.renderRecovery.hostDidLayout(container: container,
+                    ownsHost: container.owningStore?.ownsHost(container) == true)
+            }
             #if DEBUG
             coordinator?.scheduleRenderingDiagnostic(reason: "layout")
             #endif
@@ -391,8 +468,14 @@ fileprivate extension TipTapWebView {
         contentController.addUserScript(WKUserScript(source: MobileBlockSelection.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         contentController.addUserScript(WKUserScript(source: MobileEditorInteractions.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         #if DEBUG
-        contentController.addUserScript(WKUserScript(source: MobileEditorInteractions.listDiagnosticsScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
-        coordinator.logInfo("PENNED-LIST native diagnostics enabled")
+        if ProcessInfo.processInfo.arguments.contains("-PennedListDiagnostics") {
+            contentController.addUserScript(WKUserScript(source: MobileEditorInteractions.listDiagnosticsScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            coordinator.logInfo("PENNED-LIST native diagnostics enabled")
+        }
+        if PennedKeyboardTrace.enabled {
+            PennedKeyboardTrace.start()
+            contentController.addUserScript(WKUserScript(source: PennedKeyboardTrace.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        }
         #endif
         #endif
 
@@ -420,6 +503,7 @@ fileprivate extension TipTapWebView {
         webView.navigationDelegate = coordinator
         #if DEBUG && os(iOS)
         webView.diagnosticCoordinator = coordinator
+        PennedKeyboardTrace.record("wk.create", session: coordinator.session, webView: webView, live: true)
         #endif
         coordinator.logInfo("⏱️ STARTUP +\(TipTapEditorStartupTiming.elapsedMS())ms makeWebView created \(ObjectIdentifier(webView).debugDescription)")
 
@@ -461,7 +545,27 @@ fileprivate extension TipTapWebView {
     }
 
     static func loadEditor(into webView: WKWebView, coordinator: Coordinator) {
-        if let cachedDocument = TipTapEditorAssetCache.cachedDocument {
+        let openingTrace = coordinator.session.openingTrace
+        let started = openingTrace?.event("webview-bootstrap-start")
+        #if DEBUG && os(iOS)
+        PennedKeyboardTrace.record("wk.loadEditor", session: coordinator.session, webView: webView, live: true)
+        #endif
+        Task { @MainActor [weak webView, weak coordinator] in
+            let cachedDocument = await Task.detached(priority: .utility) { TipTapEditorAssetCache.cachedDocument }.value
+            guard let webView, let coordinator, coordinator.isActive else {
+                openingTrace?.event("webview-bootstrap-discarded", "webViewAlive=\(webView != nil) coordinatorAlive=\(coordinator != nil) coordinatorActive=\(coordinator?.isActive == true)", since: started)
+                return
+            }
+            (openingTrace ?? coordinator.session.openingTrace)?.event("webview-assets-ready", "inline=\(cachedDocument != nil) bootstrapStartedBeforeTrace=\(openingTrace == nil)", since: started)
+            coordinator.session.attach(webView: webView)
+            coordinator.session.openingTiming?.mark("editor-assets-ready")
+            navigateEditor(in: webView, coordinator: coordinator, cachedDocument: cachedDocument)
+        }
+    }
+
+    private static func navigateEditor(in webView: WKWebView, coordinator: Coordinator,
+                                       cachedDocument: (html: String, baseURL: URL)?) {
+        if let cachedDocument {
             coordinator.logInfo("🌐 Loading inline TipTap editor HTML from VellixEditor.bundle")
             webView.loadHTMLString(cachedDocument.html, baseURL: cachedDocument.baseURL)
             return
@@ -471,12 +575,14 @@ fileprivate extension TipTapWebView {
             forResource: "VellixEditor",
             withExtension: "bundle"
         ) else {
+            coordinator.session.bridgeErrorMessage = "The bundled editor could not be found."
             coordinator.logError("VellixEditor.bundle was not found.")
             return
         }
 
         let htmlURL = bundleURL.appendingPathComponent("tiptap.html")
         guard FileManager.default.fileExists(atPath: htmlURL.path) else {
+            coordinator.session.bridgeErrorMessage = "The bundled editor page could not be found."
             coordinator.logError("tiptap.html was not found in VellixEditor.bundle.")
             return
         }
@@ -511,12 +617,26 @@ final class Coordinator:
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
-        guard message.name == "tiptap" else {
+        guard isActive, message.name == "tiptap" else {
             return
         }
 
+        let body = message.body
         #if DEBUG && os(iOS)
-        if let dictionary = message.body as? [String: Any],
+        if PennedKeyboardTrace.receive(message, body: body, session: session) { return }
+        #endif
+
+        #if DEBUG
+        if let dictionary = body as? [String: Any],
+           dictionary["kind"] as? String == "tabsDiagnostic" {
+            let payload = dictionary["payload"] as? [String: Any] ?? [:]
+            print("🧩 TABS JS: \(payload)")
+            return
+        }
+        #endif
+
+        #if DEBUG && os(iOS)
+        if let dictionary = body as? [String: Any],
            dictionary["kind"] as? String == "listCaretDiagnostic" {
             if let payload = dictionary["payload"] as? [String: Any],
                JSONSerialization.isValidJSONObject(payload),
@@ -528,24 +648,14 @@ final class Coordinator:
         }
         #endif
 
+        session.handleRawMessage(body)
         #if os(iOS)
-        if let dictionary = message.body as? [String: Any],
-           dictionary["kind"] as? String == "mobileSlashSuppression",
-           let payload = dictionary["payload"] as? [String: Any],
-           let suppressed = payload["suppressed"] as? Bool {
-            session.setMobileSlashMenuSuppressed(suppressed)
-            return
+        if let kind = (body as? [String: Any])?["kind"] as? String, ["ready", "error"].contains(kind) {
+            session.renderRecovery.record("bridge-event", ["kind": kind])
         }
         #endif
-
-        if let dictionary = message.body as? [String: Any] {
-            let kind = dictionary["kind"] as? String ?? "unknown"
-            logInfo("📨 TRACE WKScriptMessage kind=\(kind)")
-        }
-
-        session.handleRawMessage(message.body)
         #if DEBUG && os(iOS)
-        if let kind = (message.body as? [String: Any])?["kind"] as? String,
+        if TipTapHostLifecycleTrace.enabled, let kind = (body as? [String: Any])?["kind"] as? String,
            ["editorReady", "contentHeightChanged", "collectionRegionsChanged"].contains(kind) {
             scheduleRenderingDiagnostic(reason: kind)
         }
@@ -556,14 +666,37 @@ final class Coordinator:
         _ webView: WKWebView,
         didStartProvisionalNavigation navigation: WKNavigation!
     ) {
+        #if os(iOS)
+        session.renderRecovery.record("navigation-start")
+        #endif
+        #if DEBUG && os(iOS)
+        PennedKeyboardTrace.record("wk.navigation.start", session: session, webView: webView,
+            "nav=\(PennedKeyboardTrace.identity(navigation))", live: true)
+        #endif
         session.markNavigationStarted()
         logInfo("⏱️ STARTUP +\(TipTapEditorStartupTiming.elapsedMS())ms webView didStartProvisionalNavigation url=\(webView.url?.absoluteString ?? "nil")")
     }
+
+    #if DEBUG && os(iOS)
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        session.renderRecovery.record("navigation-committed")
+        PennedKeyboardTrace.record("wk.navigation.commit", session: session, webView: webView,
+            "nav=\(PennedKeyboardTrace.identity(navigation))", live: true)
+    }
+    #endif
 
     func webView(
         _ webView: WKWebView,
         didFinish navigation: WKNavigation!
     ) {
+        #if os(iOS)
+        session.renderRecovery.record("navigation-finished")
+        #endif
+        session.openingTrace?.event("webview-navigation-finished", "tipTapReady=\(session.isReady)")
+        #if DEBUG && os(iOS)
+        PennedKeyboardTrace.record("wk.navigation.finish", session: session, webView: webView,
+            "nav=\(PennedKeyboardTrace.identity(navigation))", live: true)
+        #endif
         logInfo("⏱️ STARTUP +\(TipTapEditorStartupTiming.elapsedMS())ms webView didFinish url=\(webView.url?.absoluteString ?? "nil")")
     }
 
@@ -572,6 +705,14 @@ final class Coordinator:
         didFail navigation: WKNavigation!,
         withError error: Error
     ) {
+        #if os(iOS)
+        session.renderRecovery.record("navigation-failed", ["error": PennedDocumentOpenTrace.errorCode(error)])
+        #endif
+        session.openingTrace?.event("webview-navigation-failed", "stage=committed error=\(PennedDocumentOpenTrace.errorCode(error))")
+        #if DEBUG && os(iOS)
+        PennedKeyboardTrace.record("wk.navigation.fail", session: session, webView: webView,
+            "nav=\(PennedKeyboardTrace.identity(navigation)) errorCode=\((error as NSError).code)", live: true)
+        #endif
         session.bridgeErrorMessage = error.localizedDescription
         logError("TipTap editor navigation failed: \(error.localizedDescription)")
     }
@@ -581,12 +722,28 @@ final class Coordinator:
         didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
+        #if os(iOS)
+        session.renderRecovery.record("navigation-provisional-failed", ["error": PennedDocumentOpenTrace.errorCode(error)])
+        #endif
+        session.openingTrace?.event("webview-navigation-failed", "stage=provisional error=\(PennedDocumentOpenTrace.errorCode(error))")
+        #if DEBUG && os(iOS)
+        PennedKeyboardTrace.record("wk.navigation.failProvisional", session: session, webView: webView,
+            "nav=\(PennedKeyboardTrace.identity(navigation)) errorCode=\((error as NSError).code)", live: true)
+        #endif
         session.markNavigationStarted()
         session.bridgeErrorMessage = error.localizedDescription
         logError("🌐🚨 TipTap editor failed to begin loading: \(error.localizedDescription)")
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        #if os(iOS)
+        session.renderRecovery.record("webcontent-process-terminated")
+        #endif
+        session.openingTrace?.event("webview-process-terminated", "willReload=\(isActive)")
+        #if DEBUG && os(iOS)
+        PennedKeyboardTrace.record("wk.processTerminated", session: session, webView: webView,
+            "willReload=\(isActive)", live: true)
+        #endif
         guard isActive else { return }
         logError("💥 WEBVIEW PROCESS TERMINATED url=\(webView.url?.absoluteString ?? "nil")")
         session.markNavigationStarted()
@@ -594,6 +751,9 @@ final class Coordinator:
     }
 
     func cleanUp(_ webView: WKWebView) {
+        #if DEBUG && os(iOS)
+        PennedKeyboardTrace.record("wk.cleanup", session: session, webView: webView, live: true)
+        #endif
         logInfo("🧹 TRACE webView cleanUp \(ObjectIdentifier(webView).debugDescription)")
         isActive = false
         session.detach(webView: webView)
@@ -614,7 +774,7 @@ final class Coordinator:
 
     #if DEBUG && os(iOS)
     func scheduleRenderingDiagnostic(reason: String) {
-        guard UIDevice.current.userInterfaceIdiom == .pad, session.preparesInteractivePresentation,
+        guard TipTapHostLifecycleTrace.enabled, UIDevice.current.userInterfaceIdiom == .pad, session.preparesInteractivePresentation,
               isActive, renderingDiagnosticTask == nil, renderingDiagnosticCount < 32 else { return }
         renderingDiagnosticTask = Task { @MainActor [weak self] in
             // Observe the committed SwiftUI layout without changing readiness or editor state.

@@ -14,6 +14,8 @@ struct TagEditorIntegration: ViewModifier {
     @State private var destination: TagDestinationRect?
     @State private var commitQueue: Task<Bool, Never>?
 
+    private var ownsEditorPresentation: Bool { environment.ownsEditorPresentation(documentID: model.documentID) }
+
     private var navigationKey: String {
         guard environment.selectedDocumentID == model.documentID, session.isPresentationReady,
               session.renderedDocumentID == model.documentID,
@@ -26,16 +28,19 @@ struct TagEditorIntegration: ViewModifier {
             .onReceive(session.$tagRequest) { request in
                 guard let request else { return }
                 session.tagRequest = nil
-                guard environment.selectedDocumentID == model.documentID else { discard(request); return }
+                guard ownsEditorPresentation else { discard(request); return }
                 if request.action == "commit" {
                     guard !locked else { discard(request); return }
                     Task { await apply(request, name: request.name) }
                 } else { menuRequest = request }
             }
-            .sheet(item: $menuRequest, onDismiss: {
+            .onChange(of: ownsEditorPresentation) { _, ownsPresentation in
+                if !ownsPresentation { menuRequest = nil; pendingTagName = nil }
+            }
+            .sheet(item: Binding(get: { ownsEditorPresentation ? menuRequest : nil }, set: { menuRequest = $0 }), onDismiss: {
                 let name = pendingTagName
                 pendingTagName = nil
-                guard let name, environment.selectedDocumentID == model.documentID else { return }
+                guard let name, ownsEditorPresentation else { return }
                 Task { await environment.browseTags(named: name) }
             }) { request in
                 TagActionsSheet(

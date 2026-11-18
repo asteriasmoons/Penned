@@ -101,6 +101,9 @@ struct TaskEditorSheet: View {
         .foregroundStyle(VellixSurface.controlInk)
         .frame(maxWidth: 620, maxHeight: .infinity, alignment: .top)
         .pennedSheet(title: panel.title, closeDisabled: isConfirming, close: { dismiss() }) {
+            #if os(iOS)
+            PennedSheetKeyboardDismissButton {}.disabled(isConfirming)
+            #endif
             if panel != .conversion && panel != .scheduling {
                 Button("Back") { panel = .scheduling }
             }

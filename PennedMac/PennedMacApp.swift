@@ -15,6 +15,7 @@ struct PennedMacApp: App {
     var body: some Scene {
         WindowGroup("Penned", id: "workspace") {
             MacLibraryWindowRoot().environmentObject(app).environmentObject(app.accounts).environmentObject(app.library)
+                .macWindowMaterial()
                 .pennedApplicationAppearance()
                 .macApplicationControls()
         }
@@ -24,6 +25,7 @@ struct PennedMacApp: App {
         .commands { MacWorkspaceCommands() }
         Settings {
             MacSettingsRoot().environmentObject(app).environmentObject(app.accounts).environmentObject(app.library)
+                .macWindowMaterial()
                 .pennedApplicationAppearance()
                 .macApplicationControls()
         }

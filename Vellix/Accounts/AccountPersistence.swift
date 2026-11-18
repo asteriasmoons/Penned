@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 enum AccountPersistence {
-    static func makeContainer(directory: URL? = nil, inMemory: Bool = false) throws -> ModelContainer {
+    nonisolated static func makeContainer(directory: URL? = nil, inMemory: Bool = false) throws -> ModelContainer {
         let schema = Schema([AuthUser.self])
         if inMemory {
             return try ModelContainer(for: schema, configurations: [

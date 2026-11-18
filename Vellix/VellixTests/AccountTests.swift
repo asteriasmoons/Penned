@@ -1,6 +1,7 @@
 import Foundation
 import SwiftData
 import AuthenticationServices
+import CloudKit
 import CryptoKit
 import Testing
 @testable import Vellix

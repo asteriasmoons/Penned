@@ -81,7 +81,21 @@ struct AccountLibrarySheet: View {
                             Text(revision.reason).font(.footnote).foregroundStyle(.secondary)
                             if let json = revision.row.values["tipTapJSON"]?.text {
                                 DisclosureGroup("Revision Content") {
-                                    Text((try? TipTapContentAnalyzer.analyze(json).plainText) ?? "").font(.footnote).textSelection(.enabled)
+                                    let details = recoveryDetails(json)
+                                    Text(details).font(.footnote).textSelection(.enabled)
+                                }
+                            }
+                            if !revision.deleted, let json = revision.row.values["tipTapJSON"]?.text {
+                                let tasks = (try? DocumentTaskIndex.contexts(in: json)) ?? []
+                                let titles = DocumentTaskIndex.texts(in: json)
+                                if !tasks.isEmpty {
+                                    Menu("Restore Individual Reminder") {
+                                        ForEach(tasks.filter { $0.metadata != nil }, id: \.blockID) { task in
+                                            Button(titles[task.blockID] ?? "Untitled Task") {
+                                                perform { try await workspace.recoverTask(revision, blockID: task.blockID); reloadRecovery() }
+                                            }
+                                        }
+                                    }.foregroundStyle(VellixSurface.violet)
                                 }
                             }
                             if !revision.deleted {
@@ -140,6 +154,38 @@ struct AccountLibrarySheet: View {
             do { try await operation() } catch { self.error = error.localizedDescription }
         }
     }
+    // Show structural metadata from the archived JSON, not just the flattened
+    // text preview, so reminder settings and InfoCard states are inspectable.
+    private func recoveryDetails(_ json: String) -> String {
+        let root = TipTapContentAnalyzer.documentObject(from: json)
+        var lines: [String] = []
+        func text(_ node: [String: Any]) -> String {
+            if node["type"] as? String == "text" { return node["text"] as? String ?? "" }
+            return (node["content"] as? [[String: Any]] ?? []).map(text).joined()
+        }
+        func visit(_ node: [String: Any]) {
+            let kind = node["type"] as? String ?? ""
+            let attrs = node["attrs"] as? [String: Any] ?? [:]
+            if kind == "informationCard" {
+                let collapsible = attrs["collapsible"] as? Bool ?? false
+                let collapsed = attrs["collapsed"] as? Bool ?? false
+                lines.append("InfoCard: collapsible \(collapsible ? "On" : "Off"), collapsed \(collapsed ? "Yes" : "No")")
+            }
+            if kind == "taskItem" {
+                let title = text(node).trimmingCharacters(in: .whitespacesAndNewlines)
+                if let task = DocumentTaskMetadata.decode(attrs["trackedTask"]) {
+                    let scheduled = task.scheduledAt.map { Date(timeIntervalSince1970: $0).formatted(date: .abbreviated, time: .shortened) } ?? "Not scheduled"
+                    lines.append("Task: \(title) | \(scheduled) | Reminder \(task.reminderEnabled ? "On" : "Off") | Repeat \(task.recurrence == nil ? "Off" : "On")")
+                } else {
+                    lines.append("Checklist: \(title)")
+                }
+            }
+            for child in node["content"] as? [[String: Any]] ?? [] { visit(child) }
+        }
+        visit(root)
+        return lines.isEmpty ? ((try? TipTapContentAnalyzer.analyze(json).plainText) ?? "") : lines.joined(separator: "\n")
+    }
+
     private func reloadRecovery() { revisions = (try? workspace.recoveryRevisions()) ?? [] }
 }
 

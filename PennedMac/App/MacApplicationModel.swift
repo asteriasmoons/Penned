@@ -33,9 +33,10 @@ import SwiftUI
             accounts?.currentUser?.remoteAuthDeleted == false ? accounts?.currentAccountIdentity?.libraryOwnerKey : nil
         }
         library.beforeLibraryChange = { [weak self] in try await self?.windows.closeLibraries() }
+        library.resumeImportsOn = windows.editorChanges.eraseToAnyPublisher()
         library.importIntoWindows = { [weak self] apply, root in
             guard let self else { throw LibraryError.staleWorkspace }
-            try await self.windows.importChanges(apply, root: root)
+            return try await self.windows.importChanges(apply, root: root)
         }
         MacApplicationDelegate.application = self
         PennedSyncNotifications.synchronize = { [weak self] in await self?.library.synchronize() }
@@ -119,8 +120,7 @@ struct MacLibraryWindowRoot: View {
                 }.padding(40)
             } else { ProgressView("Opening library").frame(maxWidth: .infinity, maxHeight: .infinity) }
         }
-        .frame(minWidth: 980, minHeight: 650).background(VellixSurface.appBackground)
-        .background(MacWindowAppearance().frame(width: 0, height: 0))
+        .frame(minWidth: 980, maxWidth: .infinity, minHeight: 650, maxHeight: .infinity)
         .fontDesign(.rounded).foregroundStyle(VellixSurface.ink).tint(VellixSurface.violet)
         .task { if !app.verificationMode { await accounts.bootstrap()?.value }; await app.activate() }
         .task(id: app.activationKey) { await app.activate() }
@@ -129,7 +129,7 @@ struct MacLibraryWindowRoot: View {
         .onReceive(NotificationCenter.default.publisher(for: ASAuthorizationAppleIDProvider.credentialRevokedNotification)) { _ in
             Task { await accounts.handleAppleCredentialRevoked() }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged).receive(on: DispatchQueue.main)) { _ in
             accounts.refreshProfile(); Task { await library.cloudIdentityChanged() }
         }
     }

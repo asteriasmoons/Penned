@@ -678,6 +678,25 @@ test("native nested block transforms never leave invalid container content", asy
     assert.equal(h.editor.state.doc.firstChild.firstChild.child(1).attrs.id, "other");
 });
 
+test("the conversion menu preserves heading identity and text when converting to a label or card", async t => {
+    const h = await fixture(t, [{ type: "heading", attrs: { id: "original", level: 2 }, content: [
+        { type: "text", text: "Keep this text", marks: [{ type: "italic" }] },
+    ] }, paragraph("tail", "After" )]);
+    h.swipe(0);
+    assert.equal(await h.w.tiptapCommand("setSelectedBlockType", { blockType: "labelHeading2" }), true);
+    const label = h.editor.state.doc.firstChild;
+    assert.equal(label.attrs.id, "original");
+    assert.equal(label.attrs.level, 2);
+    assert.equal(label.attrs.label.presentation, "label");
+    assert.equal(await h.w.tiptapCommand("setSelectedBlockType", { blockType: "informationCard" }), true);
+    const card = h.editor.state.doc.firstChild;
+    assert.equal(card.attrs.id, "original");
+    assert.equal(card.firstChild.textContent, "Keep this text");
+    assert.equal(card.firstChild.firstChild.marks[0].type.name, "italic");
+    assert.equal(h.editor.state.doc.lastChild.textContent, "After");
+    h.editor.state.doc.check();
+});
+
 test("a type change forbidden by the real parent schema cannot corrupt a leading list paragraph", async t => {
     const h = await fixture(t, [{ type: "bulletList", attrs: { id: "list" }, content: [
         { type: "listItem", attrs: { id: "item" }, content: [paragraph("leading"), paragraph("other")] },

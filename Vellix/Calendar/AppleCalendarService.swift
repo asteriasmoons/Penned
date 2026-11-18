@@ -9,7 +9,7 @@ import AppKit
 
 // EventKit objects never leave this actor. Views receive immutable, Sendable snapshots.
 actor AppleCalendarService {
-    private let store = EKEventStore()
+    private lazy var store = EKEventStore()
 
     func access() -> CalendarAccess {
         switch EKEventStore.authorizationStatus(for: .event) {

@@ -8,6 +8,7 @@ import CoreGraphics
 import SwiftUI
 
 enum TipTapEditorEvent: Equatable {
+    case requestTemplates(token: String)
     case tagRequest(InlineTagRequest)
     case requestCollection(CollectionEditorRequest)
     case requestTemplateComponent(TemplateComponentRequest)
@@ -17,11 +18,13 @@ enum TipTapEditorEvent: Equatable {
     case attachmentClipboard(token: String, html: String, text: String)
     case editorReady(blockCount: Int)
     case documentChanged(String)
+    case documentTextChanged(String)
     case documentSnapshot(String)
     case editorError(String)
     case focusChanged(Bool)
     case formattingStateChanged(TipTapFormattingState)
     case textConversionStateChanged(TipTapTextConversionState)
+    case requestBlockConversion(TipTapBlockConversionRequest)
     case statisticsChanged(wordCount: Int, characterCount: Int)
     case contentHeightChanged(height: CGFloat, visualContentBottom: CGFloat)
     case caretChanged(TipTapCaretUpdate)
@@ -29,18 +32,27 @@ enum TipTapEditorEvent: Equatable {
     case collectionRegionsChanged([TipTapCollectionRegion])
     case blockSelectionChanged(Int)
     case selectionModeChanged(String)
-    case requestCalloutIconPicker(blockID: String, icon: String, color: String)
+    case requestGridCardSettings(GridCardSettingsRequest)
+    case requestIconCalloutSettings(IconCalloutSettingsRequest)
+    case requestWashiTapeSettings(WashiTapeRequest)
+    case requestHeadingLabelSettings(HeadingLabelRequest)
     case requestCalloutColorPicker(blockID: String, color: String)
     case requestBlockquoteColorPicker(blockID: String, color: String)
-    case requestInlinePropertyEditor(blockID: String, property: InlinePropertyDefinition)
+    case requestInlinePropertyEditor(blockID: String, property: InlinePropertyDefinition, resumeEditing: Bool = true)
     case requestPropertyURL(String)
     case requestNestedPage(blockID: String)
     case requestPageCard(blockID: String)
     case requestOpenPage(documentID: String)
     case requestPageActions(documentID: String)
-    case requestBlockDeletion(token: String)
+    case requestPageCardSettings(documentID: String)
+    case requestBlockDeletion(token: String, blockType: String, blockID: String)
+    case requestListGridSettings(TipTapListGridSettings)
+    case requestCodeBlockEditor(CodeBlockEditorRequest)
+    case requestTabsSettings(TipTapTabsSettings)
+    case requestMinimalFieldsSettings(TipTapMinimalFieldsSettings)
+    case requestInformationCardSettings(TipTapInformationCardSettings)
     case slashMenuChanged(TipTapSlashMenuState?)
-    case selectedBlocksForSubpage(title: String, canonicalJSON: String)
+    case selectedBlocksForSubpage(token: String, canonicalJSON: String)
     case requestHaptic(style: String)
     case requestPlaceholderConversion(token: String)
     case requestTableCreation
@@ -57,8 +69,20 @@ enum TipTapEditorEvent: Equatable {
 
     init(kind: String, payload: [String: Any]) throws {
         switch kind {
+        case "templateRequest":
+            guard let token = payload["token"] as? String, !token.isEmpty else { self = .unknown(kind); return }
+            self = .requestTemplates(token: token)
         case "textConversionState":
             self = .textConversionStateChanged(TipTapTextConversionState.decode(payload))
+        case "blockConversionRequest":
+            guard let target = payload["target"] as? String, let token = payload["token"] as? String else {
+                self = .unknown(kind); return
+            }
+            let json = try (payload["document"] as? [String: Any]).map {
+                String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self)
+            }
+            self = .requestBlockConversion(TipTapBlockConversionRequest(target: target, token: token,
+                documentIDs: payload["documentIDs"] as? [String] ?? [], canonicalJSON: json))
         case "tagRequest":
             self = InlineTagRequest.decode(payload).map(Self.tagRequest) ?? .unknown(kind)
         case "attachmentClipboard":
@@ -125,7 +149,17 @@ enum TipTapEditorEvent: Equatable {
             self = .editorReady(blockCount: blockCount)
 
         case "update":
-            self = .documentChanged(try Self.documentJSON(from: payload))
+            if let json = payload["textDocumentJSON"] as? String {
+                // The matching editor bundle sends its normalized document as one
+                // string. Validate/canonicalize it with the repository save,
+                // not by converting a full WKScriptMessage object on main.
+                guard json.hasPrefix("{\"type\":\"doc\",") else {
+                    throw VellixError.invalidEditorJSON("The editor text checkpoint did not contain a document.")
+                }
+                self = .documentTextChanged(json)
+            } else {
+                self = .documentChanged(try Self.documentJSON(from: payload))
+            }
 
         case "snapshot":
             self = .documentSnapshot(try Self.documentJSON(from: payload))
@@ -193,11 +227,16 @@ enum TipTapEditorEvent: Equatable {
             let mode = payload["mode"] as? String ?? "off"
             self = .selectionModeChanged(mode)
 
-        case "iconPickerRequest":
-            let blockID = payload["blockId"] as? String ?? ""
-            let icon = payload["currentIcon"] as? String ?? "sparkle"
-            let color = payload["currentColor"] as? String ?? "#ffffff"
-            self = .requestCalloutIconPicker(blockID: blockID, icon: icon, color: color)
+        case "gridCardSettings":
+            self = GridCardSettingsRequest(payload: payload).map(Self.requestGridCardSettings) ?? .unknown(kind)
+        case "iconCalloutSettings":
+            self = IconCalloutSettingsRequest(payload: payload).map(Self.requestIconCalloutSettings) ?? .unknown(kind)
+
+        case "washiTapeSettings":
+            self = WashiTapeRequest(payload: payload).map(Self.requestWashiTapeSettings) ?? .unknown(kind)
+
+        case "headingLabelSettings":
+            self = HeadingLabelRequest(payload: payload).map(Self.requestHeadingLabelSettings) ?? .unknown(kind)
 
         case "blockquoteColorPickerRequest":
             let blockID = payload["blockId"] as? String ?? ""
@@ -215,7 +254,8 @@ enum TipTapEditorEvent: Equatable {
                 self = .editorError("The property configuration could not be read.")
                 return
             }
-            self = .requestInlinePropertyEditor(blockID: blockID, property: property)
+            self = .requestInlinePropertyEditor(blockID: blockID, property: property,
+                resumeEditing: payload["resumeEditing"] as? Bool ?? true)
 
         case "propertyURLRequest":
             guard let value = payload["url"] as? String,
@@ -224,6 +264,10 @@ enum TipTapEditorEvent: Equatable {
                 return
             }
             self = .requestPropertyURL(url.absoluteString)
+
+        case "documentLinkOpen":
+            self = (payload["url"] as? String).flatMap(DocumentLinkURL.openable)
+                .map { .requestPropertyURL($0.absoluteString) } ?? .unknown(kind)
 
         case "slashMenu":
             let visible = payload["visible"] as? Bool ?? false
@@ -241,17 +285,138 @@ enum TipTapEditorEvent: Equatable {
         case "pageActionsRequest":
             self = .requestPageActions(documentID: payload["documentId"] as? String ?? "")
 
+        case "pageCardSettingsRequest":
+            self = .requestPageCardSettings(documentID: payload["documentId"] as? String ?? "")
+
         case "blockActionsRequest":
             guard let token = payload["token"] as? String, !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 self = .unknown(kind)
                 return
             }
-            self = .requestBlockDeletion(token: token)
+            self = .requestBlockDeletion(token: token,
+                blockType: payload["blockType"] as? String ?? "",
+                blockID: payload["blockId"] as? String ?? "")
+
+        case "codeBlockEdit":
+            self = CodeBlockEditorRequest(payload: payload).map(Self.requestCodeBlockEditor) ?? .unknown(kind)
+        case "listGridSettings":
+            guard let blockID = payload["blockId"] as? String, !blockID.isEmpty else { self = .unknown(kind); return }
+            let defaults = payload["defaults"] as? [String: Any] ?? [:]
+            let rawRows = payload["rows"] as? [[String: Any]] ?? []
+            let rows = rawRows.map { row in
+                let style = TipTapListGridRowStyle(rawValue: row["rowStyle"] as? String ?? "")
+                    ?? ((row["isHeader"] as? Bool) == true ? .filled : .standard)
+                return TipTapListGridRow(label: row["label"] as? String ?? "", value: row["value"] as? String ?? "", style: style)
+            }
+            let leftFractionValue = (payload["leftFraction"] as? Int) ?? (payload["leftFraction"] as? NSNumber)?.intValue ?? 34
+            let defaultFractionValue = (defaults["leftFraction"] as? Int) ?? (defaults["leftFraction"] as? NSNumber)?.intValue ?? 34
+            self = .requestListGridSettings(TipTapListGridSettings(
+                blockID: blockID,
+                cardBackground: payload["cardBackground"] as? String ?? "#E8DEF5",
+                cardBorder: payload["cardBorder"] as? String ?? "#DBCEEF",
+                leftBackground: payload["leftBackground"] as? String ?? "#D3C6E7",
+                rightBorder: payload["rightBorder"] as? String ?? "#E4D9F3",
+                leftFraction: leftFractionValue,
+                defaultLeftFraction: defaultFractionValue,
+                rows: rows))
+
+        case "tabsSettings":
+            guard let blockID = payload["blockId"] as? String, !blockID.isEmpty else { self = .unknown(kind); return }
+            let rawTabs = payload["tabs"] as? [[String: Any]] ?? []
+            let tabs = rawTabs.compactMap { tab -> TipTapTabInfo? in
+                guard let id = tab["id"] as? String, !id.isEmpty else { return nil }
+                return TipTapTabInfo(tabID: id, name: tab["name"] as? String ?? "")
+            }
+            func tabsInt(_ key: String, _ fallback: Int) -> Int {
+                (payload[key] as? Int) ?? (payload[key] as? NSNumber)?.intValue ?? fallback
+            }
+            self = .requestTabsSettings(TipTapTabsSettings(
+                blockID: blockID,
+                activeTab: payload["activeTab"] as? String ?? (tabs.first?.tabID ?? ""),
+                tabs: tabs,
+                showContainer: payload["showContainer"] as? Bool ?? true,
+                showHeader: payload["showHeader"] as? Bool ?? false,
+                title: payload["title"] as? String ?? "",
+                subtitle: payload["subtitle"] as? String ?? "",
+                icon: payload["icon"] as? String ?? "",
+                tabBarStyle: payload["tabBarStyle"] as? String ?? "filled",
+                alignment: payload["alignment"] as? String ?? "leading",
+                dividerVisible: payload["dividerVisible"] as? Bool ?? true,
+                activeTabBg: payload["activeTabBg"] as? String ?? "#3A3A3C",
+                activeTabText: payload["activeTabText"] as? String ?? "#FFFFFF",
+                inactiveTabBg: payload["inactiveTabBg"] as? String ?? "#1C1C1E",
+                inactiveTabText: payload["inactiveTabText"] as? String ?? "#9A9AA0",
+                indicatorColor: payload["indicatorColor"] as? String ?? "#7C5CFF",
+                titleColor: payload["titleColor"] as? String ?? "#FFFFFF",
+                subtitleColor: payload["subtitleColor"] as? String ?? "#9A9AA0",
+                tabCornerRadius: tabsInt("tabCornerRadius", 10),
+                tabSpacing: tabsInt("tabSpacing", 8),
+                containerBg: payload["containerBg"] as? String ?? "#111113",
+                containerBorder: payload["containerBorder"] as? String ?? "#2A2A2E",
+                borderWidth: tabsInt("borderWidth", 1),
+                cornerRadius: tabsInt("cornerRadius", 16),
+                padding: tabsInt("padding", 14),
+                outerSpacing: tabsInt("outerSpacing", 8),
+                shadow: payload["shadow"] as? Bool ?? false))
+
+        case "informationCardSettings":
+            guard let blockID = payload["blockId"] as? String, !blockID.isEmpty else { self = .unknown(kind); return }
+            self = .requestInformationCardSettings(TipTapInformationCardSettings(
+                blockID: blockID,
+                backgroundColor: payload["backgroundColor"] as? String ?? "#202024",
+                borderColor: payload["borderColor"] as? String ?? "#393940",
+                dividerColor: payload["dividerColor"] as? String ?? "#393940",
+                titleColor: payload["titleColor"] as? String ?? "#FFFFFF",
+                textColor: payload["textColor"] as? String ?? "#E4E4EA",
+                cornerRadius: (payload["cornerRadius"] as? NSNumber)?.intValue ?? 16,
+                padding: (payload["padding"] as? NSNumber)?.intValue ?? 16,
+                showBorder: payload["showBorder"] as? Bool ?? true,
+                borderThickness: (payload["borderThickness"] as? NSNumber)?.intValue ?? 1,
+                showLabels: payload["showLabels"] as? Bool ?? true,
+                collapsible: payload["collapsible"] as? Bool ?? false,
+                hideTitle: payload["hideTitle"] as? Bool ?? false,
+                hideDescription: payload["hideDescription"] as? Bool ?? false,
+                hideDivider: payload["hideDivider"] as? Bool ?? false))
+        case "minimalFieldsSettings":
+            guard let blockID = payload["blockId"] as? String, !blockID.isEmpty else { self = .unknown(kind); return }
+            let rawRecords = payload["records"] as? [[String: Any]] ?? []
+            let records = rawRecords.compactMap { record -> TipTapMinimalRecord? in
+                guard let id = record["id"] as? String, !id.isEmpty else { return nil }
+                let rawFields = record["fields"] as? [[String: Any]] ?? []
+                let fields = rawFields.compactMap { field -> TipTapMinimalFieldInfo? in
+                    guard let fieldID = field["id"] as? String, !fieldID.isEmpty else { return nil }
+                    return TipTapMinimalFieldInfo(fieldID: fieldID, label: field["label"] as? String ?? "")
+                }
+                return TipTapMinimalRecord(recordID: id, title: record["title"] as? String ?? "", fields: fields)
+            }
+            func minInt(_ key: String, _ fallback: Int) -> Int {
+                (payload[key] as? Int) ?? (payload[key] as? NSNumber)?.intValue ?? fallback
+            }
+            self = .requestMinimalFieldsSettings(TipTapMinimalFieldsSettings(
+                blockID: blockID,
+                records: records,
+                accentColor: payload["accentColor"] as? String ?? "#7C5CFF",
+                accentWidth: minInt("accentWidth", 3),
+                titleColor: payload["titleColor"] as? String ?? "#FFFFFF",
+                labelColor: payload["labelColor"] as? String ?? "#B98CFF",
+                valueColor: payload["valueColor"] as? String ?? "#E4E4EA",
+                dividerColor: payload["dividerColor"] as? String ?? "#2A2A2E",
+                dividerVisible: payload["dividerVisible"] as? Bool ?? true,
+                showRecordTitles: payload["showRecordTitles"] as? Bool ?? true,
+                labelUppercase: payload["labelUppercase"] as? Bool ?? true,
+                titleSize: minInt("titleSize", 20),
+                labelSize: minInt("labelSize", 12),
+                valueSize: minInt("valueSize", 15),
+                fieldSpacing: minInt("fieldSpacing", 12),
+                recordSpacing: minInt("recordSpacing", 18),
+                outerSpacing: minInt("outerSpacing", 8)))
 
         case "selectedBlocksForSubpage":
-            let title = payload["title"] as? String ?? "New Sub Page"
+            guard let token = payload["token"] as? String, !token.isEmpty else {
+                throw VellixError.editorBridge("The editor bundle must be updated before grouping blocks.")
+            }
             self = .selectedBlocksForSubpage(
-                title: title,
+                token: token,
                 canonicalJSON: try Self.documentJSON(from: payload)
             )
 
@@ -300,6 +465,7 @@ enum TipTapEditorEvent: Equatable {
             anchorX: payload.cgFloatValue(for: "anchorX") ?? 0,
             anchorY: payload.cgFloatValue(for: "anchorY") ?? 0,
             width: payload.cgFloatValue(for: "width") ?? 342,
+            anchorAboveY: payload.cgFloatValue(for: "anchorAboveY"),
             items: items
         )
     }
@@ -322,6 +488,193 @@ enum TipTapEditorEvent: Equatable {
     }
 }
 
+enum TipTapListGridRowStyle: String, CaseIterable {
+    case standard = "default"
+    case filled
+    case outlined
+
+    var title: String {
+        switch self {
+        case .standard: return "Default"
+        case .filled: return "Both Filled"
+        case .outlined: return "Both Outlined"
+        }
+    }
+}
+
+struct TipTapListGridRow: Equatable {
+    var label: String
+    var value: String
+    var style: TipTapListGridRowStyle = .standard
+}
+
+struct TipTapListGridSettings: Identifiable, Equatable {
+    let id = UUID()
+    var blockID: String
+    var cardBackground: String
+    var cardBorder: String
+    var leftBackground: String
+    var rightBorder: String
+    var leftFraction: Int
+    var defaultLeftFraction: Int
+    var rows: [TipTapListGridRow]
+}
+
+struct TipTapTabInfo: Identifiable, Equatable {
+    var tabID: String
+    var name: String
+    var id: String { tabID }
+}
+
+struct TipTapTabsSettings: Identifiable, Equatable {
+    let id = UUID()
+    var blockID: String
+    var activeTab: String
+    var tabs: [TipTapTabInfo]
+    // General
+    var showContainer: Bool
+    var showHeader: Bool
+    var title: String
+    var subtitle: String
+    var icon: String
+    // Appearance
+    var tabBarStyle: String
+    var alignment: String
+    var dividerVisible: Bool
+    var activeTabBg: String
+    var activeTabText: String
+    var inactiveTabBg: String
+    var inactiveTabText: String
+    var indicatorColor: String
+    var titleColor: String
+    var subtitleColor: String
+    var tabCornerRadius: Int
+    var tabSpacing: Int
+    // Container
+    var containerBg: String
+    var containerBorder: String
+    var borderWidth: Int
+    var cornerRadius: Int
+    var padding: Int
+    var outerSpacing: Int
+    var shadow: Bool
+}
+
+struct TipTapMinimalFieldInfo: Identifiable, Equatable {
+    var fieldID: String
+    var label: String
+    var id: String { fieldID }
+}
+
+struct TipTapMinimalRecord: Identifiable, Equatable {
+    var recordID: String
+    var title: String
+    var fields: [TipTapMinimalFieldInfo]
+    var id: String { recordID }
+}
+
+struct TipTapInformationCardSettings: Identifiable, Equatable {
+    let id = UUID()
+    var blockID: String
+    var backgroundColor: String
+    var borderColor: String
+    var dividerColor: String
+    var titleColor: String
+    var textColor: String
+    var cornerRadius: Int
+    var padding: Int
+    var showBorder: Bool
+    var borderThickness: Int
+    var showLabels: Bool
+    var collapsible: Bool
+    var hideTitle = false
+    var hideDescription = false
+    var hideDivider = false
+}
+
+struct TipTapMinimalFieldsSettings: Identifiable, Equatable {
+    let id = UUID()
+    var blockID: String
+    var records: [TipTapMinimalRecord]
+    // Appearance
+    var accentColor: String
+    var accentWidth: Int
+    var titleColor: String
+    var labelColor: String
+    var valueColor: String
+    var dividerColor: String
+    var dividerVisible: Bool
+    var showRecordTitles: Bool
+    var labelUppercase: Bool
+    var titleSize: Int
+    var labelSize: Int
+    var valueSize: Int
+    var fieldSpacing: Int
+    var recordSpacing: Int
+    var outerSpacing: Int
+}
+
+nonisolated struct TipTapSelectedBlocksStyle: Equatable {
+    var type: String?
+    var alignment: String?
+    var list: String?
+    var font: String?
+    var target: String?
+    var marks: Set<String> = []
+    var canLabel = false
+    var canColorDivider = false
+    var dividerColor: String?
+
+    static func decode(_ value: Any?) -> Self? {
+        guard let payload = value as? [String: Any] else { return nil }
+        return Self(type: payload["type"] as? String, alignment: payload["alignment"] as? String,
+                    list: payload["list"] as? String, font: payload["font"] as? String,
+                    target: payload["target"] as? String,
+                    marks: Set(payload["marks"] as? [String] ?? []), canLabel: payload["canLabel"] as? Bool ?? false,
+                    canColorDivider: payload["canColorDivider"] as? Bool ?? false, dividerColor: payload["dividerColor"] as? String)
+    }
+}
+
+nonisolated struct TipTapSelectedBlockSettings: Equatable {
+    let kind: String
+    let blockID: String
+    let selectionTarget: String
+
+    static func decode(_ value: Any?) -> Self? {
+        guard let payload = value as? [String: Any], let kind = payload["kind"] as? String,
+              let blockID = payload["blockID"] as? String, !blockID.isEmpty,
+              let target = payload["selectionTarget"] as? String, !target.isEmpty else { return nil }
+        return Self(kind: kind, blockID: blockID, selectionTarget: target)
+    }
+
+    var title: String? { Self.title(for: kind) }
+
+    static func title(for kind: String?) -> String? {
+        switch kind {
+        case "headingLabel": "Heading Label Settings"
+        case "minimalFields": "Fields Settings"
+        case "informationCard": "Information Card Settings"
+        case "tabs": "Tabs Settings"
+        case "plainCallout": "Callout Settings"
+        case "blockquote": "Blockquote Color"
+        case "listGrid": "List Grid Settings"
+        case "gridCard": "Grid Card Settings"
+        case "iconCallout": "Icon Callout Settings"
+        case "codeBlock": "Code Block Settings"
+        case "washiTape": "Washi Tape Settings"
+        case "table": "Table Settings"
+        case "attachment": "File Settings"
+        case "taskItem": "Task Settings"
+        case "inlineProperty": "Property Settings"
+        case "templateComponent": "Component Settings"
+        case "collection": "Collection Settings"
+        case "pageCard": "Page Card Settings"
+        case "documentLink": "Link Settings"
+        default: nil
+        }
+    }
+}
+
 nonisolated struct TipTapFormattingState: Equatable {
     var bold = false
     var italic = false
@@ -336,6 +689,13 @@ nonisolated struct TipTapFormattingState: Equatable {
     var textColor: InlineTextColor?
     var canColorText = false
     var textColorToken: String?
+    var canLinkText = false
+    var textLinkActive = false
+    var canOpenListGridSettings = false
+    var blockSettingsKind: String?
+    var selectedBlockSettings: TipTapSelectedBlockSettings?
+    var selectedLink: SelectedDocumentLink?
+    var selectedBlocksStyle: TipTapSelectedBlocksStyle?
 
     static func decode(_ payload: [String: Any]) -> Self {
         let alignment = payload["alignment"] as? String
@@ -351,7 +711,18 @@ nonisolated struct TipTapFormattingState: Equatable {
             hasTextSelection: payload["hasTextSelection"] as? Bool ?? false,
             textColor: InlineTextColor.decode(payload["textColor"]),
             canColorText: payload["canColorText"] as? Bool ?? (payload["hasTextSelection"] as? Bool ?? false),
-            textColorToken: payload["textColorToken"] as? String)
+            textColorToken: payload["textColorToken"] as? String,
+            canLinkText: payload["canLinkText"] as? Bool ?? false,
+            textLinkActive: payload["textLinkActive"] as? Bool ?? false,
+            canOpenListGridSettings: payload["canOpenListGridSettings"] as? Bool ?? false,
+            blockSettingsKind: payload["blockSettingsKind"] as? String,
+            selectedBlockSettings: TipTapSelectedBlockSettings.decode(payload["selectedBlockSettings"]),
+            selectedLink: SelectedDocumentLink(payload["selectedLink"]),
+            selectedBlocksStyle: TipTapSelectedBlocksStyle.decode(payload["selectedBlocksStyle"]))
+    }
+
+    var blockSettingsTitle: String? {
+        TipTapSelectedBlockSettings.title(for: blockSettingsKind) ?? (canOpenListGridSettings ? "List Grid Settings" : nil)
     }
 }
 
@@ -437,6 +808,7 @@ struct TipTapSlashMenuState: Equatable {
     var anchorX: CGFloat
     var anchorY: CGFloat
     var width: CGFloat
+    var anchorAboveY: CGFloat? = nil
     var items: [TipTapSlashMenuItem]
 }
 
@@ -491,7 +863,8 @@ struct TipTapEditorCommand {
         TipTapEditorCommand(
             "setContent",
             args: [
-                "document": TipTapContentAnalyzer.documentObject(from: canonicalJSON)
+                "document": TipTapContentAnalyzer.documentObject(from: canonicalJSON),
+                "textCheckpoints": true
             ]
         )
     }
@@ -508,8 +881,8 @@ struct TipTapEditorCommand {
         TipTapEditorCommand("focusDocumentEnd")
     }
 
-    static func setEditable(_ editable: Bool) -> TipTapEditorCommand {
-        TipTapEditorCommand("setEditable", args: ["editable": editable])
+    static func setEditable(_ editable: Bool, preservingBlockSelection: Bool = false) -> TipTapEditorCommand {
+        TipTapEditorCommand("setEditable", args: ["editable": editable, "preservingBlockSelection": preservingBlockSelection])
     }
 
     static func setTheme(_ theme: String) -> TipTapEditorCommand {
@@ -517,12 +890,15 @@ struct TipTapEditorCommand {
     }
 
     static func setAppearance(_ appearance: DocumentAppearance, interfaceScheme: ColorScheme = .dark) -> TipTapEditorCommand {
-        TipTapEditorCommand(
+        let paper = appearance.themeID == nil ? appearance.editorBackground : appearance.innerPageBackground
+        // The paper is painted by SwiftUI. This token describes it to the
+        // WebView for contrast calculations; the WebView stays transparent.
+        return TipTapEditorCommand(
             "setAppearance",
             args: [
                 "textColor": appearance.textColorHex,
                 "fontFamily": appearance.fontStyle.cssFamily,
-                "pageBackground": "transparent",
+                "pageBackground": paper.kind == .solid ? paper.colorHex : "transparent",
                 "colorScheme": appearance.presentationColorScheme == .light ? "light" : "dark",
                 "interfaceScheme": interfaceScheme == .light ? "light" : "dark"
             ]
@@ -558,18 +934,8 @@ struct TipTapEditorCommand {
         TipTapEditorCommand("insertBlock", args: ["blockType": blockType])
     }
 
-    static func insertCallout(icon: String, text: String, color: String = "#ffffff") -> TipTapEditorCommand {
-        TipTapEditorCommand(
-            "insertCallout",
-            args: [
-                "icon": icon,
-                "text": text,
-                "color": color
-            ]
-        )
-    }
-
-    static func setSelectedBlockType(_ blockType: String, level: Int? = nil, color: String? = nil) -> TipTapEditorCommand {
+    static func setSelectedBlockType(_ blockType: String, level: Int? = nil, color: String? = nil,
+                                     selectionTarget: String? = nil) -> TipTapEditorCommand {
         var args: [String: Any] = [
             "blockType": blockType
         ]
@@ -581,6 +947,7 @@ struct TipTapEditorCommand {
         if let color {
             args["color"] = color
         }
+        if let selectionTarget { args["selectionTarget"] = selectionTarget }
 
         return TipTapEditorCommand("setSelectedBlockType", args: args)
     }
@@ -597,11 +964,12 @@ struct TipTapEditorCommand {
         TipTapEditorCommand("setSelectedCalloutColor", args: ["color": color])
     }
 
-    static func formatSelectedBlocks(action: String, value: String? = nil) -> TipTapEditorCommand {
+    static func formatSelectedBlocks(action: String, value: String? = nil, selectionTarget: String? = nil) -> TipTapEditorCommand {
         var args: [String: Any] = ["action": action]
         if let value {
             args["value"] = value
         }
+        if let selectionTarget { args["selectionTarget"] = selectionTarget }
         return TipTapEditorCommand("formatSelectedBlocks", args: args)
     }
 
@@ -615,16 +983,6 @@ struct TipTapEditorCommand {
             args["value"] = value
         }
         return TipTapEditorCommand("formatCurrentSelection", args: args)
-    }
-
-    static func updateCalloutIcon(blockID: String?, icon: String) -> TipTapEditorCommand {
-        var args: [String: Any] = ["icon": icon]
-
-        if let blockID {
-            args["blockId"] = blockID
-        }
-
-        return TipTapEditorCommand("updateCalloutIcon", args: args)
     }
 
     static func updateCalloutColor(blockID: String, color: String) -> TipTapEditorCommand {

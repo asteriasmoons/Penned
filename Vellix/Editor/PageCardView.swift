@@ -1,6 +1,69 @@
 import SwiftUI
 import ImageIO
 
+struct PageCardPreviewGroup {
+    var nodes: [[String: Any]]
+    let smallCards: Bool
+    var gridCards = false
+    var richLinkCards = false
+    var plainCallouts = false
+
+    static func groups(_ nodes: [[String: Any]], documents: [DocumentRecord], includeRichLinkCards: Bool = false,
+                       includePlainCallouts: Bool = false) -> [Self] {
+        let records = Dictionary(uniqueKeysWithValues: documents.map { ($0.id, $0) })
+        var groups: [Self] = []
+        for node in nodes {
+            let id = (node["attrs"] as? [String: Any])?["documentID"] as? String ?? ""
+            let small = node["type"] as? String == "pageReference" && records[id]?.cardStyle?.size.fillsDocumentWidth == false
+            let grid = GridCardSettings.isHalf(node)
+            let attrs = node["attrs"] as? [String: Any]
+            let halfCallout = includePlainCallouts && node["type"] as? String == "plainCallout"
+                && !(attrs?["clipSource"] is [String: Any]) && attrs?["widthPercent"] as? Double == 50
+            let linkCard = includeRichLinkCards && node["type"] as? String == "richLink"
+                && (node["attrs"] as? [String: Any])?["layout"] as? String == RichLinkLayout.card.rawValue
+            if (small && groups.last?.smallCards == true) || (grid && groups.last?.gridCards == true)
+                || (linkCard && groups.last?.richLinkCards == true) || (halfCallout && groups.last?.plainCallouts == true) {
+                groups[groups.count - 1].nodes.append(node)
+            } else { groups.append(Self(nodes: [node], smallCards: small, gridCards: grid, richLinkCards: linkCard, plainCallouts: halfCallout)) }
+        }
+        return groups
+    }
+}
+
+struct PageCardFlowLayout: Layout {
+    let smallCards: [Bool]
+
+    private func frames(width: CGFloat, subviews: Subviews) -> [CGRect] {
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+        return subviews.enumerated().map { index, subview in
+            let small = smallCards.indices.contains(index) && smallCards[index]
+            let itemWidth = small ? max(0, (width - 12) / 2) : width
+            let gap: CGFloat = 12
+            if x > 0 && (!small || x + gap + itemWidth > width + 0.5) {
+                x = 0; y += rowHeight + 12; rowHeight = 0
+            }
+            let left = x > 0 ? x + gap : 0
+            let size = subview.sizeThatFits(ProposedViewSize(width: itemWidth, height: nil))
+            let rect = CGRect(x: left, y: y, width: itemWidth, height: size.height)
+            x = rect.maxX
+            rowHeight = max(rowHeight, size.height)
+            return rect
+        }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = max(0, proposal.width ?? subviews.map { $0.sizeThatFits(.unspecified).width }.max() ?? 0)
+        return CGSize(width: width, height: frames(width: width, subviews: subviews).map(\.maxY).max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for (subview, frame) in zip(subviews, frames(width: bounds.width, subviews: subviews)) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), anchor: .topLeading,
+                proposal: ProposedViewSize(width: frame.width, height: frame.height))
+        }
+    }
+}
+
 struct PageCardView: View {
     var document: DocumentRecord
     var style: PageCardStyle
@@ -8,15 +71,18 @@ struct PageCardView: View {
     var includeBackdrop = true
     var isStylePreview = false
     var fillsDocumentWidth = false
+    var fillsCardSlot = false
     var attachmentStore: AttachmentStore? = nil
     var containingFontStyle: DocumentFontStyle? = nil
+    var previews: DocumentPreviewCache? = nil
+    @Environment(\.colorScheme) private var colorScheme
     private var textFont: DocumentFontStyle {
         containingFontStyle == .hachiMaruPop ? .hachiMaruPop : document.appearance.fontStyle
     }
 
     @ViewBuilder
     var body: some View {
-        if fillsDocumentWidth && style.size.fillsDocumentWidth {
+        if fillsCardSlot || (fillsDocumentWidth && style.size.fillsDocumentWidth) {
             GeometryReader { proxy in
                 cardFace.scaleEffect(proxy.size.width / style.size.size.width, anchor: .topLeading)
             }
@@ -32,7 +98,13 @@ struct PageCardView: View {
             if style.backdrop == .photo {
                 LinearGradient(colors: [.black.opacity(0.38), .black.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing)
             }
-            if style.showsPages { pages }
+            if style.showsPages {
+                switch style.previewStyle {
+                case .pages: pages
+                case .stickyNote: stickyNote
+                case .openPage: openPage
+                }
+            }
             text
         }
         .frame(width: style.size.size.width, height: style.size.size.height, alignment: .topLeading)
@@ -85,6 +157,43 @@ struct PageCardView: View {
         }
     }
 
+    private var stickyNote: some View {
+        let size: CGSize
+        let position: CGPoint
+        switch style.size {
+        case .compact:
+            size = CGSize(width: 29, height: 33); position = CGPoint(x: 15, y: 12)
+        case .landscape, .portrait:
+            size = CGSize(width: 96, height: 112); position = CGPoint(x: 42, y: 50)
+        case .wide:
+            size = CGSize(width: 100, height: 112); position = CGPoint(x: 258, y: 26)
+        case .large:
+            size = CGSize(width: 96, height: 110); position = CGPoint(x: 210, y: 22)
+        }
+        return StickyNotePagePreview(snapshot: isStylePreview ? nil : previews?.cardSnapshot(for: document, colorScheme: colorScheme, hidesPageSurfaces: true), size: size)
+            .rotationEffect(.degrees(-4))
+            .offset(x: position.x, y: position.y)
+    }
+
+    private var openPage: some View {
+        let size: CGSize
+        let position: CGPoint
+        switch style.size {
+        case .compact:
+            size = CGSize(width: 40, height: 28); position = CGPoint(x: 14, y: 12)
+        case .landscape, .portrait:
+            size = CGSize(width: 188, height: 131); position = CGPoint(x: 31, y: 47)
+        case .wide:
+            size = CGSize(width: 120, height: 84); position = CGPoint(x: 238, y: 24)
+        case .large:
+            size = CGSize(width: 164, height: 114); position = CGPoint(x: 202, y: 27)
+        }
+        let appearance = document.appearance.resolved(for: colorScheme)
+        return OpenPagePreview(snapshots: isStylePreview ? nil : previews?.openPageSnapshots(for: document, colorScheme: colorScheme),
+            size: size, paperColor: appearance.presentationColorScheme == .dark ? "#242424" : "#FAFAF8")
+            .offset(x: position.x, y: position.y)
+    }
+
     private var text: some View {
         let compact = style.size == .compact && style.showsPages
         let full = style.size == .large && style.showsPages
@@ -99,7 +208,7 @@ struct PageCardView: View {
                 .lineLimit(full ? 2 : 1)
             if showsExcerpt {
                 Text(isStylePreview ? "Preview of the page will be displayed here. Tap to add content." :
-                    (document.previewText == "No content yet" ? "Empty page" : document.previewText))
+                    PageReferencePresentation.previewText(document, previews: previews))
                     .font(textFont.font(size: compact ? 11 : 13))
                     .foregroundStyle(Color(vellixHex: textColor).opacity(0.62))
                     .lineLimit(compact ? 1 : (full ? 4 : 2))
@@ -113,23 +222,21 @@ struct PageCardView: View {
     private var textColor: String { style.backdrop == .none ? document.appearance.textColorHex : style.textColor }
 
     private func miniature(size: CGSize, second: Bool = false) -> some View {
-        NestedPageThumbnail(json: isStylePreview ? TipTapContentAnalyzer.emptyDocumentJSON : (second ? continuationJSON : document.tipTapJSON),
-            title: second ? "" : document.title, appearance: document.appearance, size: size, isCardSheet: true, isStylePreview: isStylePreview,
-            cover: document.cover, attachmentStore: attachmentStore, includesCover: !second)
-            .compositingGroup()
-            .shadow(color: .black.opacity(0.30), radius: 0.8, x: 0, y: 1)
-            .shadow(color: .black.opacity(0.32), radius: 5, x: 1, y: 4)
-    }
-
-    private var continuationJSON: String {
-        var object = TipTapContentAnalyzer.documentObject(from: document.tipTapJSON)
-        let blocks = object["content"] as? [[String: Any]] ?? []
-        if let boundary = blocks.firstIndex(where: { $0["type"] as? String == "pageBreak" }) {
-            object["content"] = Array(blocks.dropFirst(boundary + 1))
-        } else {
-            object["content"] = []
+        Group {
+            if isStylePreview {
+                NestedPageThumbnail(json: TipTapContentAnalyzer.emptyDocumentJSON, title: "", appearance: document.appearance,
+                    size: size, isCardSheet: true, isStylePreview: true, includesCover: !second)
+            } else if let image = previews?.cardSnapshot(for: document, colorScheme: colorScheme) {
+                NestedPageThumbnail(json: TipTapContentAnalyzer.emptyDocumentJSON, title: "", appearance: document.appearance,
+                    size: size, isCardSheet: true, snapshot: image)
+            } else {
+                Color(vellixHex: document.appearance.resolved(for: colorScheme).innerPageBackground.colorHex)
+                    .frame(width: size.width, height: size.height).clipShape(RoundedRectangle(cornerRadius: 4))
+            }
         }
-        return (try? JSONSerialization.data(withJSONObject: object)).flatMap { String(data: $0, encoding: .utf8) } ?? TipTapContentAnalyzer.emptyDocumentJSON
+        .compositingGroup()
+        .shadow(color: .black.opacity(0.30), radius: 0.8, x: 0, y: 1)
+        .shadow(color: .black.opacity(0.32), radius: 5, x: 1, y: 4)
     }
 }
 

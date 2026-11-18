@@ -38,7 +38,6 @@ final class WebClipperCoordinator: ObservableObject {
             .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.publishCatalogue(); self?.drain() } }
         publishCatalogue(retryErrors: true)
-        drain(retryErrors: true)
     }
 
     private var ownerID: String? {
@@ -54,44 +53,52 @@ final class WebClipperCoordinator: ObservableObject {
         catalogueTask?.cancel()
         catalogueGeneration &+= 1
         let generation = catalogueGeneration
-        do {
-            let database = environment.database
-            let spaces = try SpaceRepository(database: database).all()
-            let folders = try FolderRepository(database: database).all()
-            let tags = try DocumentTagRepository(database: database).catalogue()
-            let toolbarIcons = ["chevdown", "chevleft", "xmarkwavy", "linesfolderfill", "searchwavy", "hashtagwavy", "infowavy", "writepen", "settingswavy", "checkwavy", "spaces", "linedpages"]
-            let names = Set(toolbarIcons + spaces.map { $0.icon ?? "spaces" } + folders.map { $0.icon ?? "linesfolderfill" })
-            var thumbnails: [String: ClipperThumbnailRequest] = [:]
-            if let data = accounts.currentUser?.profileImageData { thumbnails["avatar"] = ClipperThumbnailRequest(data: data, size: 48) }
-            for space in spaces {
-                if let data = space.iconImageData { thumbnails[space.id] = ClipperThumbnailRequest(data: data, size: 32) }
-            }
-            let accountName = accounts.currentUser?.displayName ?? accounts.currentUser?.email ?? "Penned Account"
-            let selectedSpaceID = environment.selectedSpaceID
-            let scale = UITraitCollection.current.displayScale
-            let images = catalogueImages
-            catalogueTask = Task { [weak self] in
+        let database = environment.database
+        let accountName = accounts.currentUser?.displayName ?? accounts.currentUser?.email ?? "Penned Account"
+        let avatar = accounts.currentUser?.profileImageData
+        let selectedSpaceID = environment.selectedSpaceID
+        let scale = UITraitCollection.current.displayScale
+        let images = catalogueImages
+        catalogueTask = Task { [weak self, weak environment] in
+            do {
+                let (spaces, folders, tags) = try await Task.detached(priority: .utility) {
+                    try (SpaceRepository(database: database).all(), FolderRepository(database: database).all(),
+                         DocumentTagRepository(database: database).catalogue())
+                }.value
+                try Task.checkCancellation()
+                let toolbarIcons = ["chevdown", "chevleft", "xmarkwavy", "linesfolderfill", "searchwavy", "hashtagwavy", "infowavy", "writepen", "settingswavy", "checkwavy", "spaces", "linedpages"]
+                let names = Set(toolbarIcons + spaces.map { $0.icon ?? "spaces" } + folders.map { $0.icon ?? "linesfolderfill" })
+                var thumbnails: [String: ClipperThumbnailRequest] = [:]
+                if let avatar { thumbnails["avatar"] = ClipperThumbnailRequest(data: avatar, size: 48) }
+                for space in spaces {
+                    if let data = space.iconImageData { thumbnails[space.id] = ClipperThumbnailRequest(data: data, size: 32) }
+                }
                 guard let rendered = await images.render(ownerID: ownerID, names: names, requests: thumbnails, displayScale: scale),
-                      !Task.isCancelled, let self, self.catalogueGeneration == generation,
+                      !Task.isCancelled, let self, let environment, self.catalogueGeneration == generation,
                       self.ownerID == ownerID, self.environment === environment, database.isAccessible else { return }
-                do {
-                    // Account validation and publication stay on main together so a
-                    // completed old render cannot reconnect a signed-out account.
-                    try ClipperShared.locked {
-                        let previous = try ClipperShared.connection()
-                        let session = previous?.ownerID == ownerID && previous?.libraryID == database.libraryID ? previous!.sessionID : UUID().uuidString
-                        let connection = ClipperConnection(sessionID: session, ownerID: ownerID, libraryID: database.libraryID,
-                            accountName: accountName, avatar: rendered.thumbnails["avatar"], selectedSpaceID: selectedSpaceID,
-                            spaces: spaces.map { ClipperDestination(id: $0.id, title: $0.title, image: rendered.thumbnails[$0.id] ?? rendered.icons[$0.icon ?? "spaces"]) },
-                            folders: folders.map { ClipperDestination(id: $0.id, title: $0.title, spaceID: $0.spaceID, parentID: $0.parentFolderID, image: rendered.icons[$0.icon ?? "linesfolderfill"]) },
-                            tags: tags.map { ClipperDestination(id: $0.id, title: $0.name, spaceID: $0.spaceID) },
-                            icons: rendered.icons.filter { toolbarIcons.contains($0.key) })
-                        try ClipperShared.write(connection, to: ClipperShared.directory().appendingPathComponent("connection.json"))
-                    }
-                    self.drain(retryErrors: retryErrors)
-                } catch { environment.errorMessage = error.localizedDescription }
+                // Account validation and publication stay on main together so a
+                // completed old render cannot reconnect a signed-out account.
+                try ClipperShared.locked {
+                    let previous = try ClipperShared.connection()
+                    let session = previous?.ownerID == ownerID && previous?.libraryID == database.libraryID ? previous!.sessionID : UUID().uuidString
+                    let connection = ClipperConnection(sessionID: session, ownerID: ownerID, libraryID: database.libraryID,
+                        accountName: accountName, avatar: rendered.thumbnails["avatar"], selectedSpaceID: selectedSpaceID,
+                        spaces: spaces.map { ClipperDestination(id: $0.id, title: $0.title, image: rendered.thumbnails[$0.id] ?? rendered.icons[$0.icon ?? "spaces"]) },
+                        folders: folders.map { ClipperDestination(id: $0.id, title: $0.title, spaceID: $0.spaceID, parentID: $0.parentFolderID, image: rendered.icons[$0.icon ?? "linesfolderfill"]) },
+                        tags: tags.map { ClipperDestination(id: $0.id, title: $0.name, spaceID: $0.spaceID) },
+                        icons: rendered.icons.filter { toolbarIcons.contains($0.key) })
+                    try ClipperShared.write(connection, to: ClipperShared.directory().appendingPathComponent("connection.json"))
+                }
+                self.drain(retryErrors: retryErrors)
+            } catch {
+                guard !Task.isCancelled, let self, let environment, self.catalogueGeneration == generation,
+                      self.ownerID == ownerID, self.environment === environment, database.isAccessible else { return }
+                environment.errorMessage = error.localizedDescription
+                // A refresh failure must not strand imports if an older valid
+                // connection is still present; drain rechecks that connection.
+                self.drain(retryErrors: retryErrors)
             }
-        } catch { environment.errorMessage = error.localizedDescription }
+        }
     }
 
     private func drain(retryErrors: Bool = false) {

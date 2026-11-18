@@ -16,7 +16,7 @@ private struct MacPrompt<Actions: View, Message: View>: View {
             VStack(alignment: .leading, spacing: 10) { actions }
                 .buttonStyle(MacPromptActionStyle { presented = false })
         }.padding(24).frame(width: 440, alignment: .leading)
-            .foregroundStyle(VellixSurface.ink).background(VellixSurface.paperLifted).macApplicationControls()
+            .foregroundStyle(VellixSurface.ink).presentationBackground(.regularMaterial).macApplicationControls()
             .onExitCommand { presented = false }
     }
 }

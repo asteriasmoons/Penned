@@ -461,16 +461,36 @@ Fetched rows enter a durable inbox before SDK state is persisted. Dependency
 closure, prospective Space-relationship checks and deferred FK validation allow
 template/document cycles and batches arriving out of order. Missing-parent rows
 and partially delivered Space transfers remain staged across relaunch. Imports
-commit transactionally with re-enqueueing suppressed, then refresh derived data
-and loaded editors after saving any pending editor changes first.
+commit transactionally with re-enqueueing suppressed. Automatic sync defers
+rows that could affect open or opening documents, pending editor writes, and
+their related records. Unrelated rows can apply without disabling, capturing,
+or reloading the protected editor. Navigation wakes a staged import; periodic
+sync remains the fallback.
 
-Ordinary same-record conflicts use the current server revision and retain the
-local authored row in Recovery Revisions; rich-text conflicts also create a
-recovery snapshot when its document survives. Cascading remote deletion retains
+The startup editor preload on iPhone, iPad, and Mac is read-only. It loads the
+saved document without materializing legacy nested cards, repairing legacy
+titles, or saving editor snapshots. The normal editor preparation runs when
+the document is opened.
+
+Same-record conflicts try a three-way merge against the last confirmed cloud
+copy. If only one side changed the body, the merge can preserve that body and
+independent metadata changes without matching individual blocks. If the
+queued copy cannot be safely merged, the current cloud copy becomes live and
+Penned retains the queued copy automatically without retrying it or asking
+the user to choose a revision. If the cloud body has a lower revision than a
+previously confirmed cloud copy, Penned can repair it from that confirmed
+copy, not from a higher local counter. Existing installs gain the baseline
+table with a forward migration; it only seeds from acknowledged journal entries.
+The migration also invalidates saved change tags for drafts still queued after
+the old conflict path, so the server copy must be reconciled before retrying.
+If a legitimate forward update removes blocks, the prior body is retained
+before the replacement. Cascading remote deletion retains
 the affected graph if it contains unsent content and stops orphan uploads.
 Recovery preserves the original IDs. Restore parent Spaces/documents before
 dependent attachments, collection metadata or snapshots; the previous live
-version is retained when manually restoring a revision.
+version is retained when manually restoring a revision. A manual document
+recovery creates a new revision above the restored, current, and snapshot
+revisions rather than reusing the old revision number.
 
 Deletes use durable, content-redacted tombstones, not repeated blind physical
 deletes. Acknowledged tombstones no longer contain deleted document text or asset
@@ -496,19 +516,26 @@ revisions are inspectable but are not automatically replayed as destructive edit
 ### Immediate Sync and Bootstrap-Space Correction
 
 Enabled libraries explicitly request CKSyncEngine transfers on startup, sign-in,
-foreground activation, silent push and network restoration. A committed local
-write requests an upload without waiting for the automatic scheduler or a timer.
-Manual operations carry a user-initiated CKOperationGroup. Requests are serialized
+foreground activation, silent push and network restoration. A committed sync
+journal write schedules a two-second coalescing window for outgoing work.
+Observation attaches to the shared database writer, so Mac window saves wake the
+same scheduler. The five-minute polling interval is a fallback, not the normal
+send trigger. Requests are serialized
 and coalesced; writes arriving during a transfer request another pass rather than
 being discarded by an `already syncing` guard. A newly initialized zone is saved
-before its first fetch. Existing engine state no longer queues a redundant zone
-save at every launch. Automatic engine retry remains enabled for server throttling
-and background work.
+before its first fetch, without sending local rows until that fetch succeeds.
+Existing engine state does not queue a redundant zone save at every launch.
+The app uses explicit batches and retains the existing error/retry paths.
 
-Queue notifications and acknowledgments read record names without decoding the
-whole payload journal. Upload preparation decodes only the selected batch (up to
+Queue notifications and acknowledgments do not decode the whole payload journal.
+Upload preparation decodes only the selected batch (up to
 100 records), prioritizing Space/folder metadata before their dependent content.
-Record names, payloads and durable dirty flags are unchanged.
+Before sending a document, the queued revision is checked against the current
+row and its acknowledged baseline. A snapshot can belong to a different branch
+and doesn't block a live edit from syncing. A proven older queued
+version is archived locally and withheld from upload; a superseded batch
+mutation is discarded before sending. Record identities and the wire format
+are unchanged.
 
 iCloud identity checks run before engine creation, fetch selection, send operations
 and prepared upload batches, not before every state/progress/import callback.
@@ -518,11 +545,25 @@ the engine and cancels pending work. Recoverable offline startup errors retain
 connectivity monitoring so the same opted-in library can start when connectivity
 returns. No sync opt-in or iCloud binding is changed automatically.
 
-This requests sync immediately; it does not guarantee zero network/server/asset
+This requests sync promptly; it does not guarantee zero network/server/asset
 transfer latency or immediate APNs delivery. Apple's
 [CKSyncEngine scheduling documentation](https://developer.apple.com/documentation/cloudkit/cksyncengine-5sie5)
 distinguishes immediate requests from indeterminate automatic scheduling.
 Live two-device timing still requires measurement.
+
+#### Reproducing a stale upload safely
+
+Start with the [physical iPad trace run](SyncStartupTrace.md#physical-ipad-run)
+using a disposable document, the existing iCloud account, and the Mac.
+Leave the stale document unedited on the iPad. Compare the document row,
+queue mutation, snapshot, and baseline before and after launch. This
+distinguishes replay of an already queued edit from startup creating one.
+For an automated receiver regression, deliver a stale body with a newer
+server tag in an isolated fixture and verify that the newer body stays live.
+The incident trace confirmed that the iPad retained the incoming full body but
+retried its two-card body with the incoming change tag. It did not establish
+which first startup operation wrote the two-card body. The revised code has
+not been built or exercised on a device.
 
 The repeated Personal Space came from two bootstrap paths: opening an empty account
 created Personal before fetching remote Spaces, and sign-in adopted empty local

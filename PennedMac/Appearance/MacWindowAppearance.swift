@@ -15,13 +15,35 @@ import SwiftUI
 
 struct MacWindowAppearance: NSViewRepresentable {
     @ObservedObject private var store = PennedMacAppearanceStore.shared
-    func makeNSView(context: Context) -> NSView { NSView() }
-    func updateNSView(_ view: NSView, context: Context) {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = WindowMaterialView()
+        view.material = .underWindowBackground
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
         let preference = store.preference
         let name: NSAppearance.Name? = preference == .system ? nil : preference == .dark ? .darkAqua : .aqua
         DispatchQueue.main.async {
             guard let window = view.window, window.appearance?.name != name else { return }
             window.appearance = name.flatMap(NSAppearance.init(named:))
+        }
+    }
+
+    private final class WindowMaterialView: NSVisualEffectView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.isOpaque = false
+            window?.backgroundColor = .clear
+        }
+    }
+}
+
+extension View {
+    func macWindowMaterial() -> some View {
+        background {
+            MacWindowAppearance().ignoresSafeArea().allowsHitTesting(false).accessibilityHidden(true)
         }
     }
 }

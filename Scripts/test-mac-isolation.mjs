@@ -92,12 +92,8 @@ test("Mac WebView ownership and session safety retain the established working co
         let original = await read("Vellix/" + source);
         const mobileAdditions = source === "Editor/TipTapWebView.swift" ? [
             '\n        #if os(iOS)\n        contentController.addUserScript(WKUserScript(source: MobileBlockSelection.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))\n        contentController.addUserScript(WKUserScript(source: MobileEditorInteractions.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))\n        #endif\n',
-            '\n        #if os(iOS)\n        if let dictionary = message.body as? [String: Any],\n           dictionary["kind"] as? String == "mobileSlashSuppression",\n           let payload = dictionary["payload"] as? [String: Any],\n           let suppressed = payload["suppressed"] as? Bool {\n            session.setMobileSlashMenuSuppressed(suppressed)\n            return\n        }\n        #endif\n',
         ] : source === "Editor/TipTapEditorSession.swift" ? [
-            '    private var mobileSlashMenuSuppressed = false\n',
-            '        setMobileSlashMenuSuppressed(false)\n',
-            '\n    func dismissSlashMenu() {\n        setMobileSlashMenuSuppressed(true)\n        send(TipTapEditorCommand("mobileDismissSlashMenu"))\n    }\n\n    func setMobileSlashMenuSuppressed(_ suppressed: Bool) {\n        mobileSlashMenuSuppressed = suppressed\n        if suppressed { slashMenuState = nil }\n    }\n',
-            '            if mobileSlashMenuSuppressed, state != nil { return }\n',
+            '\n    func dismissSlashMenu() {\n        send(TipTapEditorCommand("dismissSlashMenu"))\n    }\n',
         ] : [];
         for (const addition of mobileAdditions) {
             assert.equal(original.split(addition).length, 2, "allow only the explicit mobile interaction adapter once: " + source);

@@ -30,7 +30,19 @@ enum PageCardBackdrop: String, Codable, CaseIterable, Identifiable {
     var title: String { rawValue.capitalized }
 }
 
-struct CardRemotePhoto: Codable, Equatable, Hashable, Identifiable {
+enum PageCardPreviewStyle: String, Codable, CaseIterable, Identifiable {
+    case pages, stickyNote, openPage
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .pages: return "Pages"
+        case .stickyNote: return "Sticky Note"
+        case .openPage: return "Open Page"
+        }
+    }
+}
+
+nonisolated struct CardRemotePhoto: Codable, Equatable, Hashable, Identifiable, Sendable {
     var id: String
     var thumbURL: String
     var imageURL: String
@@ -47,11 +59,16 @@ struct CardRemotePhoto: Codable, Equatable, Hashable, Identifiable {
 struct PageCardStyle: Codable, Equatable {
     var size: PageCardSize = .compact
     var showsPages = true
+    var previewStyle: PageCardPreviewStyle = .pages
     var backdrop: PageCardBackdrop = .solid
     var startColor = "#3A4348"
     var endColor = "#26333C"
     var imagePath: String?
     var remotePhoto: CardRemotePhoto?
+
+    private enum CodingKeys: String, CodingKey {
+        case size, showsPages, previewStyle, backdrop, startColor, endColor, imagePath, remotePhoto
+    }
 
     var textColor: String {
         guard backdrop != .photo else { return "#FFFFFF" }
@@ -77,6 +94,22 @@ struct PageCardStyle: Codable, Equatable {
         guard let style = try? JSONDecoder().decode(Self.self, from: data) else { return nil }
         decodeCache.setObject(CardStyleBox(style), forKey: key)
         return style
+    }
+}
+
+extension PageCardStyle {
+    init(from decoder: Decoder) throws {
+        self.init()
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        size = try values.decodeIfPresent(PageCardSize.self, forKey: .size) ?? .compact
+        showsPages = try values.decodeIfPresent(Bool.self, forKey: .showsPages) ?? true
+        previewStyle = (try values.decodeIfPresent(String.self, forKey: .previewStyle))
+            .flatMap { PageCardPreviewStyle(rawValue: $0) } ?? .pages
+        backdrop = try values.decodeIfPresent(PageCardBackdrop.self, forKey: .backdrop) ?? .solid
+        startColor = try values.decodeIfPresent(String.self, forKey: .startColor) ?? "#3A4348"
+        endColor = try values.decodeIfPresent(String.self, forKey: .endColor) ?? "#26333C"
+        imagePath = try values.decodeIfPresent(String.self, forKey: .imagePath)
+        remotePhoto = try values.decodeIfPresent(CardRemotePhoto.self, forKey: .remotePhoto)
     }
 }
 

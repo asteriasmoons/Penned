@@ -6,7 +6,7 @@
 import Foundation
 import GRDB
 
-struct SpaceRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, Hashable {
+struct SpaceRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, Hashable, Sendable {
     static let databaseTableName = "spaces"
 
     var id: String
@@ -43,7 +43,7 @@ struct SpaceRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, H
     }
 }
 
-struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, Hashable {
+struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, Hashable, Sendable {
     static let databaseTableName = "folders"
 
     var id: String
@@ -79,7 +79,7 @@ struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, 
     }
 }
 
-struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, Hashable {
+struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, Hashable, Sendable {
     static let databaseTableName = "documents"
 
     var id: String
@@ -178,6 +178,92 @@ struct DocumentRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
     }
 }
 
+// A lightweight projection of a document for library browsing. It carries every
+// column the gallery, cards, navigation and preview-key generation need, and
+// deliberately EXCLUDES the heavy `tipTapJSON` and `plainText` columns so a page
+// of the library can be loaded without pulling document bodies into memory. The
+// full `DocumentRecord` is fetched by id only when a body is genuinely required
+// (opening a document, or rendering a fallback preview for an uncached cell).
+nonisolated struct DocumentSummary: Codable, FetchableRecord, Identifiable, Hashable, Sendable {
+    static let databaseTableName = "documents"
+
+    // Keep this list and the property set below in lockstep; `summaryColumns`
+    // drives every SELECT that decodes into a DocumentSummary.
+    static let columns = "id, title, subtitle, icon, cover, appearanceJSON, cardStyleJSON, previewText, spaceID, folderID, parentDocumentID, isFavorite, isArchived, isTrashed, trashedAt, createdAt, updatedAt, lastOpenedAt, wordCount, sortOrder, templateID, dailyNoteDate"
+
+    // The same column list qualified with a table alias, for queries that join or
+    // self-reference the documents table (e.g. the trash query's `documents d`).
+    static func columns(alias: String) -> String {
+        columns.split(separator: ",").map { "\(alias).\($0.trimmingCharacters(in: .whitespaces))" }.joined(separator: ", ")
+    }
+
+    var id: String
+    var title: String
+    var subtitle: String?
+    var icon: String?
+    var cover: String?
+    var appearanceJSON: String?
+    var cardStyleJSON: String?
+    var previewText: String
+    var spaceID: String?
+    var folderID: String?
+    var parentDocumentID: String?
+    var isFavorite: Bool
+    var isArchived: Bool
+    var isTrashed: Bool
+    var trashedAt: Date?
+    var createdAt: Date
+    var updatedAt: Date
+    var lastOpenedAt: Date?
+    var wordCount: Int
+    var sortOrder: Double
+    var templateID: String?
+    var dailyNoteDate: String?
+
+    // Mirror DocumentRecord's derived presentation accessors exactly; each depends
+    // only on columns carried by the summary.
+    var appearance: DocumentAppearance { DocumentAppearance.decode(appearanceJSON) }
+    var isThemed: Bool { appearance.themeID != nil }
+    var cardStyle: PageCardStyle? { PageCardStyle.decode(cardStyleJSON) }
+
+    // Project a full record down to a summary, for the bounded sections that already
+    // have records in hand (so no extra query is needed).
+    init(_ record: DocumentRecord) {
+        id = record.id
+        title = record.title
+        subtitle = record.subtitle
+        icon = record.icon
+        cover = record.cover
+        appearanceJSON = record.appearanceJSON
+        cardStyleJSON = record.cardStyleJSON
+        previewText = record.previewText
+        spaceID = record.spaceID
+        folderID = record.folderID
+        parentDocumentID = record.parentDocumentID
+        isFavorite = record.isFavorite
+        isArchived = record.isArchived
+        isTrashed = record.isTrashed
+        trashedAt = record.trashedAt
+        createdAt = record.createdAt
+        updatedAt = record.updatedAt
+        lastOpenedAt = record.lastOpenedAt
+        wordCount = record.wordCount
+        sortOrder = record.sortOrder
+        templateID = record.templateID
+        dailyNoteDate = record.dailyNoteDate
+    }
+}
+
+// The library sort orders, each reproduced exactly at the database level (the
+// title order uses the LOCALIZED_STANDARD collation so it matches the gallery's
+// historical `localizedStandardCompare`). Keyset pagination depends on the ORDER
+// BY and cursor comparison agreeing, so both are derived from this one value.
+nonisolated enum DocumentSummarySort: Sendable {
+    case updated
+    case created
+    case title
+}
+
 enum SnapshotReason: String, Codable, CaseIterable {
     case automatic
     case manual
@@ -216,7 +302,7 @@ struct DocumentSnapshotRecord: Codable, FetchableRecord, PersistableRecord, Iden
     }
 }
 
-struct TemplateRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, Hashable {
+struct TemplateRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, Hashable, Sendable {
     static let databaseTableName = "templates"
 
     var id: String
@@ -285,11 +371,17 @@ struct DocumentLocation: Hashable {
     }
 }
 
-struct LibraryOverview {
-    var recent: [DocumentRecord] = []
-    var favorites: [DocumentRecord] = []
-    var all: [DocumentRecord] = []
-    var trashed: [DocumentRecord] = []
+struct LibraryOverview: Sendable {
+    // Bounded sections, carried as body-free summaries. The unbounded "All Docs"
+    // surface is no longer materialized here; it is paged from the database by
+    // LibraryBrowseStore. `documentCount` is the top-level count for badges that
+    // previously read `all.count`.
+    var recent: [DocumentSummary] = []
+    var favorites: [DocumentSummary] = []
+    var dailyNotes: [DocumentSummary] = []
+    var trashed: [DocumentSummary] = []
+    var documentCount: Int = 0
+    var documentCountsByFolder: [String?: Int] = [:]
     var spaces: [SpaceRecord] = []
     var folders: [FolderRecord] = []
     var templates: [TemplateRecord] = []

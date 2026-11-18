@@ -47,7 +47,7 @@ struct MacStyleGallery: View {
                     }
                 }
             }
-        }.padding(20).background(.regularMaterial).onAppear(perform: load)
+        }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity).onAppear(perform: load)
         .macAlert("Rename Style", isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
             TextField("Style Name", text: $name)
             Button("Cancel", role: .cancel) { editing = nil }
@@ -68,12 +68,11 @@ struct MacStyleGallery: View {
 struct MacStyleGalleryPresenter: NSViewRepresentable {
     @ObservedObject var workspace: MacWorkspaceModel
     @EnvironmentObject private var environment: AppEnvironment
-    @Environment(\.colorScheme) private var colorScheme
     func makeCoordinator() -> Coordinator { Coordinator(workspace: workspace) }
     func makeNSView(context: Context) -> NSView { NSView() }
     func updateNSView(_ view: NSView, context: Context) {
         if workspace.styleGalleryVisible, let model = workspace.activeEditor {
-            context.coordinator.show(model: model, environment: environment, parent: workspace.window, scheme: colorScheme)
+            context.coordinator.show(model: model, environment: environment, parent: workspace.window)
         } else { context.coordinator.close() }
     }
     static func dismantleNSView(_ view: NSView, coordinator: Coordinator) { coordinator.close() }
@@ -81,13 +80,13 @@ struct MacStyleGalleryPresenter: NSViewRepresentable {
         let workspace: MacWorkspaceModel
         var panel: NSPanel?
         init(workspace: MacWorkspaceModel) { self.workspace = workspace }
-        func show(model: DocumentEditorModel, environment: AppEnvironment, parent: NSWindow?, scheme: ColorScheme) {
-            if let panel { panel.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua); return }
+        func show(model: DocumentEditorModel, environment: AppEnvironment, parent: NSWindow?) {
+            guard panel == nil else { return }
             let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 650), styleMask: [.titled, .closable, .resizable, .utilityWindow], backing: .buffered, defer: false)
             panel.title = "Style Gallery"; panel.isReleasedWhenClosed = false; panel.delegate = self
             panel.minSize = NSSize(width: 520, height: 420); panel.level = .floating
-            panel.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
-            panel.contentView = NSHostingView(rootView: MacStyleGallery(workspace: workspace, model: model).environmentObject(environment).macApplicationControls())
+            panel.contentView = NSHostingView(rootView: MacStyleGallery(workspace: workspace, model: model)
+                .environmentObject(environment).macWindowMaterial().pennedApplicationAppearance().macApplicationControls())
             self.panel = panel
             if let parent { parent.addChildWindow(panel, ordered: .above); panel.setFrameOrigin(NSPoint(x: parent.frame.midX - 320, y: parent.frame.midY - 325)) }
             else { panel.center() }

@@ -44,6 +44,7 @@ struct SpaceManagementView: View {
             }
             Section { Toggle("Show Archived Spaces", isOn: $showArchived) }
         }
+        .scrollContentBackground(.hidden)
         .navigationTitle("Spaces").tint(VellixSurface.accent)
         #if os(iOS)
         .toolbar { ToolbarItem(placement: .primaryAction) { EditButton() } }

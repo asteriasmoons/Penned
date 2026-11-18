@@ -4,15 +4,30 @@
 //
 
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct VellixShellView: View {
     @EnvironmentObject private var environment: AppEnvironment
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #if os(iOS)
+    @Environment(\.scenePhase) private var scenePhase
+    #endif
     @State private var columnVisibility = NavigationSplitViewVisibility.all
 
     var body: some View {
-        ZStack {
+        let _ = PennedDiagnostics.markStartupOnce("shell-body-first") // TEMP probe
+        return ZStack {
+            #if os(iOS)
+            if UIDevice.current.userInterfaceIdiom == .phone {
+                Color.black.ignoresSafeArea()
+            } else {
+                VellixBackground()
+            }
+            #else
             VellixBackground()
+            #endif
 
             #if os(iOS)
             if UIDevice.current.userInterfaceIdiom == .pad {
@@ -32,6 +47,16 @@ struct VellixShellView: View {
         }
         .disabled(environment.isSwitchingSpace)
         .modifier(PublishingRuntime())
+        #if os(iOS)
+        .task(id: canPrepareUnusedEditor) { await prepareUnusedEditorWhenIdle() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { environment.editorCache.discardStandbyRuntime() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            environment.editorCache.discardStandbyRuntime()
+        }
+        .onDisappear { environment.editorCache.discardStandbyRuntime() }
+        #endif
         .onChange(of: environment.selectedDocumentID) { _, id in
             if id != nil { environment.isSettingsPresented = false }
         }
@@ -72,6 +97,38 @@ struct VellixShellView: View {
         }
     }
 
+    #if os(iOS)
+    private var canPrepareUnusedEditor: Bool {
+        scenePhase == .active && environment.database.isAccessible && !environment.isSwitchingSpace &&
+            environment.selectedDocumentID == nil && environment.pendingDocumentID == nil && !environment.isSettingsPresented
+    }
+
+    private func prepareUnusedEditorWhenIdle() async {
+        guard canPrepareUnusedEditor, !environment.editorCache.hasStandbyRuntime else { return }
+        do {
+            // Let the real library and its primed cards mount first. The default
+            // run-loop mode also avoids initiating setup during UIKit tracking.
+            try await Task.sleep(for: .milliseconds(600))
+            repeat {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    RunLoop.main.perform(inModes: [.default]) { continuation.resume() }
+                }
+                try Task.checkCancellation()
+                guard canPrepareUnusedEditor else { return }
+                if !environment.documentPreviews.isCapturingPreview {
+                    environment.editorCache.prepareStandbyRuntime()
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(300))
+            } while canPrepareUnusedEditor && !environment.editorCache.hasStandbyRuntime
+        } catch is CancellationError {
+            return
+        } catch {
+            return
+        }
+    }
+    #endif
+
     private var regularWorkspace: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
@@ -96,20 +153,24 @@ struct VellixShellView: View {
                     if environment.selectedDocumentID == nil && !environment.isSettingsPresented { LibraryBottomBar() }
                 }
                 #if os(iOS)
-                .navigationBarTitleDisplayMode(environment.selectedDocumentID == nil && environment.selectedDestination != .templates && environment.selectedDestination != .tags ? .large : .inline)
+                .navigationBarTitleDisplayMode(environment.selectedDocumentID == nil
+                    && environment.selectedDestination != .home
+                    && environment.selectedDestination != .allDocuments
+                    && environment.selectedDestination != .templates
+                    && environment.selectedDestination != .tags ? .large : .inline)
                 .toolbar(environment.selectedDocumentID == nil ? .visible : .hidden, for: .navigationBar)
                 #endif
         }
+        #if os(iOS)
+        .environment(\.pennedPhoneBlurEnabled, UIDevice.current.userInterfaceIdiom == .phone)
+        .toolbarBackground(Color.black, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        #endif
     }
 
     private var compactEditorDeck: some View {
-        ZStack {
-            ForEach(environment.editorCache.preparedModels, id: \.documentID) { model in
-                compactEditorDetail(model: model)
-                    .opacity(environment.selectedDocumentID == model.documentID ? 1 : 0)
-                    .allowsHitTesting(environment.selectedDocumentID == model.documentID)
-                    .accessibilityHidden(environment.selectedDocumentID != model.documentID)
-            }
+        CompactEditorDeck(cache: environment.editorCache, selectedID: environment.selectedDocumentID) { model in
+            compactEditorDetail(model: model)
         }
     }
 
@@ -228,7 +289,13 @@ struct VellixShellView: View {
 
             sidebarFooter
         }
-        .background(VellixSurface.sidebar)
+        .background {
+            #if os(iOS)
+            PadWorkspacePageBackground(fallback: VellixSurface.sidebar, style: .systemMaterial)
+            #else
+            VellixSurface.sidebar
+            #endif
+        }
         .navigationTitle("")
     }
 
@@ -287,7 +354,7 @@ struct VellixShellView: View {
             HStack(spacing: VellixSpacing.sm) {
                 WorkspacePill(
                     title: "Pages",
-                    value: "\(environment.overview.all.count)",
+                    value: "\(environment.overview.documentCount)",
                     systemImage: "doc.text",
                     tint: VellixSurface.accent
                 )
@@ -324,19 +391,22 @@ struct VellixShellView: View {
             HomeView(environment: environment)
         case .calendar:
             CalendarView(model: environment.calendar)
+        case .dailyNotes:
+            DocumentBrowserView(mode: .dailyNotes, summaries: environment.overview.dailyNotes)
+        case .connect:
+            ConnectPlaceholderView()
         case .recents:
-            DocumentBrowserView(mode: .recent, documents: environment.overview.recent)
+            DocumentBrowserView(mode: .recent, summaries: environment.overview.recent)
         case .favorites:
-            DocumentBrowserView(mode: .favorites, documents: environment.overview.favorites)
+            DocumentBrowserView(mode: .favorites, summaries: environment.overview.favorites)
         case .folders:
-            DocumentBrowserView(mode: .folders, documents: [])
+            DocumentBrowserView(mode: .folders)
         case .allDocuments:
             if let folderID = environment.selectedFolderID {
                 DocumentBrowserView(mode: .folder(folderID),
-                    documents: environment.overview.all.filter { folderID == "__unsorted" ? $0.folderID == nil : $0.folderID == folderID },
                     displayTitle: folderID == "__unsorted" ? "Unsorted" : environment.overview.folders.first { $0.id == folderID }?.title)
             } else {
-                DocumentBrowserView(mode: .all, documents: environment.overview.all)
+                DocumentBrowserView(mode: .all)
             }
         case .spaces:
             SpacesView()
@@ -355,12 +425,16 @@ struct VellixShellView: View {
             return nil
         case .calendar:
             return nil
+        case .dailyNotes:
+            return environment.overview.dailyNotes.count
+        case .connect:
+            return nil
         case .recents:
             return environment.overview.recent.count
         case .favorites:
             return environment.overview.favorites.count
         case .allDocuments:
-            return environment.overview.all.count
+            return environment.overview.documentCount
         case .folders:
             return FolderHierarchy(folders: environment.overview.folders).children(of: nil).count
         case .spaces:
@@ -395,6 +469,23 @@ private struct SidebarSection<Content: View>: View {
     }
 }
 
+private struct CompactEditorDeck<EditorContent: View>: View {
+    @ObservedObject var cache: DocumentEditorCache
+    let selectedID: String?
+    let editorContent: (DocumentEditorModel) -> EditorContent
+
+    var body: some View {
+        ZStack {
+            ForEach(cache.preparedModels, id: \.documentID) { model in
+                editorContent(model)
+                    .opacity(selectedID == model.documentID ? 1 : 0)
+                    .allowsHitTesting(selectedID == model.documentID)
+                    .accessibilityHidden(selectedID != model.documentID)
+            }
+        }
+    }
+}
+
 private struct SidebarRow: View {
     var title: String
     var systemImage: String
@@ -424,7 +515,7 @@ private struct SidebarRow: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(Color.black.opacity(0.045), in: Capsule())
+                        .pennedPhoneDarkChrome(cornerRadius: 100)
                 }
             }
             .padding(.horizontal, 10)
@@ -459,7 +550,7 @@ struct SpaceCard: View {
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.secondary)
                     .padding(8)
-                    .background(Color.black.opacity(0.045), in: Circle())
+                    .pennedPhoneDarkChrome(cornerRadius: 40)
             }
             Text(space.title)
                 .font(.system(.headline, design: .rounded).weight(.semibold))
@@ -529,7 +620,13 @@ struct TemplatesView: View {
             .padding(.top, 12)
             .padding(.bottom, 100)
         }
-        .background(VellixBackground())
+        .background {
+            #if os(iOS)
+            PadWorkspacePageBackground(fallback: VellixSurface.workspace)
+            #else
+            VellixBackground()
+            #endif
+        }
         .navigationTitle("Templates")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -622,7 +719,7 @@ struct TrashView: View {
     @State private var confirmEmptyTrash = false
 
     var body: some View {
-        DocumentBrowserView(mode: .trash, documents: environment.overview.trashed)
+        DocumentBrowserView(mode: .trash, summaries: environment.overview.trashed)
             .toolbar {
                 if !environment.overview.trashed.isEmpty {
                     ToolbarItem(placement: .primaryAction) {
@@ -646,5 +743,24 @@ struct TrashView: View {
             } message: {
                 Text("This also removes owned snapshots, search records, attachment records, and local attachment files.")
             }
+    }
+}
+
+
+struct ConnectPlaceholderView: View {
+    var body: some View {
+        VStack(spacing: 18) {
+            Image("cloudie")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 110, height: 110)
+                .accessibilityHidden(true)
+            Text("API COMING SOON")
+                .font(.system(.title2, design: .rounded).weight(.black))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(VellixSurface.workspace)
+        .navigationTitle("Connect")
     }
 }

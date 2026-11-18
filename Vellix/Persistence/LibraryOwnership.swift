@@ -69,8 +69,12 @@ final class LibraryRepository: @unchecked Sendable {
     @discardableResult
     func accountLibrary(ownerKey: String) throws -> LibraryRecord {
         guard !ownerKey.isEmpty else { throw LibraryError.wrongOwner }
+        let id = LibraryRecord.accountID(ownerKey: ownerKey)
+        if let existing = try library(id: id) {
+            guard existing.ownerKey == ownerKey else { throw LibraryError.wrongOwner }
+            return existing
+        }
         return try database.write { db in
-            let id = LibraryRecord.accountID(ownerKey: ownerKey)
             if let existing = try LibraryRecord.fetchOne(db, key: id) {
                 guard existing.ownerKey == ownerKey else { throw LibraryError.wrongOwner }
                 return existing

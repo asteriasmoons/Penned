@@ -11,8 +11,7 @@ struct MacSettingsRoot: View {
                environment.database.isAccessible {
                 MacSettingsView().environmentObject(environment).id(ObjectIdentifier(environment))
             } else { ProgressView("Opening Settings").frame(maxWidth: .infinity, maxHeight: .infinity) }
-        }.frame(minWidth: 840, idealWidth: 940, minHeight: 580, idealHeight: 700)
-            .background(MacWindowAppearance().frame(width: 0, height: 0))
+        }.frame(minWidth: 840, idealWidth: 940, maxWidth: .infinity, minHeight: 580, idealHeight: 700, maxHeight: .infinity)
             .fontDesign(.rounded).tint(VellixSurface.violet).foregroundStyle(VellixSurface.ink)
             .listStyle(.plain).scrollContentBackground(.hidden)
     }
@@ -32,7 +31,7 @@ private struct MacSettingsView: View {
                     .font(.system(size: 22, weight: .heavy, design: .rounded)).foregroundStyle(VellixSurface.ink)
                     .padding(.horizontal, 26).padding(.top, 26).padding(.bottom, 10)
                 detail.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            }.frame(minWidth: 540).background(VellixSurface.appBackground)
+            }.frame(minWidth: 540)
         }
         .sheet(item: $environment.spaceSheet) { sheet in
             switch sheet {
@@ -67,7 +66,7 @@ private struct MacSettingsView: View {
                     section("Penned", [.diagnostics, .about])
                 }.padding(.horizontal, 10).padding(.bottom, 14)
             }
-        }.frame(maxHeight: .infinity, alignment: .top).background(.regularMaterial)
+        }.frame(maxHeight: .infinity, alignment: .top)
     }
 
     private func section(_ title: String, _ categories: [MacSettingsCategory]) -> some View {

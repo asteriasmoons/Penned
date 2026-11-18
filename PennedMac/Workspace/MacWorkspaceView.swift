@@ -33,7 +33,7 @@ struct MacWorkspaceView: View {
                 HStack(spacing: 8) {
                     if workspace.sidebarVisible { Color.clear.frame(width: max(0, sidebarWidth - 130)) }
                     MacIconButton("Toggle Navigation Sidebar", icon: "sidebar") { workspace.sidebarVisible.toggle() }
-                    MacWorkspaceTabBar(workspace: workspace)
+                    MacWorkspaceTabBar(workspace: workspace).padding(.leading, 6)
                 }.frame(width: max(400, windowWidth - 150), alignment: .leading)
             }.sharedBackgroundVisibility(.hidden)
             if workspace.canShowInspector {

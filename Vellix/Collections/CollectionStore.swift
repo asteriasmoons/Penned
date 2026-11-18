@@ -79,6 +79,13 @@ final class CollectionStore: ObservableObject {
         return Self.payloads(from: snapshots.values.filter { ids.contains($0.record.id) })
     }
 
+    func openingPayloads(for document: DocumentRecord) throws -> [[String: Any]] {
+        let references = TipTapContentAnalyzer.collectionIDs(in: document.tipTapJSON)
+        guard !references.isEmpty else { return [] }
+        let ids = try repository.collectionIDs(forDocument: document.id, referencedCollectionIDs: references)
+        return Self.payloads(from: try ids.filter { references.contains($0) }.map { try repository.snapshot(id: $0) })
+    }
+
     static func payloads(from snapshots: [CollectionSnapshot]) -> [[String: Any]] {
         snapshots.sorted { $0.record.id < $1.record.id }.compactMap { snapshot in
             guard let view = snapshot.activeView else { return nil }

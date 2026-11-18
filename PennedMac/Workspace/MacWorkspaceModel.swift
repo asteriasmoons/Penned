@@ -126,7 +126,6 @@ private struct MacWorkspaceArchive: Codable {
     @Published var inspectorVisible = false
     @Published var styleGalleryVisible = false
     @Published var showHistory = false
-    @Published var showIconPicker = false
     @Published var findInDocument = false
     @Published var errorMessage: String?
     @Published var trashIDs: Set<String> = []
@@ -198,7 +197,7 @@ private struct MacWorkspaceArchive: Codable {
         return tab.location.destination.title
     }
     func icon(_ tab: MacWorkspaceTab) -> String {
-        if let id = tab.location.documentID { return environment.editorCache.model(for: id)?.document?.icon ?? "linedpages" }
+        if tab.location.documentID != nil { return "linedpages" }
         return tab.location.folderID == nil ? tab.location.destination.icon : "openedfolder"
     }
 
@@ -309,9 +308,10 @@ private struct MacWorkspaceArchive: Codable {
         }
     }
     func waitForOperations() async { await queuedOperation?.value }
-    func reconcile() {
+    func reconcile(preservingActiveEditor: Bool = false) {
         guard isAuthorized else { return }
         for tab in tabs {
+            if preservingActiveEditor, tab.id == activeID, tab.location.documentID != nil { continue }
             if (try? validate(tab.location)) == nil, tab.location.documentID != nil {
                 tab.location.documentID = nil
                 if tab.id == activeID { apply(tab.location) }

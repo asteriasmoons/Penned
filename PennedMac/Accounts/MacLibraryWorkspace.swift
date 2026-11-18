@@ -22,10 +22,12 @@ final class LibraryWorkspace: ObservableObject {
     private var request = UUID()
     private var transition: Task<Void, Never>?
     private var synchronizer: LibrarySyncEngine?
+    private var syncControl: UUID?
     private let preferences: UserDefaults
     var currentOwner: () -> String? = { nil }
     var beforeLibraryChange: (() async throws -> Void)?
-    var importIntoWindows: ((@escaping () throws -> Set<String>, AppEnvironment) async throws -> Void)?
+    var importIntoWindows: ((@escaping LibrarySyncEngine.ApplyIncoming, AppEnvironment) async throws -> Bool)?
+    var resumeImportsOn: AnyPublisher<Void, Never>?
     private(set) var identity: AccountIdentity?
 
     init(database: AppDatabase? = nil, attachmentStore: AttachmentStore? = nil, preferences: UserDefaults = .standard) {
@@ -59,7 +61,7 @@ final class LibraryWorkspace: ObservableObject {
     private func open(_ identity: AccountIdentity?, local: Bool?, force: Bool, assigningLocalLibrary: Bool, token: UUID) async {
         defer { if request == token { isSwitching = false } }
         do {
-            await synchronizer?.stop(); synchronizer = nil
+            await stopSync()
             if root == nil { root = try AppDatabase.makeShared() }
             if store == nil {
                 store = root?.isInMemory == true
@@ -109,8 +111,13 @@ final class LibraryWorkspace: ObservableObject {
 
     func adopt(spaceIDs: Set<String>, includeSavedStyles: Bool, identity: AccountIdentity) async throws {
         guard self.identity == identity, currentOwner() == identity.libraryOwnerKey, !isSwitching, let root else { throw LibraryError.wrongOwner }
-        await synchronizer?.stop(); synchronizer = nil
+        let token = request
+        isSwitching = true
+        defer { if request == token { isSwitching = false } }
+        await stopSync()
+        guard request == token, currentOwner() == identity.libraryOwnerKey else { throw LibraryError.staleWorkspace }
         if let environment { try await environment.closeLibrary() }
+        guard request == token, currentOwner() == identity.libraryOwnerKey else { throw LibraryError.staleWorkspace }
         do {
             let libraries = LibraryRepository(database: root)
             let target = try libraries.accountLibrary(ownerKey: identity.libraryOwnerKey)
@@ -150,18 +157,22 @@ final class LibraryWorkspace: ObservableObject {
     }
 
     private func startSync() async {
-        guard root?.isInMemory == false, synchronizer == nil, !usesLocalLibrary, syncEnabled, let environment, let store else { return }
+        guard !isSwitching, syncControl == nil, root?.isInMemory == false, synchronizer == nil,
+              !usesLocalLibrary, syncEnabled, let environment, let store else { return }
         let owner = identity?.libraryOwnerKey
         do {
             let storage = try syncStore()
-            let sync = LibrarySyncEngine(store: storage, attachments: store, database: environment.database,
+            let workspaceReady = environment.$isSwitchingSpace.removeDuplicates().dropFirst()
+                .filter { !$0 }.map { _ in () }.eraseToAnyPublisher()
+            let resume = resumeImportsOn.map { Publishers.Merge($0, workspaceReady).eraseToAnyPublisher() } ?? workspaceReady
+            let sync = LibrarySyncEngine(store: storage, attachments: store,
                 currentOwner: { [weak self] in
                     guard self?.environment?.database.libraryID == storage.libraryID else { return nil }
                     return self?.currentOwner()
-                }, importChanges: { [weak self, weak environment] apply in
+                }, resumeImportsOn: resume, importChanges: { [weak self, weak environment] apply in
                     guard let environment else { throw LibraryError.staleWorkspace }
-                    if let importIntoWindows = self?.importIntoWindows { try await importIntoWindows(apply, environment) }
-                    else { try await environment.importLibraryChanges(apply) }
+                    if let importIntoWindows = self?.importIntoWindows { return try await importIntoWindows(apply, environment) }
+                    return try await environment.importAutomaticLibraryChanges(apply)
                 }, report: { [weak self] message in
                     guard let self, self.currentOwner() == storage.ownerKey,
                           self.environment?.database.libraryID == storage.libraryID else { return }
@@ -181,10 +192,13 @@ final class LibraryWorkspace: ObservableObject {
     }
 
     func enableSync(identity: AccountIdentity) async throws {
-        guard self.identity == identity, currentOwner() == identity.libraryOwnerKey, !usesLocalLibrary,
+        guard !isSwitching, syncControl == nil, self.identity == identity,
+              currentOwner() == identity.libraryOwnerKey, !usesLocalLibrary,
               let root else { throw LibraryError.wrongOwner }
+        let token = request
         let cloud = try await AccountCloudStore().accountID()
-        guard self.identity == identity, currentOwner() == identity.libraryOwnerKey else { throw LibraryError.wrongOwner }
+        guard request == token, !isSwitching, syncControl == nil,
+              self.identity == identity, currentOwner() == identity.libraryOwnerKey else { throw LibraryError.wrongOwner }
         let library = try LibraryRepository(database: root).accountLibrary(ownerKey: identity.libraryOwnerKey)
         try LibrarySyncStore(database: root, libraryID: library.id, ownerKey: identity.libraryOwnerKey, cloudAccountID: cloud).enable(confirmed: true)
         refreshSyncStatus()
@@ -192,27 +206,48 @@ final class LibraryWorkspace: ObservableObject {
     }
 
     func pauseSync() async throws {
-        await synchronizer?.stop(); synchronizer = nil
-        try syncStore().disable()
+        try await withStoppedSync { try syncStore().disable() }
         refreshSyncStatus()
         syncMessage = "Sync paused. Your library and queued edits remain on this device."
     }
 
     func synchronize(retry: Bool = false, restoreCloud: Bool = false) async {
+        guard !isSwitching, retry || syncControl == nil else { return }
+        let token = request
         do {
             if retry {
-                await synchronizer?.stop(); synchronizer = nil
-                try syncStore().prepareRetry(restoringRemovedZone: restoreCloud)
+                try await withStoppedSync { try syncStore().prepareRetry(restoringRemovedZone: restoreCloud) }
             }
             if synchronizer == nil { await startSync() }
+            guard request == token, syncControl == nil else { return }
             try await synchronizer?.synchronize()
-            refreshSyncStatus()
-        } catch { syncMessage = error.localizedDescription }
+            if request == token { refreshSyncStatus() }
+        } catch is CancellationError {
+            return
+        } catch {
+            if request == token { syncMessage = error.localizedDescription }
+        }
     }
 
     func cloudIdentityChanged() async {
-        await synchronizer?.stop(); synchronizer = nil
+        do { try await withStoppedSync {} } catch { return }
         await startSync()
+    }
+
+    private func stopSync() async {
+        guard let previous = synchronizer else { return }
+        await previous.stop()
+        if synchronizer === previous { synchronizer = nil }
+    }
+
+    private func withStoppedSync(_ update: () throws -> Void) async throws {
+        guard !isSwitching else { throw CancellationError() }
+        let control = UUID(), workspace = request
+        syncControl = control
+        defer { if syncControl == control { syncControl = nil } }
+        await stopSync()
+        guard syncControl == control, request == workspace, !isSwitching else { throw CancellationError() }
+        try update()
     }
 
     func recoveryRevisions() throws -> [LibrarySyncConflict] { try syncStore().conflicts() }

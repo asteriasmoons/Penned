@@ -13,15 +13,16 @@ nonisolated struct PadWorkspaceMetrics: Equatable {
     static let galleryCornerEnlargement: CGFloat = 1.05
     static let galleryPreviewHeightFraction: CGFloat = 0.8 / galleryWidthIncrease
     static let galleryPreferredCardWidth = phoneGalleryCardWidth * galleryWidthIncrease * galleryCornerEnlargement
-    var preferredColumns: Int { max(1, Int((width - 32 + 10) / (Self.galleryPreferredCardWidth + 10))) }
+    static let galleryHorizontalInset: CGFloat = 20
+    var preferredColumns: Int { Self.galleryColumns(width: Self.galleryWidth(available: width), preferred: Int.max) }
     static func galleryColumns(width: CGFloat, preferred: Int, compact: Bool = false) -> Int {
         min(max(1, preferred), max(1, Int((width + 10) / ((compact ? 144 : galleryPreferredCardWidth) + 10))))
     }
-    static func galleryWidth(available: CGFloat, columns: Int, compact: Bool = false) -> CGFloat {
-        min(max(0, available - 32), CGFloat(columns) * (compact ? 144 : galleryPreferredCardWidth) + CGFloat(max(0, columns - 1)) * 10)
+    static func galleryWidth(available: CGFloat) -> CGFloat {
+        max(0, available - 2 * galleryHorizontalInset)
     }
-    static func galleryCardWidth(available: CGFloat, columns: Int, compact: Bool = false) -> CGFloat {
-        max(0, (galleryWidth(available: available, columns: columns, compact: compact) - CGFloat(max(0, columns - 1)) * 10) / CGFloat(max(1, columns)))
+    static func galleryCardWidth(available: CGFloat, columns: Int) -> CGFloat {
+        max(0, (galleryWidth(available: available) - CGFloat(max(0, columns - 1)) * 10) / CGFloat(max(1, columns)))
     }
 }
 
@@ -51,12 +52,14 @@ enum PadWorkspaceDestination: Equatable {
             switch destination {
             case .home: return "houseoutline"
             case .calendar: return "mooncal"
+            case .dailyNotes: return "mooncal"
+            case .connect: return "cloudie"
             case .recents: return "clockwavy"
             case .favorites: return "starfill"
             case .allDocuments: return "linedpages"
             case .folders: return "openedfolder"
             case .spaces: return "spaces"
-            case .templates: return "copy"
+            case .templates: return "bentpages"
             case .tags: return "hashtagwavy"
             case .trash: return "trash"
             }
@@ -148,21 +151,24 @@ final class PadWorkspaceModel: ObservableObject {
         tabs[index].historyIndex = tabs[index].history.count - 1
     }
 
-    func selectTab(_ id: UUID) async throws {
-        guard id != activeID, tabs.contains(where: { $0.id == id }) else { return }
-        try await transition {
+    func selectTab(_ id: UUID, openingTrace: PennedDocumentOpenTrace? = nil) async throws {
+        guard id != activeID, tabs.contains(where: { $0.id == id }) else {
+            openingTrace?.event("workspace-tab-ignored", "reason=\(id == activeID ? "already-active" : "tab-missing")")
+            return
+        }
+        try await transition(openingTrace: openingTrace) {
             self.activeID = id
-            self.apply(self.activeTab.location)
+            self.apply(self.activeTab.location, openingTrace: openingTrace)
         }
     }
 
-    func newTab(_ location: PadWorkspaceLocation = PadWorkspaceLocation()) async throws {
-        try await transition {
+    func newTab(_ location: PadWorkspaceLocation = PadWorkspaceLocation(), openingTrace: PennedDocumentOpenTrace? = nil) async throws {
+        try await transition(openingTrace: openingTrace) {
             try self.validate(location)
             var tab = PadWorkspaceTab()
             tab.location = location; tab.history = [location]
             self.tabs.append(tab); self.activeID = tab.id
-            self.apply(location)
+            self.apply(location, openingTrace: openingTrace)
         }
     }
 
@@ -189,16 +195,40 @@ final class PadWorkspaceModel: ObservableObject {
     }
 
     func openDocument(_ document: DocumentRecord, newTab: Bool = false) async throws {
-        guard document.spaceID == spaceID, let current = try environment.documents.document(id: document.id),
-              !current.isTrashed, current.spaceID == spaceID else { throw LibraryError.wrongOwner }
-        if newTab, let existing = tabs.first(where: { $0.location.documentID == document.id }) {
-            try await selectTab(existing.id); return
-        }
-        var location = activeTab.location
-        location.documentID = current.id
-        if newTab { try await self.newTab(location) }
-        else {
-            try await transition { self.record(location); self.apply(location) }
+        try await openDocument(id: document.id, newTab: newTab)
+    }
+
+    // Open by id so body-free library surfaces (gallery, sidebar) open a document
+    // with exactly one record fetch — the authoritative read this method already
+    // performed — instead of loading the record at the call site and again here.
+    func openDocument(id documentID: String, newTab: Bool = false, openingTrace: PennedDocumentOpenTrace? = nil) async throws {
+        let trace = openingTrace ?? (PennedDocumentOpenTrace.enabled ? PennedDocumentOpenTrace(documentID: documentID, source: "ipad-workspace") : nil)
+        let opened = trace?.event("workspace-request-start", "busy=\(isBusy) newTab=\(newTab) selected=\(environment.selectedDocumentID ?? "-") pending=\(environment.pendingDocumentID ?? "-")")
+        do {
+            print("🛠️ PENNED-OPEN workspace-request id=\(documentID) busy=\(isBusy) activeTab=\(activeID)")
+            let record = try environment.documents.document(id: documentID)
+            guard let current = record, current.spaceID == spaceID, !current.isTrashed else {
+                trace?.event("workspace-request-rejected", "reason=document-validation found=\(record != nil) spaceMatches=\(record?.spaceID == spaceID) trashed=\(record?.isTrashed == true)", since: opened)
+                throw LibraryError.wrongOwner
+            }
+            if newTab, let existing = tabs.first(where: { $0.location.documentID == documentID }) {
+                trace?.event("workspace-request-routed", "route=existing-tab")
+                try await selectTab(existing.id, openingTrace: trace)
+                trace?.event("workspace-request-returned", since: opened)
+                return
+            }
+            var location = activeTab.location
+            location.documentID = current.id
+            print("🛠️ PENNED-OPEN workspace-location id=\(current.id) destination=\(location.destination) newTab=\(newTab)")
+            trace?.event("workspace-request-routed", "route=\(newTab ? "new-tab" : "active-tab")")
+            if newTab { try await self.newTab(location, openingTrace: trace) }
+            else {
+                try await transition(openingTrace: trace) { self.record(location); self.apply(location, openingTrace: trace) }
+            }
+            trace?.event("workspace-request-returned", since: opened)
+        } catch {
+            trace?.event("workspace-request-failed", "error=\(PennedDocumentOpenTrace.errorCode(error))", since: opened)
+            throw error
         }
     }
 
@@ -248,7 +278,9 @@ final class PadWorkspaceModel: ObservableObject {
 
     func title(for tab: PadWorkspaceTab) -> String {
         if let id = tab.location.documentID {
-            return environment.editorCache.model(for: id)?.document?.title ?? environment.overview.all.first { $0.id == id }?.title ?? "Document"
+            if let title = environment.editorCache.model(for: id)?.document?.title { return title }
+            if let summary = (try? environment.documents.summary(id: id)) ?? nil { return summary.title }
+            return "Document"
         }
         if let id = tab.location.folderID {
             return id == "__unsorted" ? "Unsorted" : environment.overview.folders.first { $0.id == id }?.title ?? "Folder"
@@ -267,19 +299,51 @@ final class PadWorkspaceModel: ObservableObject {
         tabs[index].historyIndex = tabs[index].history.count - 1
     }
 
-    private func transition(_ change: () throws -> Void) async throws {
-        guard !isBusy else { return }
-        guard accountIsCurrent else { throw LibraryError.wrongOwner }
+    private func transition(openingTrace: PennedDocumentOpenTrace? = nil, _ change: () throws -> Void) async throws {
+        let started = openingTrace?.event("workspace-transition-start", "busy=\(isBusy) switchingSpace=\(environment.isSwitchingSpace)")
+        print("🛠️ PENNED-OPEN transition-enter busy=\(isBusy) selected=\(environment.selectedDocumentID ?? "nil")")
+        guard !isBusy else {
+            openingTrace?.event("workspace-transition-ignored", "reason=workspace-busy", since: started)
+            print("🛠️ PENNED-OPEN transition-skipped-busy")
+            return
+        }
+        guard accountIsCurrent else {
+            openingTrace?.event("workspace-transition-rejected", "reason=account-not-current", since: started)
+            throw LibraryError.wrongOwner
+        }
         start()
         capture()
         isBusy = true
-        defer { isBusy = false }
+        defer {
+            isBusy = false
+            openingTrace?.event("workspace-transition-ended", "busy=\(isBusy)", since: started)
+        }
         let startingSpace = spaceID
-        try await environment.prepareForWorkspaceNavigation()
+        print("🛠️ PENNED-OPEN transition-prepare-start")
+        let preparation = openingTrace?.event("workspace-save-start")
+        do {
+            try await environment.prepareForWorkspaceNavigation()
+        } catch {
+            openingTrace?.event("workspace-save-failed", "error=\(PennedDocumentOpenTrace.errorCode(error))", since: preparation)
+            throw error
+        }
+        openingTrace?.event("workspace-save-completed", since: preparation)
+        print("🛠️ PENNED-OPEN transition-prepare-finished")
         guard environment.database.isAccessible, environment.database.libraryID == libraryID,
-              environment.selectedSpaceID == startingSpace else { throw LibraryError.staleWorkspace }
-        guard accountIsCurrent else { throw LibraryError.wrongOwner }
-        try change()
+              environment.selectedSpaceID == startingSpace else {
+            openingTrace?.event("workspace-transition-rejected", "databaseAccessible=\(environment.database.isAccessible) libraryMatches=\(environment.database.libraryID == libraryID) spaceMatches=\(environment.selectedSpaceID == startingSpace)", since: started)
+            throw LibraryError.staleWorkspace
+        }
+        guard accountIsCurrent else {
+            openingTrace?.event("workspace-transition-rejected", "reason=account-changed-after-save", since: started)
+            throw LibraryError.wrongOwner
+        }
+        do { try change() } catch {
+            openingTrace?.event("workspace-transition-failed", "reason=apply-threw error=\(PennedDocumentOpenTrace.errorCode(error))", since: started)
+            throw error
+        }
+        openingTrace?.event("workspace-transition-applied", since: started)
+        print("🛠️ PENNED-OPEN transition-applied selected=\(environment.selectedDocumentID ?? "nil")")
     }
 
     private func validate(_ location: PadWorkspaceLocation) throws {
@@ -295,24 +359,39 @@ final class PadWorkspaceModel: ObservableObject {
         }
     }
 
-    private func apply(_ location: PadWorkspaceLocation) {
+    private func apply(_ location: PadWorkspaceLocation, openingTrace: PennedDocumentOpenTrace? = nil) {
+        let started = openingTrace?.event("workspace-apply-start")
+        print("🛠️ PENNED-OPEN apply-start id=\(location.documentID ?? "nil") destination=\(location.destination)")
         environment.selectedDocumentID = nil
         environment.selectedDestination = location.destination.base
         environment.selectedFolderID = location.folderID
         environment.selectedTagIDs = location.tagIDs
         environment.isSettingsPresented = location.destination == .settings
-        if let id = location.documentID, let document = try? environment.documents.document(id: id),
-           document.spaceID == spaceID, !document.isTrashed {
-            environment.select(document)
+        if let id = location.documentID {
+            let record: DocumentRecord?
+            do { record = try environment.documents.document(id: id) } catch {
+                openingTrace?.event("workspace-apply-ignored", "reason=lookup-failed error=\(PennedDocumentOpenTrace.errorCode(error))", since: started)
+                return
+            }
+            guard let document = record, document.spaceID == spaceID, !document.isTrashed else {
+                openingTrace?.event("workspace-apply-ignored", "reason=document-validation found=\(record != nil) spaceMatches=\(record?.spaceID == spaceID) trashed=\(record?.isTrashed == true)", since: started)
+                return
+            }
+            environment.select(document, openingTrace: openingTrace)
+            openingTrace?.event("workspace-apply-returned", "selected=\(environment.selectedDocumentID ?? "-") pending=\(environment.pendingDocumentID ?? "-")", since: started)
+            print("🛠️ PENNED-OPEN apply-selected id=\(document.id) selected=\(environment.selectedDocumentID ?? "nil")")
             if location.destination.base == .calendar {
                 environment.calendarDocumentReturnID = location.calendarDocumentReturnID
             }
+        } else {
+            openingTrace?.event("workspace-apply-ignored", "reason=no-document-in-location", since: started)
         }
     }
 }
 
 private struct PadWorkspaceKey: EnvironmentKey { static let defaultValue: PadWorkspaceModel? = nil }
 private struct PadGalleryColumnsKey: EnvironmentKey { static let defaultValue = 2 }
+private struct PadGalleryContentWidthKey: EnvironmentKey { static let defaultValue: CGFloat = 0 }
 private struct PadWorkspaceActiveKey: EnvironmentKey { static let defaultValue = true }
 extension EnvironmentValues {
     var pennedWorkspace: PadWorkspaceModel? {
@@ -322,6 +401,13 @@ extension EnvironmentValues {
     var pennedGalleryColumns: Int {
         get { self[PadGalleryColumnsKey.self] }
         set { self[PadGalleryColumnsKey.self] = newValue }
+    }
+    // The real width the gallery has to lay out in, handed down from the pad
+    // workspace's live geometry (full width minus the sidebar when it pushes).
+    // Reliable across rotation, unlike a view's own onGeometryChange reading.
+    var pennedGalleryContentWidth: CGFloat {
+        get { self[PadGalleryContentWidthKey.self] }
+        set { self[PadGalleryContentWidthKey.self] = newValue }
     }
     var pennedWorkspaceTabActive: Bool {
         get { self[PadWorkspaceActiveKey.self] }

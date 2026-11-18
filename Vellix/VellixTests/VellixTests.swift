@@ -6,6 +6,7 @@
 import Testing
 import Foundation
 import CoreGraphics
+import GRDB
 @testable import Vellix
 
 @MainActor
@@ -18,6 +19,56 @@ struct VellixTests {
             viewport: viewport, current: 400, minimum: 0, maximum: 2000) == 434)
         #expect(TipTapCaretVisibility.targetOffset(caret: CGRect(x: 10, y: 50, width: 1, height: 24),
             viewport: viewport, current: 400, minimum: 0, maximum: 2000) == 370)
+    }
+
+    @Test func richLinkPersistenceAndBridgeUseSafeURLs() throws {
+        let href = "https://example.com/journal"
+        let json = try TipTapContentAnalyzer.makeDocumentJSON(content: [[
+            "type": "richLink", "attrs": ["id": "link", "href": href, "layout": "card", "metadata": [
+                "title": "Journal", "description": "An excerpt", "site": "Example", "image": "https://example.com/cover.png"
+            ]], "content": [["type": "text", "text": "My link"]]
+        ]])
+        let analysis = try TipTapContentAnalyzer.analyze(json)
+        #expect(analysis.canonicalJSON == json)
+        #expect(analysis.plainText.contains("Journal"))
+        let content = try #require(TipTapContentAnalyzer.documentObject(from: json)["content"] as? [[String: Any]])
+        let preview = RichLinkPreviewData(content[0])
+        #expect(preview.layout == .card && preview.title == "Journal" && preview.url?.absoluteString == href)
+        #expect(preview.image?.host == "example.com")
+        #expect(DocumentLinkURL.normalize("www.example.com/path")?.absoluteString == "https://www.example.com/path")
+        #expect(DocumentLinkURL.normalize("javascript:alert(1)") == nil)
+        #expect(DocumentLinkURL.web("https://user:password@example.com") == nil)
+        let state = TipTapFormattingState.decode(["canLinkText": true, "textLinkActive": true,
+            "selectedLink": ["blockID": "link", "kind": "rich", "href": href, "layout": "card"]])
+        #expect(state.canLinkText && state.textLinkActive && state.selectedLink?.layout == .card)
+    }
+
+    @Test func gridCardSettingsAndRichBodyRoundTripIndependentlyOfCallouts() throws {
+        let paragraph: [String: Any] = ["type": "paragraph", "attrs": ["id": "body"], "content": [
+            ["type": "text", "text": "Finish the next chapter.", "marks": [["type": "italic"]]]
+        ]]
+        let first: [String: Any] = ["type": "gridCard", "attrs": [
+            "id": "reading", "title": "Reading", "icon": "sf:book", "iconColor": "#1b3531",
+            "backgroundColor": "#c4e5de44", "height": 210, "width": "half", "alignment": "right"
+        ], "content": [paragraph]]
+        let json = try TipTapContentAnalyzer.makeDocumentJSON(content: [first, [
+            "type": "plainCallout", "attrs": ["id": "callout", "color": "#765499"],
+            "content": [["type": "paragraph", "attrs": ["id": "callout-body"]]]
+        ]])
+        let analysis = try TipTapContentAnalyzer.analyze(json)
+        #expect(analysis.canonicalJSON == json)
+        #expect(analysis.plainText.contains("Reading") && analysis.plainText.contains("Finish the next chapter."))
+        let content = try #require(TipTapContentAnalyzer.documentObject(from: json)["content"] as? [[String: Any]])
+        let request = try #require(GridCardSettingsRequest(payload: ["blockID": "reading", "node": content[0]]))
+        #expect(request.original.backgroundColor == "#c4e5de")
+        #expect(request.original.iconColor == "#1b3531")
+        #expect(request.original.width == .half && request.original.height == 210 && request.original.alignment == .right)
+        #expect((content[1]["attrs"] as? [String: Any])?["color"] as? String == "#765499")
+        #expect(content[1]["type"] as? String == "plainCallout")
+        let body = try #require((content[0]["content"] as? [[String: Any]])?.first)
+        let text = try #require((body["content"] as? [[String: Any]])?.first)
+        #expect((text["marks"] as? [[String: String]])?.first?["type"] == "italic")
+        #expect(GridCardSettingsRequest(payload: ["blockID": "different", "node": content[0]]) == nil)
     }
 
     @Test func caretScrollingClampsOffsetsAndHandlesVeryLargeText() {
@@ -54,7 +105,7 @@ struct VellixTests {
     @Test func initialDatabaseMigrationStartsWithoutBuiltInTemplates() throws {
         let environment = try makeEnvironment()
         #expect(environment.overview.templates.isEmpty)
-        #expect(environment.overview.all.isEmpty)
+        #expect(environment.topLevelDocumentSummaries.isEmpty)
     }
 
     @Test func serifRemainsAvailableWithoutChangingDefaultFonts() throws {
@@ -242,7 +293,7 @@ struct VellixTests {
 
     @Test func blockRemovalBridgeRequiresARequestToken() throws {
         #expect(try TipTapEditorEvent(kind: "blockActionsRequest", payload: ["token": "held-block"]) ==
-            .requestBlockDeletion(token: "held-block"))
+            .requestBlockDeletion(token: "held-block", blockType: "", blockID: ""))
         #expect(try TipTapEditorEvent(kind: "blockActionsRequest", payload: [:]) == .unknown("blockActionsRequest"))
         #expect(try TipTapEditorEvent(kind: "blockActionsRequest", payload: ["token": "   "]) == .unknown("blockActionsRequest"))
     }
@@ -458,7 +509,7 @@ struct VellixTests {
             TipTapContentAnalyzer.starterDocument(title: "Child", lines: ["Independently saved child content"]))
         environment.refresh()
 
-        #expect(environment.overview.all.map(\.id) == [parent.id])
+        #expect(environment.topLevelDocumentSummaries.map(\.id) == [parent.id])
         #expect(environment.overview.recent.map(\.id) == [parent.id])
         #expect(environment.overview.favorites.isEmpty)
         #expect(try environment.documents.allDocuments(includeTrashed: true).map(\.id) == [parent.id])
@@ -491,7 +542,7 @@ struct VellixTests {
         let paragraph = try #require(layout.marks.first { $0.blockType == "paragraph" })
         let code = try #require(layout.marks.first { $0.blockType == "codeBlock" })
         let divider = try #require(layout.marks.first { $0.blockType == "divider" })
-        let callout = try #require(layout.marks.first { $0.blockType == "callout" })
+        let callout = try #require(layout.marks.first { $0.blockType == "gridCard" && $0.shape == .container })
         let image = try #require(layout.marks.first { $0.shape == .image })
         #expect(heading.rect.height > paragraph.rect.height)
         #expect(heading.rect.minY < paragraph.rect.minY)
@@ -499,7 +550,7 @@ struct VellixTests {
         #expect(code.rect.minY < divider.rect.minY)
         #expect(divider.rect.minY < callout.rect.minY)
         #expect(callout.rect.minY < image.rect.minY)
-        #expect(callout.colorHex == "#7359ad")
+        #expect(layout.marks.contains { $0.shape == .gridCardIcon("sparkle") && $0.colorHex == "#7359ad" })
         let short = DocumentThumbnailLayout(json: TipTapContentAnalyzer.starterDocument(title: "", lines: ["A"]), title: "Same")
         let long = DocumentThumbnailLayout(json: TipTapContentAnalyzer.starterDocument(title: "", lines: ["A longer line"]), title: "Same")
         #expect(short.marks.last!.rect.width < long.marks.last!.rect.width)
@@ -509,12 +560,12 @@ struct VellixTests {
         let json = ##"{"type":"doc","content":[{"type":"toggleItem","attrs":{"open":false},"content":[{"type":"heading","attrs":{"level":3},"content":[{"type":"text","text":"Summary"}]},{"type":"callout","content":[{"type":"paragraph","content":[{"type":"text","text":"Hidden"}]}]}]},{"type":"inlineProperty","attrs":{"property":{"kind":"multiSelect","name":"Status","selectedOptionIDs":["ready"],"options":[{"id":"ready","name":"Ready","color":"#2EC5F4"},{"id":"later","name":"Later","color":"#A970FF"}]}}}]}"##
         let layout = DocumentThumbnailLayout(json: json, title: "Properties")
         #expect(layout.marks.contains { $0.shape == .toggle(open: false) })
-        #expect(!layout.marks.contains { $0.blockType == "callout" })
+        #expect(!layout.marks.contains { $0.blockType == "gridCard" })
         let chips = layout.marks.filter { $0.shape == .chip }
         #expect(chips.count == 1)
         #expect(chips.first?.colorHex == "#2EC5F4")
         let open = DocumentThumbnailLayout(json: json.replacingOccurrences(of: "\"open\":false", with: "\"open\":true"), title: "Properties")
-        #expect(open.marks.contains { $0.blockType == "callout" })
+        #expect(open.marks.contains { $0.blockType == "gridCard" })
         let empty = DocumentThumbnailLayout(json: TipTapContentAnalyzer.emptyDocumentJSON, title: "Empty")
         #expect(empty.isEmpty)
         #expect(empty.marks.allSatisfy { $0.blockType == "title" })
@@ -1020,6 +1071,40 @@ struct VellixTests {
         #expect(try repository.snapshot(id: collection.record.id).entries.first?.id == entry.id)
     }
 
+    @Test func galleryCaretInsertionCopiesResourcesWithoutReplacingDestinationOrSource() throws {
+        let app = try makeEnvironment()
+        let source = try app.documents.create(DocumentDraft(title: "Source"))
+        let child = try app.documents.create(DocumentDraft(title: "Nested", parentDocumentID: source.id,
+            tipTapJSON: TipTapContentAnalyzer.appendingPageReferences(to: source.tipTapJSON, documentIDs: [source.id])))
+        let collection = try app.collections.repository.create(ownerID: source.id, name: "Projects", viewName: "Main", kind: .gallery)
+        _ = try app.collections.repository.addEntry(collectionID: collection.record.id, title: "Project")
+        let body = try TipTapContentAnalyzer.appendingPageReferences(
+            to: CollectionRepository.blockJSON(collectionID: collection.record.id, documentID: source.id), documentIDs: [child.id])
+        let savedSource = try app.documents.saveEditorJSON(id: source.id, canonicalJSON: body)
+        let destination = try app.documents.create(DocumentDraft(title: "Keep this title",
+            tipTapJSON: TipTapContentAnalyzer.starterDocument(title: "", lines: ["Keep this content"])))
+        let snapshot = try TemplateGalleryNativeExporter(database: app.database, attachmentStore: app.attachmentStore).capture(documentID: source.id)
+        let importer = TemplateGalleryImporter(database: app.database, attachmentStore: app.attachmentStore)
+        let content = try importer.prepareInsertion(snapshot, into: destination.id)
+        let unchanged = try app.documents.requireDocument(id: destination.id)
+        #expect(unchanged.title == destination.title && unchanged.tipTapJSON == destination.tipTapJSON)
+        #expect(try app.documents.requireDocument(id: source.id).tipTapJSON == savedSource.tipTapJSON)
+        let nestedID = try #require(TipTapContentAnalyzer.pageReferenceIDs(in: content.canonicalJSON).first)
+        let nested = try app.documents.requireDocument(id: nestedID)
+        #expect(nestedID != child.id && nested.parentDocumentID == destination.id && nested.templateID == nil)
+        #expect(TipTapContentAnalyzer.pageReferenceIDs(in: nested.tipTapJSON) == [destination.id])
+        let collectionID = try #require(content.collectionIDs.first)
+        let copied = try app.collections.repository.snapshot(id: collectionID)
+        #expect(collectionID != collection.record.id && copied.record.documentID == destination.id)
+        #expect(copied.entries.first?.title == "Project")
+        #expect(TipTapContentAnalyzer.collectionIDs(in: content.canonicalJSON) == [collectionID])
+        try importer.discardInsertion(content)
+        #expect(try app.documents.children(of: destination.id).isEmpty)
+        #expect(try app.collections.repository.collectionIDs(forDocument: destination.id).isEmpty)
+        #expect(try app.collections.repository.snapshot(id: collection.record.id).entries.count == 1)
+        #expect(try app.documents.requireDocument(id: source.id).tipTapJSON == savedSource.tipTapJSON)
+    }
+
     @Test func templateThumbnailMetadataIncludesSavedCoverBeforeItsEditorHasOpened() throws {
         let database = try AppDatabase.makeInMemory()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1041,7 +1126,7 @@ struct VellixTests {
         try reopened.bootstrap()
         let preview = try #require(reopened.overview.templateDocuments[templateID])
         #expect(reopened.editorCache.model(for: root.id) == nil)
-        #expect(reopened.overview.all.isEmpty)
+        #expect(reopened.topLevelDocumentSummaries.isEmpty)
         #expect(preview.id == root.id && preview.tipTapJSON == saved.tipTapJSON)
         #expect(preview.previewText == saved.previewText)
         #expect(preview.cover == cover.relativePath && preview.appearance == appearance)

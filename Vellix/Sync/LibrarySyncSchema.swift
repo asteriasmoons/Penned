@@ -2,6 +2,26 @@ import CryptoKit
 import Foundation
 import GRDB
 
+nonisolated struct LibrarySyncProtection: Sendable {
+    var documentIDs: Set<String> = []
+    var spaceIDs: Set<String> = []
+    var folderIDs: Set<String> = []
+    var templateIDs: Set<String> = []
+    var collectionIDs: Set<String> = []
+    var taskIDs: Set<String> = []
+    var attachmentPaths: Set<String> = []
+    var isEmpty: Bool { documentIDs.isEmpty && spaceIDs.isEmpty }
+    mutating func formUnion(_ other: Self) {
+        documentIDs.formUnion(other.documentIDs)
+        spaceIDs.formUnion(other.spaceIDs)
+        folderIDs.formUnion(other.folderIDs)
+        templateIDs.formUnion(other.templateIDs)
+        collectionIDs.formUnion(other.collectionIDs)
+        taskIDs.formUnion(other.taskIDs)
+        attachmentPaths.formUnion(other.attachmentPaths)
+    }
+}
+
 nonisolated enum SyncValue: Codable, Equatable, Sendable {
     case null, text(String), integer(Int64), real(Double), blob(Data)
     init(_ value: DatabaseValue) {
@@ -23,6 +43,7 @@ nonisolated enum SyncValue: Codable, Equatable, Sendable {
         }
     }
     var text: String? { if case .text(let value) = self { return value }; return nil }
+    var integer: Int64? { if case .integer(let value) = self { return value }; return nil }
 }
 
 nonisolated struct SyncRow: Codable, Equatable, Sendable {
@@ -111,6 +132,10 @@ nonisolated enum LibrarySyncSchema {
             CREATE TABLE librarySyncConflicts (
               id TEXT PRIMARY KEY NOT NULL,libraryID TEXT NOT NULL,recordName TEXT NOT NULL,
               payload BLOB NOT NULL,deleted INTEGER NOT NULL,reason TEXT NOT NULL,createdAt DATETIME NOT NULL
+            );
+            CREATE TABLE librarySyncBaselines (
+              libraryID TEXT NOT NULL, recordName TEXT NOT NULL,
+              payload BLOB NOT NULL, PRIMARY KEY(libraryID,recordName)
             );
             CREATE TABLE librarySyncAssets (
               libraryID TEXT NOT NULL,relativePath TEXT NOT NULL,digest TEXT NOT NULL,

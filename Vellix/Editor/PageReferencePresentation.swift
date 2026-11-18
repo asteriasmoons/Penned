@@ -9,17 +9,17 @@ import AppKit
 @MainActor
 enum PageReferencePresentation {
     static func bridgeObject(_ document: DocumentRecord, attachmentStore: AttachmentStore? = nil, colorScheme: ColorScheme = .dark,
-                             containingFontStyle: DocumentFontStyle? = nil) -> [String: Any] {
+                             containingFontStyle: DocumentFontStyle? = nil, previews: DocumentPreviewCache? = nil) -> [String: Any] {
         var result: [String: Any] = [
             "documentID": document.id,
             "title": document.title,
-            "previewText": document.previewText == "No content yet" ? "Empty page" : document.previewText
+            "previewText": previewText(document, previews: previews)
         ]
         if let style = document.cardStyle {
             let remote = style.backdrop == .photo ? style.remotePhoto : nil
             result["cardImage"] = png(PageCardView(document: document, style: style,
                 photo: CardImageLoader.image(path: style.imagePath, store: attachmentStore), includeBackdrop: remote == nil,
-                attachmentStore: attachmentStore, containingFontStyle: containingFontStyle).environment(\.colorScheme, colorScheme))
+                attachmentStore: attachmentStore, containingFontStyle: containingFontStyle, previews: previews).environment(\.colorScheme, colorScheme))
             result["cardWidth"] = style.size.size.width
             result["cardHeight"] = style.size.size.height
             result["cardFullWidth"] = style.size.fillsDocumentWidth
@@ -34,6 +34,18 @@ enum PageReferencePresentation {
                 cover: document.cover, attachmentStore: attachmentStore).environment(\.colorScheme, colorScheme))
         }
         return result
+    }
+
+    static func previewText(_ document: DocumentRecord, previews: DocumentPreviewCache?) -> String {
+        if let text = document.previewText.trimmedNonEmpty, text != "No content yet" { return text }
+        let ids = TipTapContentAnalyzer.pageReferenceIDs(in: document.tipTapJSON)
+        if !ids.isEmpty {
+            let titles = previews?.content(for: document).children.filter { ids.contains($0.id) }.map(\.title) ?? []
+            return titles.isEmpty ? "\(ids.count) nested \(ids.count == 1 ? "page" : "pages")" : titles.joined(separator: ", ")
+        }
+        if !TipTapContentAnalyzer.collectionIDs(in: document.tipTapJSON).isEmpty { return "Collection" }
+        if !EditorAttachment.paths(in: document.tipTapJSON).isEmpty { return "Attachments" }
+        return "Empty page"
     }
 
     private static func png<V: View>(_ view: V) -> String {

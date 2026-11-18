@@ -76,7 +76,15 @@ struct DocumentMarkdownExport {
                 return prefix + (content.first ?? "") + content.dropFirst().map { "\n" + String(repeating: " ", count: prefix.count) + $0 }.joined()
             }.joined(separator: "\n")
         case "listItem", "taskItem", "doc": return blocks(children, page: page)
-        case "blockquote", "callout", "plainCallout":
+        case "gridCard":
+            let title = attrs["title"] as? String ?? ""
+            return [title.isEmpty ? "" : "**" + escape(title) + "**", blocks(children, page: page)]
+                .filter { !$0.isEmpty }.joined(separator: "\n\n")
+        case "richLink":
+            let link = RichLinkPreviewData(node)
+            guard let url = link.url else { return escape(link.title) }
+            return "[\(escape(link.title))](\(destination(url.absoluteString)))"
+        case "blockquote", "callout", "iconCallout", "plainCallout":
             if let source = attrs["clipSource"] as? [String: Any], let href = source["url"] as? String {
                 let title = escape(source["title"] as? String ?? href)
                 return ("[" + title + "](" + destination(href) + ")\n\n" + blocks(children, page: page))

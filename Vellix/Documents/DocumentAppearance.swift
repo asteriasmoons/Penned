@@ -190,6 +190,7 @@ enum VellixDividerStyle: String, CaseIterable, Identifiable {
     case fourCircles
     case thinLine
     case thickLine
+    case washiTape
 
     var id: String { rawValue }
 
@@ -203,6 +204,8 @@ enum VellixDividerStyle: String, CaseIterable, Identifiable {
             return "Thin Line"
         case .thickLine:
             return "Thick Line"
+        case .washiTape:
+            return "Washi Tape"
         }
     }
 }

@@ -45,6 +45,7 @@ export function sanitizeVisibleNode(type: string, input: unknown, context: Conte
       const style = object(source.cardStyle), approved: JSONObject = {
         size: choice(style.size, ["compact", "landscape", "portrait", "wide", "large"]),
         backdrop: choice(style.backdrop, ["none", "solid", "gradient", "photo"]), showsPages: style.showsPages === true,
+        previewStyle: choice(style.previewStyle ?? "pages", ["pages", "stickyNote", "openPage"]),
         startColor: color(style.startColor), endColor: color(style.endColor),
       };
       if (style.mediaID != null) Object.assign(approved, context.reference(style));

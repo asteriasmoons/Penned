@@ -11,17 +11,19 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
     var cover: String? = nil
     var attachmentStore: AttachmentStore? = nil
     var includesCover = true
+    var snapshot: CGImage? = nil
     @MainActor private var displayedAppearance: DocumentAppearance { appearance.resolved(for: colorScheme) }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.json == rhs.json && lhs.title == rhs.title && lhs.appearance == rhs.appearance &&
         lhs.size == rhs.size && lhs.isCardSheet == rhs.isCardSheet && lhs.isStylePreview == rhs.isStylePreview &&
-        lhs.cover == rhs.cover && lhs.attachmentStore === rhs.attachmentStore && lhs.includesCover == rhs.includesCover
+        lhs.cover == rhs.cover && lhs.attachmentStore === rhs.attachmentStore && lhs.includesCover == rhs.includesCover &&
+        lhs.snapshot === rhs.snapshot
     }
 
     @MainActor var body: some View {
-        let showsCover = includesCover && !isStylePreview && displayedAppearance.displaysCover
-        let layout: DocumentThumbnailLayout? = isStylePreview ? nil : DocumentThumbnailLayout(json: json,
+        let showsCover = snapshot == nil && includesCover && !isStylePreview && displayedAppearance.displaysCover
+        let layout: DocumentThumbnailLayout? = isStylePreview || snapshot != nil ? nil : DocumentThumbnailLayout(json: json,
             title: title, monospaced: displayedAppearance.fontStyle == .mono, showsCover: showsCover)
         let image = showsCover ? (CardImageLoader.image(path: cover, store: attachmentStore)
             ?? NestedPageThemeCovers.image(for: displayedAppearance.resolvedCoverTheme)) : nil
@@ -30,6 +32,18 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
                             y: size.height / DocumentThumbnailLayout.size.height)
             let face = isCardSheet ? drawCardSheet(in: &context) : drawPage(in: &context)
             context.clip(to: face)
+            if let snapshot {
+                let rect = CGRect(x: 2, y: 2, width: 96, height: 123.5)
+                context.drawLayer { layer in
+                    layer.clip(to: Path(roundedRect: rect, cornerRadius: 3))
+                    let scale = max(rect.width / CGFloat(snapshot.width), rect.height / CGFloat(snapshot.height))
+                    let width = CGFloat(snapshot.width) * scale, height = CGFloat(snapshot.height) * scale
+                    layer.draw(Image(decorative: snapshot, scale: 1),
+                        in: CGRect(x: rect.midX - width / 2, y: rect.minY, width: width, height: height))
+                }
+                if isCardSheet { drawCardLighting(face, in: &context) }
+                return
+            }
             if let coverRect = layout?.coverRect, let image {
                 let rect = isCardSheet ? CGRect(x: 18, y: 17, width: 64, height: 64 / 1.78) : coverRect
                 drawCover(image, rect: rect, in: &context)
@@ -37,9 +51,22 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
             if isCardSheet && (isStylePreview || layout?.isEmpty == true) {
                 drawCardReferenceContent(in: &context)
             } else if let layout {
-                for mark in layout.marks {
-                    if isCardSheet { drawCardMark(mark, coverRect: layout.coverRect, in: &context) }
-                    else { draw(mark, in: &context) }
+                for (index, mark) in layout.marks.enumerated() {
+                    if isCardSheet { drawCardMark(mark, coverRect: layout.coverRect, index: index, in: &context) }
+                    else { draw(mark, index: index, in: &context) }
+                }
+            }
+        } symbols: {
+            if let layout {
+                ForEach(layout.marks.indices, id: \.self) { index in
+                    let mark = layout.marks[index]
+                    if case .headingLabel(let text, let level, let settings) = mark.shape {
+                        HeadingLabelTile(settings: settings, level: level, fallbackFont: displayedAppearance.fontStyle, text: Text(text))
+                            .lineLimit(2)
+                            .frame(width: mark.rect.width * (isCardSheet ? 0.8 : 1) / Self.labelScale)
+                            .fixedSize()
+                            .tag(index)
+                    }
                 }
             }
         }
@@ -92,6 +119,14 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
         }
         let face = cardPaperPath(CGRect(x: 1, y: 1, width: 98, height: 125.5))
         context.fill(face, with: .linearGradient(base, startPoint: top, endPoint: bottom))
+        drawCardLighting(face, in: &context)
+        return face
+    }
+
+    @MainActor private func drawCardLighting(_ face: Path, in context: inout GraphicsContext) {
+        let dark = displayedAppearance.nestedPageTintHex == "#FFFFFF"
+        let top = CGPoint(x: 0, y: 0)
+        let bottom = CGPoint(x: 100, y: 130)
         context.fill(face, with: .linearGradient(Gradient(stops: [
             .init(color: .white.opacity(dark ? 0.055 : 0.16), location: 0),
             .init(color: .clear, location: 0.45),
@@ -102,7 +137,6 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
             .init(color: .white.opacity(dark ? 0.025 : 0.15), location: 0.4),
             .init(color: .black.opacity(dark ? 0.32 : 0.18), location: 1)
         ]), startPoint: top, endPoint: bottom), lineWidth: 0.65)
-        return face
     }
 
     @MainActor private func cardPaperPath(_ rect: CGRect) -> Path {
@@ -127,7 +161,9 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
         return path
     }
 
-    @MainActor private func drawCardMark(_ mark: DocumentThumbnailLayout.Mark, coverRect: CGRect?, in context: inout GraphicsContext) {
+    private static let labelScale: CGFloat = 0.26
+
+    @MainActor private func drawCardMark(_ mark: DocumentThumbnailLayout.Mark, coverRect: CGRect?, index: Int, in context: inout GraphicsContext) {
         var scaled = mark
         let sourceShift = coverRect.map { $0.height + 8 } ?? 0
         let coverShift: CGFloat = coverRect == nil ? 0 : 64 / 1.78 + 8
@@ -137,17 +173,17 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
             let height: CGFloat
             switch mark.shape {
             case .line: height = mark.rect.height * 2
-            case .container, .image: height = mark.rect.height * 1.7
+            case .container, .image, .washiTape, .listGridSurface, .listGridText, .headingLabel: height = mark.rect.height * 1.7
             default: height = mark.rect.height * 0.8
             }
             scaled.rect = CGRect(x: 18 + (mark.rect.minX - 10) * 0.8,
                                  y: 44 + coverShift + (mark.rect.minY - sourceShift - 20.8) * 1.7,
                                  width: mark.rect.width * 0.8, height: height)
         }
-        if case .line = mark.shape {
+        if case .line = mark.shape, mark.colorHex == nil, !["gridCardTitle", "gridCardText"].contains(mark.blockType) {
             drawCardLine(scaled.rect, heading: mark.blockType == "title" || mark.blockType == "heading", in: &context)
         } else {
-            draw(scaled, in: &context)
+            draw(scaled, index: index, in: &context)
         }
     }
 
@@ -185,18 +221,20 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
         return face
     }
 
-    @MainActor private func draw(_ mark: DocumentThumbnailLayout.Mark, in context: inout GraphicsContext) {
+    @MainActor private func draw(_ mark: DocumentThumbnailLayout.Mark, index: Int, in context: inout GraphicsContext) {
         let ink = Color(vellixHex: displayedAppearance.textColorHex)
         let tint = mark.colorHex.map { Color(vellixHex: $0) } ?? ink
         let rect = mark.rect
         let rounded = Path(roundedRect: rect, cornerRadius: 2)
         switch mark.shape {
         case .line:
+            let customDivider = mark.blockType == "divider" && mark.colorHex != nil
+            let lineInk = customDivider || ["gridCardTitle", "gridCardText", "calloutText"].contains(mark.blockType) ? tint : ink
             context.fill(Path(roundedRect: rect, cornerRadius: rect.height / 2),
-                         with: .color((mark.blockType == "clipSourceTitle" ? Color(vellixHex: "#D5D5D5") : ink)
-                            .opacity(mark.blockType == "heading" || mark.blockType == "title" ? 0.7 : 0.46)))
+                         with: .color((mark.blockType == "clipSourceTitle" ? Color(vellixHex: "#D5D5D5") : lineInk)
+                            .opacity(customDivider ? 1 : ["heading", "title", "gridCardTitle"].contains(mark.blockType) ? 0.7 : 0.46)))
         case .container:
-            if ["clipSource", "clipSourceLink"].contains(mark.blockType) {
+            if ["clipSource", "clipSourceLink", "gridCard", "iconCallout", "plainCallout"].contains(mark.blockType) {
                 context.fill(rounded, with: .color(tint))
                 return
             }
@@ -208,7 +246,7 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
             }
         case .bullet:
             context.fill(Path(ellipseIn: rect.insetBy(dx: rect.width > 2 ? 0.6 : 0, dy: rect.height > 2 ? 0.6 : 0)),
-                         with: .color(ink.opacity(0.6)))
+                         with: .color(tint.opacity(mark.blockType == "divider" && mark.colorHex != nil ? 1 : 0.6)))
         case .number(let number):
             context.draw(Text("\(number).").font(.system(size: 4.8, weight: .medium)).foregroundStyle(ink.opacity(0.65)),
                          at: CGPoint(x: rect.minX, y: rect.minY - 0.5), anchor: .topLeading)
@@ -235,6 +273,71 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
             context.stroke(path, with: .color(ink.opacity(0.65)), lineWidth: 1)
         case .chip:
             context.fill(rounded, with: .color(tint.opacity(0.5)))
+        case .gridCardIcon(let name):
+            if let path = mark.imagePath, AttachmentStore.validRelativePath(path),
+               let image = CardImageLoader.image(path: path, store: attachmentStore) {
+                let scale = min(rect.width / CGFloat(image.width), rect.height / CGFloat(image.height))
+                let width = CGFloat(image.width) * scale, height = CGFloat(image.height) * scale
+                let iconRect = CGRect(x: rect.midX - width / 2, y: rect.midY - height / 2, width: width, height: height)
+                let glyph = Image(decorative: image, scale: 1)
+                if let imageTint = mark.imageTintHex {
+                    var resolved = context.resolve(glyph.renderingMode(.template))
+                    resolved.shading = .color(Color(vellixHex: imageTint))
+                    context.draw(resolved, in: iconRect)
+                } else {
+                    context.draw(glyph, in: iconRect)
+                }
+                return
+            }
+            let icon = VellixAssetIcon(name: name)
+            let image = icon.systemName.map { Image(systemName: $0) } ?? Image(name)
+            var resolved = context.resolve(image.renderingMode(.template))
+            resolved.shading = .color(tint)
+            if resolved.size.width > 0, resolved.size.height > 0 {
+                let scale = min(rect.width / resolved.size.width, rect.height / resolved.size.height)
+                let width = resolved.size.width * scale, height = resolved.size.height * scale
+                context.draw(resolved, in: CGRect(x: rect.midX - width / 2, y: rect.midY - height / 2, width: width, height: height))
+            }
+        case .headingLabel:
+            if let tile = context.resolveSymbol(id: index) {
+                context.drawLayer { layer in
+                    layer.clip(to: Path(rect))
+                    layer.translateBy(x: rect.minX, y: rect.minY)
+                    layer.scaleBy(x: Self.labelScale, y: Self.labelScale)
+                    layer.draw(tile, at: .zero, anchor: .topLeading)
+                }
+            }
+        case .listGridSurface(let border, let radius, let borderWidth):
+            let shape = Path(roundedRect: rect, cornerRadius: radius)
+            context.fill(shape, with: .color(tint))
+            if let border {
+                let inset = min(borderWidth, rect.width, rect.height) / 2
+                let stroke = Path(roundedRect: rect.insetBy(dx: inset, dy: inset), cornerRadius: max(0, radius - inset))
+                context.stroke(stroke, with: .color(Color(vellixHex: border)), lineWidth: inset * 2)
+            }
+        case .listGridText(let value, let alignment, let fontSize, let isGuidance):
+            let font = displayedAppearance.fontStyle.font(size: fontSize * (isCardSheet ? 0.8 : 1))
+            let text = Text(value).font(font).foregroundStyle(tint.opacity(isGuidance ? 0.38 : 1))
+            let resolved = context.resolve(text)
+            let measured = resolved.measure(in: rect.size)
+            let x = alignment == "center" ? rect.midX - measured.width / 2
+                : alignment == "right" ? rect.maxX - measured.width : rect.minX
+            context.drawLayer { layer in
+                layer.clip(to: Path(rect))
+                layer.draw(resolved, in: CGRect(x: x, y: rect.midY - measured.height / 2,
+                                              width: measured.width, height: measured.height))
+            }
+        case .washiTape:
+            let tape = WashiTapeShape().path(in: rect)
+            context.fill(tape, with: .color(tint.opacity(mark.colorHex != nil ? 1 : 0.16)))
+            if let path = mark.imagePath, AttachmentStore.validRelativePath(path),
+               let image = CardImageLoader.image(path: path, store: attachmentStore) {
+                context.drawLayer { layer in
+                    layer.clip(to: tape)
+                    drawCover(image, rect: rect, in: &layer)
+                }
+                if mark.colorHex != nil { context.fill(tape, with: .color(tint.opacity(0.38))) }
+            }
         case .image:
             if let path = mark.imagePath, let image = CardImageLoader.image(path: path, store: attachmentStore) {
                 drawCover(image, rect: rect, in: &context)

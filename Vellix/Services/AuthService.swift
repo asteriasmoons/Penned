@@ -193,14 +193,33 @@ final class AuthService {
         try await validateAppleCredentialState(for: appleUserId)
     }
 
-    func fetchMeWithAutoRefresh(modelContext: ModelContext) async throws -> AuthUser {
+    /// Returns the locally-stored active account without any network access.
+    /// Used to mount the library optimistically at launch; call
+    /// `validateActiveSession(_:)` afterward to verify the session remotely in
+    /// the background so the loading screen is never held by that round-trip.
+    func restoreLocalUser(modelContext: ModelContext) throws -> AuthUser {
         guard let identity = try session.currentIdentity() else {
             throw AuthServiceError.notSignedIn
         }
-
         guard let user = try modelContext.fetch(FetchDescriptor<AuthUser>()).first(where: { $0.identity == identity }) else {
             throw AuthServiceError.notSignedIn
         }
+        return user
+    }
+
+    /// Verifies the active account remotely (Supabase token refresh for email,
+    /// Apple credential state for Apple). Safe to run in the background after an
+    /// optimistic local sign-in: it performs no local fetch and surfaces the same
+    /// revocation/expiry errors as `fetchMeWithAutoRefresh` (a network failure
+    /// surfaces as `EmailAuthError.network`, not an expiry, so callers can keep
+    /// the session on a transient failure).
+    func validateActiveSession(_ user: AuthUser) async throws {
+        guard !user.remoteAuthDeleted else { return }
+        try await validate(user, clearSessionOnRevocation: true)
+    }
+
+    func fetchMeWithAutoRefresh(modelContext: ModelContext) async throws -> AuthUser {
+        let user = try restoreLocalUser(modelContext: modelContext)
         if !user.remoteAuthDeleted { try await validate(user, clearSessionOnRevocation: true) }
         try Task.checkCancellation()
         return user

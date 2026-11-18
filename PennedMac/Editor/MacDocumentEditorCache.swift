@@ -17,6 +17,7 @@ final class DocumentEditorCache: ObservableObject {
     private let attachmentStore: AttachmentStore?
     private let collectionPayloads: (String) -> [[String: Any]]
     var onDocumentSaved: ((DocumentRecord) -> Void)?
+    weak var documentPreviews: DocumentPreviewCache?
 
     init(
         documentRepository: DocumentRepository,
@@ -39,7 +40,7 @@ final class DocumentEditorCache: ObservableObject {
                 model.refreshLibraryContext()
                 model.session.setCollections(collectionPayloads(document.id))
             } else {
-                let model = makeModel(for: document)
+                let model = makeModel(for: document, readOnlyWarmup: true)
                 preparedModels[document.id] = model
                 changed = true
             }
@@ -53,6 +54,7 @@ final class DocumentEditorCache: ObservableObject {
     @discardableResult
     func prepare(_ document: DocumentRecord) -> DocumentEditorModel {
         if let model = modelsByDocumentID[document.id] {
+            if model.isReadOnlyWarmup { model.prepare(document: document) }
             if DocumentTaskPages.isManaged(document.id) || model.document?.title != document.title || model.document?.cover != document.cover
                 || model.document?.icon != document.icon || model.document?.appearanceJSON != document.appearanceJSON {
                 model.refreshLibraryContext()
@@ -81,12 +83,13 @@ final class DocumentEditorCache: ObservableObject {
         model.discardPendingSave()
     }
 
-    private func makeModel(for document: DocumentRecord) -> DocumentEditorModel {
+    private func makeModel(for document: DocumentRecord, readOnlyWarmup: Bool = false) -> DocumentEditorModel {
         let model = DocumentEditorModel(
             documentRepository: documentRepository,
             snapshotRepository: snapshotRepository,
             attachmentStore: attachmentStore
         )
+        model.session.documentPreviewCache = documentPreviews
         model.onChildCreated = { [weak self] child in
             self?.prepare(child)
         }
@@ -105,7 +108,7 @@ final class DocumentEditorCache: ObservableObject {
             }
         }
         model.session.setCollections(collectionPayloads(document.id))
-        model.prepare(document: document)
+        model.prepare(document: document, readOnlyWarmup: readOnlyWarmup)
         return model
     }
 }

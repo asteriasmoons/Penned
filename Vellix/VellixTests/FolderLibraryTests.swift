@@ -4,6 +4,56 @@ import Testing
 
 @MainActor
 struct FolderLibraryTests {
+    @Test func folderCreationAcceptsBothLibrariesOfferedByTheIconPicker() throws {
+        let environment = AppEnvironment(database: try AppDatabase.makeInMemory(), attachmentStore: .previewStore())
+        for icon in ["linesfolderfill", "starfolder", "sf:square.grid.2x2"] {
+            #expect(VellixAssetIconLibrary.isSupported(icon))
+            environment.requestFolderCreation(parentFolderID: nil)
+            let request = try #require(folderRequest(in: environment))
+            try environment.saveFolder(request, title: "Dashboard \(icon)", icon: icon, colorHex: "#C65392")
+            let saved = try #require(environment.folders.all().first { $0.title == "Dashboard \(icon)" })
+            #expect(saved.icon == icon && saved.iconColorHex == "#C65392")
+            #expect(saved.spaceID == environment.selectedSpaceID && saved.parentFolderID == nil)
+            #expect(environment.overview.folders.contains { $0.id == saved.id && $0.icon == icon })
+        }
+    }
+
+    @Test func sfSymbolFolderCreationAndEditingPreserveParentAndSelectedIcon() throws {
+        let environment = AppEnvironment(database: try AppDatabase.makeInMemory(), attachmentStore: .previewStore())
+        let parent = try environment.folders.create(title: "Parent")
+        environment.refresh()
+        environment.requestFolderCreation(parentFolderID: parent.id)
+        let request = try #require(folderRequest(in: environment))
+        try environment.saveFolder(request, title: "Dashboard", icon: "sf:square.grid.2x2", colorHex: "#C65392")
+        let child = try #require(environment.folders.all().first { $0.parentFolderID == parent.id })
+        #expect(child.spaceID == parent.spaceID && child.icon == "sf:square.grid.2x2")
+        environment.editFolder(child)
+        let edit = try #require(folderRequest(in: environment))
+        try environment.saveFolder(edit, title: "Renamed", icon: "sf:folder.fill", colorHex: "#2EC5F4")
+        let saved = try #require(FolderRepository(database: environment.database).all().first { $0.id == child.id })
+        #expect(saved.title == "Renamed" && saved.icon == "sf:folder.fill")
+        #expect(saved.parentFolderID == parent.id && saved.spaceID == parent.spaceID)
+        #expect(saved.iconColorHex == "#2EC5F4")
+    }
+
+    @Test func folderCreationStillRejectsBlankNamesAndUnknownIconsWithoutWriting() throws {
+        let environment = AppEnvironment(database: try AppDatabase.makeInMemory(), attachmentStore: .previewStore())
+        environment.requestFolderCreation(parentFolderID: nil)
+        let request = try #require(folderRequest(in: environment))
+        let before = try environment.folders.all().count
+        for icon in ["", "sf:", "sf:penned.nonexistent.symbol", "missing-icon", "square.grid.2x2"] {
+            #expect(!VellixAssetIconLibrary.isSupported(icon))
+            #expect(throws: VellixError.self) { try environment.saveFolder(request, title: "Dashboard", icon: icon, colorHex: "#C65392") }
+        }
+        #expect(throws: VellixError.self) { try environment.saveFolder(request, title: " \n ", icon: "sf:folder.fill", colorHex: "#C65392") }
+        #expect(try environment.folders.all().count == before)
+    }
+
+    private func folderRequest(in environment: AppEnvironment) -> FolderEditorRequest? {
+        guard case .folder(let request) = environment.librarySheet else { return nil }
+        return request
+    }
+
     @Test func nestedFoldersPersistTheirOwnLibraryIconsAndColors() throws {
         let db = try AppDatabase.makeInMemory()
         let folders = FolderRepository(database: db)

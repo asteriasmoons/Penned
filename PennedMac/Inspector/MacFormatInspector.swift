@@ -11,6 +11,14 @@ struct MacFormatInspector: View {
             if blocks { Text("\(session.selectedBlockCount) selected").font(.caption).foregroundStyle(.secondary) }
             MacInspectorSectionHeader(title: "Inline Formatting")
             HStack(spacing: 3) {
+                if ["headingLabel", "plainCallout"].contains(session.formattingState.blockSettingsKind ?? ""),
+                   let title = session.formattingState.blockSettingsTitle {
+                    Button(action: session.requestBlockSettings) {
+                        LibraryIcon(name: "settingswavy", size: 18)
+                            .frame(maxWidth: .infinity).frame(height: 32)
+                            .background(VellixSurface.input, in: RoundedRectangle(cornerRadius: 5))
+                    }.buttonStyle(.plain).help(title).accessibilityLabel(title)
+                }
                 mark("Bold", icon: "boldtext", action: "bold", active: session.formattingState.bold)
                 mark("Italic", icon: "italics", action: "italic", active: session.formattingState.italic)
                 mark("Underline", icon: "underline", action: "underline", active: session.formattingState.underline)
@@ -18,8 +26,8 @@ struct MacFormatInspector: View {
                 mark("Code", icon: "codewindow", action: "code", active: session.formattingState.code)
             }
             MacTextColorInspector(workspace: workspace, session: session)
-            if session.textConversionState.token != nil {
-                EditorTextConversionMenu(session: session, showsTitle: true)
+            if blocks || session.textConversionState.token != nil {
+                EditorTextConversionMenu(session: session, showsTitle: true, blockSelection: blocks, isCompact: false)
             }
             MacInspectorSectionHeader(title: "Lists")
             HStack(spacing: 4) {
@@ -38,20 +46,40 @@ struct MacFormatInspector: View {
                 }
             }
             HStack {
-                Button("Outdent") { format("outdent") }.frame(maxWidth: .infinity)
-                Button("Indent") { format("indent") }.frame(maxWidth: .infinity)
+                Button { format("outdent") } label: {
+                    Label { Text("Outdent") } icon: { LibraryIcon(name: "outdent", size: 14) }
+                }.frame(maxWidth: .infinity)
+                Button { format("indent") } label: {
+                    Label { Text("Indent") } icon: { LibraryIcon(name: "indent", size: 14) }
+                }.frame(maxWidth: .infinity)
             }.controlSize(.small)
             MacInspectorSectionHeader(title: "Block Styles")
+            if blocks && session.formattingState.selectedBlocksStyle?.canColorDivider == true {
+                MacColorRow(title: "Divider Color", selection: Binding(get: {
+                    session.formattingState.selectedBlocksStyle?.dividerColor.map { Color(vellixHex: $0) } ?? VellixSurface.ink
+                }, set: { color in
+                    format("dividerColor", value: color.vellixHexString(fallback: "#FFFFFF"))
+                }))
+            }
+            if blocks && session.formattingState.selectedBlocksStyle?.canLabel == true {
+                HStack {
+                    Button("Text") { format("headingPresentation", value: "text") }
+                    Button("Label") { format("headingPresentation", value: "label") }
+                }
+            }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 8) {
                 ForEach(1...4, id: \.self) { level in Button(DocumentTextStyleNames.heading(level)) { session.setSelectedBlockType("heading", level: level) } }
                 Button("Paragraph") { session.setSelectedBlockType("paragraph") }
                 Button("Caption") { session.setSelectedBlockType("caption") }
                 Button("Quote") { session.setSelectedBlockType("quote") }
-                Button("Callout") { session.setSelectedBlockType("callout") }
+                Button("Callout") { session.setSelectedBlockType("plainCallout") }
                 Button("Code") { session.setSelectedBlockType("codeBlock") }
             }.disabled(!blocks)
             MacInspectorSectionHeader(title: "Callout Color")
-            VellixBlockColorControls(title: "", selection: $calloutColor, onColorChange: { session.setSelectedCalloutColor($0.vellixHexString(fallback: "#FFFFFF")) }).disabled(!blocks)
+            ColorPicker("Background", selection: $calloutColor, supportsOpacity: false)
+                .onChange(of: calloutColor) { _, color in
+                    session.setSelectedCalloutColor(color.vellixHexString(fallback: "#FFFFFF"))
+                }.disabled(!blocks)
             if blocks {
                 Button("Group as Page") { session.requestSelectedBlocksForSubpage() }.frame(maxWidth: .infinity)
                 Button("Clear Selection") { session.clearBlockSelection() }.frame(maxWidth: .infinity)

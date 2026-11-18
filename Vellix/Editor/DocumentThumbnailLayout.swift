@@ -5,7 +5,11 @@ import CoreGraphics
 nonisolated struct DocumentThumbnailLayout: Equatable {
     enum Shape: Equatable {
         case line, container, bullet, number(Int), checkbox(checked: Bool, crossed: Bool)
-        case toggle(open: Bool), image, chip
+        case toggle(open: Bool), image, chip, washiTape
+        case gridCardIcon(String)
+        case headingLabel(String, level: Int, settings: HeadingLabelSettings)
+        case listGridSurface(border: String?, radius: CGFloat, borderWidth: CGFloat)
+        case listGridText(String, alignment: String?, fontSize: CGFloat, isGuidance: Bool)
     }
 
     struct Mark: Equatable {
@@ -14,6 +18,7 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
         var blockType: String
         var colorHex: String?
         var imagePath: String? = nil
+        var imageTintHex: String? = nil
     }
 
     private(set) var marks: [Mark] = []
@@ -44,14 +49,16 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
         var monospaced: Bool
         let bottom: CGFloat = 120
 
-        mutating func add(_ shape: Shape, _ rect: CGRect, _ type: String, color: String? = nil, imagePath: String? = nil) {
+        mutating func add(_ shape: Shape, _ rect: CGRect, _ type: String, color: String? = nil,
+                          imagePath: String? = nil, imageTint: String? = nil) {
             guard rect.minY < bottom, rect.width > 0 else { return }
-            marks.append(Mark(shape: shape, rect: rect, blockType: type, colorHex: color, imagePath: imagePath))
+            marks.append(Mark(shape: shape, rect: rect, blockType: type, colorHex: color,
+                              imagePath: imagePath, imageTintHex: imageTint))
         }
 
         // Line lengths and wrapping follow actual text, not a decorative pattern.
         mutating func text(_ value: String, type: String, x: CGFloat, width: CGFloat,
-                           thickness: CGFloat = 2.6, maxLines: Int = 16, alignment: String? = nil) {
+                           thickness: CGFloat = 2.6, maxLines: Int = 16, alignment: String? = nil, color: String? = nil) {
             let advance: CGFloat = monospaced || type == "codeBlock" ? 1.9 : 1.65
             var length: CGFloat = 0
             var lines = 0
@@ -67,7 +74,7 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                 let step = character.isWhitespace ? advance * 0.6 : advance
                 if character.isNewline || length + step > width {
                     if length > 0 {
-                        add(.line, CGRect(x: startX(length), y: y, width: length, height: thickness), type)
+                        add(.line, CGRect(x: startX(length), y: y, width: length, height: thickness), type, color: color)
                     }
                     y += 6.8
                     lines += 1
@@ -78,7 +85,7 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                 length += step
             }
             if length > 0, lines < maxLines, y < bottom {
-                add(.line, CGRect(x: startX(length), y: y, width: length, height: thickness), type)
+                add(.line, CGRect(x: startX(length), y: y, width: length, height: thickness), type, color: color)
                 y += 6.8
             } else if value.isEmpty {
                 y += 6.8
@@ -98,10 +105,87 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
             return result
         }
 
+        mutating func listGrid(_ node: [String: Any], x: CGFloat, width: CGFloat) {
+            let grid = ListGridPreviewData(node: node)
+            let scale = width / 320
+            let inset = ListGridPreviewData.inset * scale
+            let gap = ListGridPreviewData.gap * scale
+            let available = width - 2 * inset - gap
+            let widths = [available * grid.leftFraction, available * (1 - grid.leftFraction)]
+            let font = ListGridPreviewData.fontSize * scale
+            let top = y
+            let insertionIndex = marks.count
+            y += inset
+            for row in grid.rows {
+                guard y < bottom, remainingNodes > 0 else { break }
+                remainingNodes -= 1
+                let cells = grid.cells(for: row)
+                let values = cells.map { cell in
+                    let guidance = cell.guidance
+                    let string = guidance.isEmpty ? inlineText(cell.paragraph)
+                        : guidance.prefix(256).map { inlineText($0) }.joined()
+                    return (text: String(string.prefix(256)), isGuidance: !guidance.isEmpty)
+                }
+                let horizontalInsets = cells.map { (9 + ($0.border == nil ? 0 : 1)) * scale }
+                let minHeight = ListGridPreviewData.cellMinHeight * scale
+                let height = widths.indices.reduce(minHeight) { height, index in
+                    let charactersPerLine = max(1, Int((widths[index] - 2 * horizontalInsets[index]) / (font * 0.55)))
+                    let lines = values[index].text.split(separator: "\n", omittingEmptySubsequences: false)
+                        .reduce(0) { $0 + max(1, ($1.count + charactersPerLine - 1) / charactersPerLine) }
+                    return max(height, CGFloat(lines) * font * 1.35 + 18 * scale)
+                }
+                let visibleHeight = min(height, bottom - y)
+                var left = x + inset
+                for (index, cell) in cells.enumerated() {
+                    let rect = CGRect(x: left, y: y, width: widths[index], height: visibleHeight)
+                    add(.listGridSurface(border: cell.border, radius: ListGridPreviewData.cellRadius * scale, borderWidth: scale),
+                        rect, "listGrid", color: cell.fill)
+                    if !values[index].text.isEmpty {
+                        let textRect = rect.insetBy(dx: horizontalInsets[index], dy: min(4 * scale, rect.height / 4))
+                        add(.listGridText(values[index].text, alignment: cell.alignment, fontSize: font, isGuidance: values[index].isGuidance),
+                            textRect, "listGrid", color: cell.ink)
+                    }
+                    left += rect.width + gap
+                }
+                y += height + gap
+            }
+            y = min(bottom, max(top + inset, y - gap) + inset)
+            marks.insert(Mark(shape: .listGridSurface(border: grid.border, radius: ListGridPreviewData.cardRadius * scale, borderWidth: scale),
+                              rect: CGRect(x: x, y: top, width: width, height: y - top),
+                              blockType: "listGrid", colorHex: grid.fill), at: insertionIndex)
+            y += 4
+        }
+
+        mutating func gridCard(_ node: [String: Any], x: CGFloat, width: CGFloat, scale: CGFloat) {
+            let card = GridCardSettings(node["attrs"] as? [String: Any] ?? [:])
+            let top = y, insertion = marks.count
+            let inset = min(width / 4, 14 * scale)
+            let iconSize = min(28 * scale, width - 2 * inset)
+            let iconX = card.alignment == .center ? x + (width - iconSize) / 2
+                : card.alignment == .right ? x + width - inset - iconSize : x + inset
+            y += inset
+            add(.gridCardIcon(card.icon), CGRect(x: iconX, y: y, width: iconSize, height: iconSize), "gridCard", color: card.iconColor)
+            y += iconSize + 3
+            if !card.title.isEmpty {
+                text(card.title, type: "gridCardTitle", x: x + inset, width: width - 2 * inset,
+                     thickness: 3.2, maxLines: 3, alignment: card.alignment.rawValue, color: card.inkColor)
+            }
+            for child in (node["content"] as? [[String: Any]] ?? []).prefix(16) {
+                text(inlineText(child), type: "gridCardText", x: x + inset, width: width - 2 * inset,
+                     thickness: 2.1, maxLines: 10, color: card.inkColor)
+            }
+            y = min(bottom, max(top + CGFloat(card.height) * scale, y + inset))
+            marks.insert(Mark(shape: .container, rect: CGRect(x: x, y: top, width: width, height: y - top),
+                              blockType: "gridCard", colorHex: card.backgroundColor), at: insertion)
+            y += 4
+        }
+
         mutating func blocks(_ nodes: [[String: Any]], x: CGFloat, width: CGFloat, depth: Int = 0,
                              listKind: String? = nil, start: Int = 1) {
             guard depth < 16, width > 5 else { return }
+            var pairedIndex: Int?
             for (index, node) in nodes.enumerated() {
+                if index == pairedIndex { continue }
                 guard y < bottom, remainingNodes > 0 else { return }
                 remainingNodes -= 1
                 let type = node["type"] as? String ?? "paragraph"
@@ -110,6 +194,15 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                 switch type {
                 case "paragraph", "caption", "heading":
                     let level = attrs["level"] as? Int ?? 1
+                    if type == "heading", let label = HeadingLabelSettings.configuration(attrs), label.enabled {
+                        let value = inlineText(node)
+                        let lines = min(2, max(1, Int(ceil(CGFloat(value.count) * 2.8 / width))))
+                        let height = CGFloat(7 + lines * 6 + (label.shape == .ribbon ? 2 : 0))
+                        add(.headingLabel(value, level: level, settings: label),
+                            CGRect(x: x, y: y, width: width, height: height), type)
+                        y += height + 3
+                        continue
+                    }
                     text(inlineText(node), type: type, x: x, width: width,
                          thickness: type == "heading" ? max(3.2, 5 - CGFloat(level) * 0.4) : (type == "caption" ? 2.2 : 2.6),
                          alignment: attrs["textAlign"] as? String)
@@ -136,6 +229,34 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                     if open {
                         blocks(Array(children.dropFirst()), x: x + 7, width: width - 7, depth: depth + 1)
                     }
+                case "listGrid":
+                    listGrid(node, x: x, width: width)
+                case "richLink":
+                    let link = RichLinkPreviewData(node)
+                    let cell = link.layout == .card ? min(45, width) : width
+                    let top = y
+                    let insertion = marks.count
+                    if link.layout == .card { y += cell / 2 }
+                    text(link.title, type: "richLinkTitle", x: x + 3, width: cell - 6, maxLines: 1)
+                    if link.layout != .small, !link.description.isEmpty {
+                        text(link.description, type: "richLinkDescription", x: x + 3, width: cell - 6, thickness: 1.6, maxLines: 1)
+                    }
+                    marks.insert(Mark(shape: .container, rect: CGRect(x: x, y: top - 2, width: cell, height: y - top + 2),
+                                      blockType: type, colorHex: nil), at: insertion)
+                    y += 4
+                case "gridCard", "callout":
+                    let half = GridCardSettings.isHalf(node)
+                    let gap: CGFloat = 3
+                    let cell = half ? (width - gap) / 2 : width
+                    let top = y
+                    gridCard(node, x: x, width: cell, scale: width / 320)
+                    if half, nodes.indices.contains(index + 1), GridCardSettings.isHalf(nodes[index + 1]) {
+                        let firstBottom = y
+                        y = top
+                        gridCard(nodes[index + 1], x: x + cell + gap, width: cell, scale: width / 320)
+                        y = max(y, firstBottom)
+                        pairedIndex = index + 1
+                    }
                 case "plainCalloutRow":
                     let top = y
                     let gap: CGFloat = 3
@@ -155,7 +276,7 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                         left += cellWidth + gap
                     }
                     y = rowBottom
-                case "callout", "plainCallout", "blockquote", "codeBlock":
+                case "iconCallout", "plainCallout", "blockquote", "codeBlock":
                     if type == "plainCallout", let source = attrs["clipSource"] as? [String: Any] {
                         sourceCard(source, children: children, x: x, width: width, depth: depth)
                         continue
@@ -164,13 +285,31 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                     let insertionIndex = marks.count
                     let color = attrs["color"] as? String
                     y += 3
-                    if type == "codeBlock" {
+                    if type == "iconCallout" || type == "plainCallout" {
+                        let card = IconCalloutSettings(attrs)
+                        let background = type == "iconCallout" ? card.backgroundColor
+                            : GridCardSettings.opaqueHex(attrs["color"], fallback: "#302d36")
+                        let iconSize: CGFloat = 9
+                        let xText = x + (type == "iconCallout" ? iconSize + 8 : 5)
+                        let textWidth = width - (xText - x) - 4
+                        if type == "iconCallout" {
+                            add(.gridCardIcon(card.icon), CGRect(x: x + 4, y: y, width: iconSize, height: iconSize),
+                                type, color: card.iconColor, imagePath: card.imagePath, imageTint: card.imageTint)
+                        }
+                        for child in children.prefix(16) {
+                            text(inlineText(child), type: "calloutText", x: xText, width: textWidth,
+                                 thickness: 2.1, maxLines: 10,
+                                 color: type == "iconCallout" ? card.inkColor : GridCardSettings.readableInk(on: background))
+                        }
+                        y = min(bottom, max(y, top + 14) + 2)
+                        marks.insert(Mark(shape: .container, rect: CGRect(x: x, y: top, width: width, height: y - top),
+                                          blockType: type, colorHex: background), at: insertionIndex)
+                        y += 6
+                        continue
+                    } else if type == "codeBlock" {
                         text(inlineText(node), type: type, x: x + 5, width: width - 10, thickness: 2)
                     } else {
-                        if type == "callout" {
-                            add(.chip, CGRect(x: x + 4, y: y - 0.5, width: 5, height: 5), type, color: color)
-                        }
-                        let inset: CGFloat = type == "callout" ? 12 : 6
+                        let inset: CGFloat = 6
                         blocks(children, x: x + inset, width: width - inset - 4, depth: depth + 1)
                     }
                     let height = min(bottom, y + 2) - top
@@ -180,17 +319,25 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                     y += 6
                 case "divider", "horizontalRule":
                     let style = attrs["style"] as? String ?? "thinLine"
+                    let color = attrs["color"] as? String
+                    if style == "washiTape" {
+                        let height = min(12, width / 5) * WashiTapeSize(attrs["tapeSize"]).heightScale
+                        add(.washiTape, CGRect(x: x, y: y, width: width, height: height), type,
+                            color: color, imagePath: attrs["imagePath"] as? String)
+                        y += height + 5
+                        continue
+                    }
                     let fourDots = style == "fourCircles" || style == "fourDots"
                     if style == "dottedCircles" || fourDots {
                         let count = fourDots ? 4 : max(1, Int(width / 5))
-                        let diameter: CGFloat = fourDots ? 0.6 : 1.5
+                        let diameter: CGFloat = fourDots ? 0.6 : 2
                         let span = fourDots ? CGFloat(count - 1) * 5 + diameter : CGFloat(count) * 5
                         let left = x + (width - span) / 2
                         for dot in 0..<count {
-                            add(.bullet, CGRect(x: left + CGFloat(dot) * 5, y: y + 2, width: diameter, height: diameter), type)
+                            add(.bullet, CGRect(x: left + CGFloat(dot) * 5, y: y + 2, width: diameter, height: diameter), type, color: color)
                         }
                     } else {
-                        add(.line, CGRect(x: x, y: y + 2, width: width, height: style == "thickLine" ? 2.5 : 1), type)
+                        add(.line, CGRect(x: x, y: y + 2, width: width, height: style == "thickLine" ? 2.5 : 1), type, color: color)
                     }
                     y += 9
                 case "pageBreak":
@@ -240,6 +387,13 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                             y += 13
                         }
                     }
+                case "tabs":
+                    let panels = children.filter { $0["type"] as? String == "tabPanel" }
+                    let ids = panels.compactMap { ($0["attrs"] as? [String: Any])?["id"] as? String }
+                    let active = (attrs["activeTab"] as? String).flatMap { ids.contains($0) ? $0 : nil } ?? ids.first
+                    let activeContent = (panels.first { ($0["attrs"] as? [String: Any])?["id"] as? String == active }?["content"]
+                        as? [[String: Any]]) ?? []
+                    blocks(activeContent, x: x, width: width, depth: depth + 1)
                 default:
                     blocks(children, x: x, width: width, depth: depth + 1)
                 }

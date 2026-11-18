@@ -342,6 +342,19 @@
       control.menu = false; control.insertion = null; publish(true); return true;
     }
     if (!editor.isEditable || api.selectionActive()) return false;
+    if (operation === "requestSettings") {
+      const record = tableRecords(editor.state.doc).find(({ node }) => node.attrs.id === args.tableID);
+      if (!record) return false;
+      if (current()?.id !== args.tableID) {
+        const offset = T.TableMap.get(record.node).map[0];
+        if (!Number.isInteger(offset)) return false;
+        const cell = editor.state.doc.resolve(record.pos + offset + 2);
+        editor.view.dispatch(editor.state.tr.setSelection(api.TextSelection.near(cell)).setMeta("addToHistory", false));
+      }
+      if (current()?.id !== args.tableID) return false;
+      openMenu();
+      return true;
+    }
     if (operation === "requestInsert") {
       control.insertion = editor.state.selection.getBookmark();
       post("tableCreateRequest", {}); return true;

@@ -21,7 +21,7 @@ extension SpaceRepository {
         try database.read { try SpaceRecord.fetchOne($0, sql: "SELECT * FROM spaces WHERE id=? AND (libraryID=penned_library() OR penned_library()='*')", arguments: [id]) }
     }
 
-    func includingArchived() throws -> [SpaceRecord] {
+    nonisolated func includingArchived() throws -> [SpaceRecord] {
         try database.read { try SpaceRecord.fetchAll($0, sql: "SELECT * FROM spaces WHERE libraryID=penned_library() OR penned_library()='*' ORDER BY isArchived, sortOrder, createdAt, id") }
     }
 
@@ -39,7 +39,7 @@ extension SpaceRepository {
         try database.write { try $0.execute(sql: "UPDATE spaces SET isArchived=0,updatedAt=? WHERE id=?", arguments: [Date(), id]) }
     }
 
-    func fallback(preferred: String?) throws -> String {
+    nonisolated func fallback(preferred: String?) throws -> String {
         try database.write { db in
             if let preferred, let space = try SpaceRecord.fetchOne(db, key: preferred), !space.isArchived,
                try LibraryAccess.allows(space.libraryID, in: db) { return space.id }
@@ -47,7 +47,7 @@ extension SpaceRepository {
         }
     }
 
-    func existingFallback(preferred: String?) throws -> String? {
+    nonisolated func existingFallback(preferred: String?) throws -> String? {
         try database.read { db in
             if let preferred, let space = try SpaceRecord.fetchOne(db, key: preferred), !space.isArchived,
                try LibraryAccess.allows(space.libraryID, in: db) { return space.id }

@@ -4,6 +4,8 @@ import GRDB
 // A repository scope is assigned centrally by AppEnvironment. Nil is reserved for
 // migration, transfer, and background maintenance repositories, never library UI.
 nonisolated enum SpaceOwnership {
+    static let relationshipViolation = "The operation would separate content from its owning Space."
+
     static func defaultSpace(in db: Database) throws -> String {
         if try db.tableExists("libraries") {
             let library = try LibraryAccess.current(in: db)
@@ -65,6 +67,8 @@ nonisolated enum SpaceOwnership {
     }
 
     static func validate(in db: Database) throws {
+        // Older Template Mode entries link to an ordinary page, not an authoring
+        // document. Only the deterministic legacy ID permits a missing backlink.
         let invalid = try Int.fetchOne(db, sql: """
             SELECT
               (SELECT COUNT(*) FROM documents d WHERE d.spaceID IS NULL
@@ -77,12 +81,15 @@ nonisolated enum SpaceOwnership {
                 OR EXISTS(SELECT 1 FROM folders p WHERE p.id=f.parentFolderID AND p.spaceID IS NOT f.spaceID))
               + (SELECT COUNT(*) FROM templates t WHERE t.spaceID IS NULL
                 OR NOT EXISTS(SELECT 1 FROM spaces s WHERE s.id=t.spaceID)
-                OR EXISTS(SELECT 1 FROM documents d WHERE d.id=t.rootDocumentID AND (d.spaceID IS NOT t.spaceID OR d.templateID IS NOT t.id)))
+                OR EXISTS(SELECT 1 FROM documents d WHERE d.id=t.rootDocumentID AND (
+                  d.spaceID IS NOT t.spaceID
+                  OR (d.templateID IS NOT t.id AND NOT (d.templateID IS NULL AND t.id = 'template-mode-' || d.id))
+                )))
               + (SELECT COUNT(*) FROM collectionEntries e JOIN collections c ON c.id=e.collectionID
                 JOIN documents d ON d.id=e.documentID WHERE d.parentDocumentID IS NOT c.documentID)
               + (SELECT COUNT(*) FROM calendarEventNotes n JOIN documents d ON d.id=n.documentID WHERE n.spaceID IS NOT d.spaceID)
             """) ?? 0
-        guard invalid == 0 else { throw VellixError.impossibleMove("The operation would separate content from its owning Space.") }
+        guard invalid == 0 else { throw VellixError.impossibleMove(relationshipViolation) }
         guard try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty else { throw VellixError.database("Space ownership failed foreign-key validation.") }
     }
 

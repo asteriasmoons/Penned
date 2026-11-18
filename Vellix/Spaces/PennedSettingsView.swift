@@ -50,7 +50,13 @@ struct PennedSettingsView: View {
                 Color.clear.frame(width: 40, height: 40)
             }
             .padding(.horizontal, 18).frame(height: 60)
-            .background { if showingTitle { Rectangle().fill(.ultraThinMaterial) } }
+            .background {
+                #if os(iOS)
+                PadWorkspacePageBackground(fallback: VellixSurface.workspace, style: .systemThinMaterial)
+                #else
+                if showingTitle { Rectangle().fill(.ultraThinMaterial) }
+                #endif
+            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 30) {
@@ -60,6 +66,7 @@ struct PennedSettingsView: View {
                     settingsSection("General Settings", items: [.appearance, .language, .security, .advanced])
                     settingsSection("Your Account", items: [.account, .subscription, .spaces, .team, .integrations, .assistant, .notifications])
                     VStack(spacing: 0) { settingsRow(.diagnostics); settingsRow(.about, separator: false) }
+                        .padding(.horizontal, 12)
                     VStack(spacing: 8) {
                         Text("PENNED").font(.system(size: 28, weight: .black, design: .rounded))
                         Text("version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")")
@@ -72,7 +79,14 @@ struct PennedSettingsView: View {
                 showingTitle = value
             }
         }
-        .background(VellixSurface.workspace).foregroundStyle(VellixSurface.controlInk)
+        .background {
+            #if os(iOS)
+            PadWorkspacePageBackground(fallback: VellixSurface.workspace)
+            #else
+            VellixSurface.workspace
+            #endif
+        }
+        .foregroundStyle(VellixSurface.controlInk)
         .navigationBarBackButtonHidden()
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
@@ -87,7 +101,10 @@ struct PennedSettingsView: View {
                     #if os(iOS)
                     .toolbar(.visible, for: .navigationBar).navigationBarTitleDisplayMode(.inline)
                     #endif
-                    .toolbar { ToolbarItem(placement: .cancellationAction) { SettingsBackButton() } }
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { SettingsBackButton() }
+                            .sharedBackgroundVisibility(.hidden)
+                    }
             }
         }
     }
@@ -115,6 +132,7 @@ struct PennedSettingsView: View {
             VStack(spacing: 0) {
                 ForEach(items) { item in settingsRow(item, separator: item != items.last) }
             }
+            .padding(.horizontal, 12)
         }
     }
 
@@ -152,12 +170,26 @@ struct PennedSettingsView: View {
             VStack(spacing: 12) {
                 Text("Penned").font(.largeTitle.bold())
                 Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0").foregroundStyle(.secondary)
-            }.frame(maxWidth: .infinity, maxHeight: .infinity).background(VellixSurface.workspace)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                #if os(iOS)
+                PadWorkspacePageBackground(fallback: VellixSurface.workspace)
+                #else
+                VellixSurface.workspace
+                #endif
+            }
         default:
             VStack(spacing: 14) {
                 LibraryIcon(name: setting.icon, size: 32).foregroundStyle(.secondary)
                 Text("Not available yet").foregroundStyle(.secondary)
-            }.frame(maxWidth: .infinity, maxHeight: .infinity).background(VellixSurface.workspace)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                #if os(iOS)
+                PadWorkspacePageBackground(fallback: VellixSurface.workspace)
+                #else
+                VellixSurface.workspace
+                #endif
+            }
         }
     }
 }
@@ -167,7 +199,7 @@ struct SettingsBackButton: View {
     var body: some View {
         Button { dismiss() } label: {
             LibraryIcon(name: "chevleft", size: 20).foregroundStyle(VellixSurface.controlInk)
-                .frame(width: 40, height: 40).background(.regularMaterial, in: Circle())
+                .frame(width: 40, height: 40).pennedPhoneDarkChrome(cornerRadius: 40)
                 .overlay(Circle().strokeBorder(VellixSurface.controlInk.opacity(0.10)))
         }.buttonStyle(.plain).accessibilityLabel("Back")
     }

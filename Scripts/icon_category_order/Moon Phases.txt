@@ -1,0 +1,8 @@
+newmoon
+waxingcrescent
+firstquartermoon
+waxinggibbous
+fullmoon
+waninggibbous
+lastquartermoon
+waningcrescent

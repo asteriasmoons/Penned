@@ -4,8 +4,11 @@ nonisolated enum PublishingProjection {
     static let attributes: [String: Set<String>] = [
         "doc": [], "text": [], "paragraph": [], "caption": [], "heading": ["level"], "hardBreak": [],
         "bulletList": [], "orderedList": ["start", "type"], "listItem": [], "codeBlock": ["language"],
-        "blockquote": ["color"], "callout": ["icon", "color"], "plainCallout": ["color", "widthPercent"], "plainCalloutRow": [],
-        "divider": ["style"], "pageBreak": [], "toggleItem": ["open"], "taskList": [], "taskItem": ["checked", "crossed"],
+        "blockquote": ["color"], "callout": ["icon", "color"], "plainCallout": ["color", "textColor", "widthPercent", "minimumHeight"], "plainCalloutRow": [],
+        "gridCard": ["icon", "iconColor", "backgroundColor", "title", "alignment", "width", "height"],
+        "iconCallout": ["icon", "iconColor", "backgroundColor", "textColor", "imageTint"],
+        "richLink": ["href", "layout", "metadata"],
+        "divider": ["style", "color"], "pageBreak": [], "toggleItem": ["open"], "taskList": [], "taskItem": ["checked", "crossed"],
         "templateComponent": ["definition", "response"], "inlineProperty": ["property"],
         "table": ["name", "leftOffset", "stripeColor", "columnless", "rowless", "rowCount", "columnCount", "headerRow"],
         "tableRow": [], "tableCell": ["colspan", "rowspan", "colwidth", "fillColor", "textColor", "formula", "calculated", "font", "bold", "italic", "strike", "code", "align", "format", "decimals", "currency"],
@@ -24,6 +27,9 @@ nonisolated enum PublishingProjection {
            let file = source["file"] as? [String: Any] {
             for key in ["relativePath", "previewPath"] { if let path = file[key] as? String { paths.insert(path) } }
         }
+        if type == "divider", let attrs = content["attrs"] as? [String: Any], attrs["style"] as? String == "washiTape",
+           let path = attrs["imagePath"] as? String { paths.insert(path) }
+        if type == "iconCallout", let path = (content["attrs"] as? [String: Any])?["imagePath"] as? String { paths.insert(path) }
         for child in content["content"] as? [[String: Any]] ?? [] { paths.formUnion(self.paths(in: child)) }
         return paths
     }
@@ -45,6 +51,22 @@ nonisolated enum PublishingProjection {
         if let attrs = source["attrs"] as? [String: Any], type != "doc" {
             var approved = try attrs.filter { allowed.union(["id", "textAlign", "indent"]).contains($0.key) }
                 .mapValues { try nested($0) }
+            if type == "heading", let label = HeadingLabelSettings.configuration(attrs), label.enabled {
+                approved["label"] = label.payload
+            }
+            if type == "richLink" {
+                guard let href = attrs["href"] as? String, let url = DocumentLinkURL.web(href) else {
+                    throw PublishingFailure.invalidContent("A Rich Link has an invalid URL.")
+                }
+                approved["href"] = url.absoluteString
+                let metadata = attrs["metadata"] as? [String: Any] ?? [:]
+                var preview: [String: String] = [:]
+                for key in ["title", "description", "site"] { preview[key] = metadata[key] as? String }
+                for key in ["image", "favicon"] {
+                    preview[key] = (metadata[key] as? String).flatMap(DocumentLinkURL.web)?.absoluteString
+                }
+                approved["metadata"] = preview
+            }
             if type == "attachment" {
                 guard let file = attrs["file"] as? [String: Any], let path = file["relativePath"] as? String, let asset = media[path] else {
                     throw PublishingFailure.invalidContent("An attachment is unavailable.")
@@ -53,6 +75,19 @@ nonisolated enum PublishingProjection {
                 for key in ["width", "height"] { if let dimension = file[key] as? Int, dimension > 0, dimension <= 30000 { value[key] = dimension } }
                 if let path = file["previewPath"] as? String, let preview = media[path] { value["previewMediaID"] = preview.id }
                 approved["file"] = value
+            }
+            if type == "divider", attrs["style"] as? String == "washiTape" {
+                if WashiTapeSize(attrs["tapeSize"]) == .thin { approved["tapeSize"] = "thin" }
+                if let path = attrs["imagePath"] as? String {
+                    guard let asset = media[path] else { throw PublishingFailure.invalidContent("A Washi Tape image is unavailable.") }
+                    approved["mediaID"] = asset.id
+                } else if let photo = WashiTapeRequest.photo(attrs["remotePhoto"]) {
+                    approved["remotePhoto"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(photo))
+                }
+            }
+            if type == "iconCallout", let path = attrs["imagePath"] as? String {
+                guard let asset = media[path] else { throw PublishingFailure.invalidContent("A callout icon image is unavailable.") }
+                approved["mediaID"] = asset.id
             }
             if type == "plainCallout", let source = attrs["clipSource"] as? [String: Any],
                let href = source["url"] as? String, let url = InlinePropertyDefinition.safeURL(href) {

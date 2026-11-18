@@ -1,5 +1,9 @@
 # Block Swipe Selection
 
+> Current range behavior: the finger directly controls the selected range.
+> Native autoscroll begins only near the edge in the direction of travel. See
+> [Editor Interaction Fixes](EditorInteractionFixes.md#vertical-block-range-dragging).
+
 ## Architecture
 
 `MobileBlockSelection.swift` supplies a self-contained TipTap extension at document start on iPhone and iPad. Its ProseMirror plugin owns the selected block references, mode, gesture phase, originating block, persistent range anchor/head, click suppression and haptic revision. Selection transactions have `addToHistory: false` and never change document content. Positions map through transactions; stable document block IDs reconcile whole-document transformations performed by existing editor commands. Position matching takes precedence over ID matching so duplicate IDs cannot redirect a touch to another block.
@@ -29,6 +33,7 @@ The plugin reconciles actual block DOM identities when the model document change
 - Continuous range extension starts after an additional 6 CSS pixels of deliberate vertical movement. New blocks require entry 4 CSS pixels inside their rendered edge (less for very short blocks); existing selected blocks can be re-entered immediately to shrink. Gaps are sticky. Fast drags include crossed blocks even when no event lands inside them, and can reach the first/last block. Each changed selection produces one haptic; extra movement within the same selection produces none.
 - Selection and its range anchor/head persist after release. Starting another vertical drag on selected content resumes that range after 4 pixels of vertically dominant movement (1.1:1), without another horizontal swipe or reopening editing/the keyboard. A tapped/command-selected block without a saved range establishes one at that block while preserving other independently selected blocks. A slightly sideways start can still transition into vertical continuation before committing. Only selected block surfaces reserve that next contact with `touch-action: none`, declared before contact. Unselected content retains ordinary vertical scrolling. Direction reversal shrinks the range back to its anchor.
 - A following synthetic click is suppressed once. In selection mode, deliberate block taps toggle selection anywhere in its non-control content. Navigation/file-card buttons permit swipe observation while retaining ordinary tap activation; sliders, form inputs, media controls, resizing handles and horizontal scrolling remain excluded.
+- The [Code Block viewer](CodeBlocks.md) is itself a button, not a control inside the block. Swipe sideways on its code or line numbers to select the block, or tap it while block selection is active. A normal tap still opens the Code editor. A Code Block inside a callout can be selected without selecting its container.
 - Deselecting the final selected block exits selection mode in the same ProseMirror transaction and clears the transient range/gesture. The native mode acknowledgement closes the selection toolbar; entering selection mode before choosing a block is still permitted.
 - The plugin also exits whenever a previously nonempty selection becomes empty through a command or document transaction. This covers both top-level deletion (which clears the compatibility selection before committing) and schema-fitted nested deletion/Cut, rather than relying on a particular toolbar handler.
 - Document loading, locking, cancellation, edits that invalidate a gesture and editor destruction clear the appropriate transient state. Explicit history boundaries keep native selection actions independently undoable.
@@ -97,6 +102,29 @@ This refinement changes only `MobileBlockSelection.swift`,
 or app launches were run; touch sensitivity, speed, and range tracking still
 require physical iPhone/iPad verification.
 
+### Bidirectional Drag Continuation
+
+The scroll driver previously changed direction on any touch delta greater than
+0.25 points. A small backward movement could reverse the page and shrink the
+range. It also converted each delayed local touch position using the WebView's
+new position after native scrolling, which could move the range endpoint away
+from the finger.
+
+- `Vellix/Editor/MobileBlockSelection.swift`: Uses screen-space travel to
+  recognize vertical continuation, keeps a fast diagonal start on an already
+  selected block eligible to resume, and requires eight points of reversal
+  before changing direction. The active range follows the intended direction
+  on both touch updates and native scroll callbacks.
+- `Vellix/Editor/MobileBlockSelectionScrollDriver.swift`: Tracks the anchored
+  finger in window coordinates, rejects stale samples, and prevents a scroll
+  limit clamp from moving the page against the drag. Scroll speed now ranges
+  from 600 to 2,000 points/second in both directions.
+
+Holding the drag continues scrolling, and release still stops it. Ordinary
+scrolling, native text selection, and the saved document are unchanged. No web
+bundle changes, builds, or tests. Fast downward continuation, reversal, and
+holding at both edges still need an iPhone/iPad check.
+
 ### Selection Hot-Path Optimization
 
 Further feedback identified slow initial block selection. Source inspection
@@ -126,7 +154,7 @@ The standards describe why gesture axis policy must exist before contact and why
 
 ## Native Embedded Surfaces
 
-Native Kanban overlays do not deliver their touch streams to TipTap. Their controls and drag/drop remain native. Their corresponding document blocks participate atomically when a range crosses them or Select All is used, but directly initiating a swipe on the opaque native overlay is not implemented. Doing that would require a separately approved hosting/input change; forwarding every touch through SwiftUI would violate this implementation's gesture boundary. Oversized tables/code/media retain horizontal scrolling rather than sacrificing that interaction to selection.
+Native Kanban overlays do not deliver their touch streams to TipTap. Their controls and drag/drop remain native. Their corresponding document blocks participate atomically when a range crosses them or Select All is used, but directly initiating a swipe on the opaque native overlay is not implemented. Doing that would require a separately approved hosting/input change; forwarding every touch through SwiftUI would violate this implementation's gesture boundary. Oversized tables and media retain horizontal scrolling. Code Blocks wrap long lines and scroll vertically outside block selection.
 
 Selected collection block IDs are sent as a changed-only `blockSelectionSurfaces` acknowledgement. An iOS-only, non-interactive native tint paints the Kanban overlay so its opaque content cannot hide the selection. This is derived rendering state, not a second selection authority; it does not forward touches or change WebView ownership.
 

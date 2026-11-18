@@ -36,7 +36,7 @@ struct LibraryWorkspaceTests {
         workspace.currentOwner = { account.libraryOwnerKey }
         await workspace.activate(account)
         let app = try #require(workspace.environment)
-        #expect(app.selectedSpaceID == nil && app.overview.all.isEmpty)
+        #expect(app.selectedSpaceID == nil && app.topLevelDocumentSummaries.isEmpty)
         try await app.importLibraryChanges { [] }
         #expect(try app.spaces.all().isEmpty && app.selectedSpaceID == nil)
         var remote = SpaceRecord(id: "remote-existing", title: "Existing on iPhone")
@@ -59,7 +59,7 @@ struct LibraryWorkspaceTests {
         let page = try #require(app.createDocument(title: "First page"))
         #expect(page.spaceID == app.selectedSpaceID && app.activeSpace?.title == "Personal")
         await workspace.activate(account, force: true)
-        #expect(workspace.environment?.overview.all.map(\.id) == [page.id])
+        #expect(workspace.environment?.topLevelDocumentSummaries.map(\.id) == [page.id])
         #expect(try workspace.environment?.spaces.all().count == 1)
     }
 
@@ -89,7 +89,7 @@ struct LibraryWorkspaceTests {
         #expect(claimedSpaces.map(\.id) == spacesBefore.map(\.id))
         #expect(claimedSpaces.allSatisfy { $0.libraryID == libraryID })
         #expect(try SpaceRepository(database: root).includingArchived().isEmpty)
-        #expect(environment.overview.all.map(\.id) == ["legacy-document"])
+        #expect(environment.topLevelDocumentSummaries.map(\.id) == ["legacy-document"])
         #expect(environment.overview.templates.map(\.id) == ["legacy-template"])
         #expect(try environment.documents.requireDocument(id: "legacy-document").tipTapJSON == json)
         #expect(try workspace.libraries?.library(id: libraryID)?.ownerKey == identity.libraryOwnerKey)
@@ -113,14 +113,14 @@ struct LibraryWorkspaceTests {
         workspace.currentOwner = { identity.libraryOwnerKey }
         await workspace.activate(identity)
         #expect(!workspace.usesLocalLibrary)
-        #expect(workspace.environment?.overview.all.map(\.id) == [local.id])
+        #expect(workspace.environment?.topLevelDocumentSummaries.map(\.id) == [local.id])
         await workspace.activate(identity, local: false)
         let accountPage = try #require(workspace.environment).documents.create(DocumentDraft(title: "Keep account content too"))
         let relaunched = self.workspace(root, preferences: preferences)
         relaunched.currentOwner = { identity.libraryOwnerKey }
         await relaunched.activate(identity)
         #expect(!relaunched.usesLocalLibrary)
-        #expect(Set(relaunched.environment?.overview.all.map(\.id) ?? []) == [local.id, accountPage.id])
+        #expect(Set(relaunched.environment?.topLevelDocumentSummaries.map(\.id) ?? []) == [local.id, accountPage.id])
         #expect(try relaunched.environment?.documents.requireDocument(id: local.id).title == local.title)
         #expect(try DocumentRepository(database: root).document(id: local.id) == nil)
     }
@@ -139,22 +139,22 @@ struct LibraryWorkspaceTests {
         active = a
         await workspace.activate(a)
         let first = try #require(workspace.environment)
-        #expect(first.overview.all.map(\.id) == [local.id] && !workspace.usesLocalLibrary && !workspace.syncEnabled)
+        #expect(first.topLevelDocumentSummaries.map(\.id) == [local.id] && !workspace.usesLocalLibrary && !workspace.syncEnabled)
         #expect(!localEnvironment.database.isAccessible)
         #expect(try first.documents.requireDocument(id: local.id).tipTapJSON.contains("Pending local text"))
         let page = try first.documents.create(DocumentDraft(title: "Account A page"))
         first.editorCache.prepare(page).session.onEvent?(.documentChanged(TipTapContentAnalyzer.starterDocument(title: "", lines: ["Pending A text"])))
         active = b; await workspace.activate(b, local: false)
         #expect(workspace.matches(b))
-        #expect(workspace.environment?.overview.all.isEmpty == true)
+        #expect(workspace.environment?.topLevelDocumentSummaries.isEmpty == true)
         #expect(!first.database.isAccessible)
         let aDatabase = root.scoped(to: LibraryRecord.accountID(ownerKey: a.libraryOwnerKey))
         #expect(try DocumentRepository(database: aDatabase).requireDocument(id: page.id).tipTapJSON.contains("Pending A text"))
         active = a; await workspace.activate(a)
-        #expect(Set(workspace.environment?.overview.all.map(\.id) ?? []) == [local.id, page.id])
+        #expect(Set(workspace.environment?.topLevelDocumentSummaries.map(\.id) ?? []) == [local.id, page.id])
         active = nil; await workspace.activate(nil)
         #expect(workspace.usesLocalLibrary)
-        #expect(workspace.environment?.overview.all.isEmpty == true)
+        #expect(workspace.environment?.topLevelDocumentSummaries.isEmpty == true)
         #expect(try DocumentRepository(database: aDatabase).requireDocument(id: local.id).tipTapJSON.contains("Pending local text"))
     }
 
@@ -219,7 +219,7 @@ struct LibraryWorkspaceTests {
         #expect(relaunched.usesLocalLibrary)
         await relaunched.activate(account, local: false)
         #expect(!relaunched.usesLocalLibrary)
-        #expect(relaunched.environment?.overview.all.map(\.id) == [page.id])
+        #expect(relaunched.environment?.topLevelDocumentSummaries.map(\.id) == [page.id])
     }
 
     @Test func returningToAnAdoptedAccountKeepsItsSelectionWhenTheSignedOutLibraryIsEmpty() async throws {
@@ -234,11 +234,11 @@ struct LibraryWorkspaceTests {
         let page = try environment.documents.create(DocumentDraft(title: "Already adopted"))
         active = nil
         await workspace.activate(nil)
-        #expect(workspace.environment?.overview.all.isEmpty == true)
+        #expect(workspace.environment?.topLevelDocumentSummaries.isEmpty == true)
         active = account
         await workspace.activate(account)
         #expect(workspace.environment?.selectedSpaceID == chosen.id)
-        #expect(workspace.environment?.overview.all.map(\.id) == [page.id])
+        #expect(workspace.environment?.topLevelDocumentSummaries.map(\.id) == [page.id])
     }
 
     @Test func optionalSelectiveAdoptionDoesNotImplicitlyAssignUnselectedSpaces() async throws {

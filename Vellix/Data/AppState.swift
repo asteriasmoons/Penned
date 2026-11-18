@@ -47,10 +47,16 @@ final class AppState: ObservableObject {
     private var syncTask: Task<Void, Never>?
     private var syncRequest = UUID()
 
+    private var needsInitialStorage = false
+
     init(container: ModelContainer? = nil, auth: AuthService? = nil,
-         cloud: (any AccountCloudStoring)? = nil) {
+         cloud: (any AccountCloudStoring)? = nil, deferStorageOpen: Bool = false) {
         self.auth = auth ?? .shared
         self.cloud = cloud ?? AccountCloudStore()
+        if deferStorageOpen && container == nil {
+            needsInitialStorage = true
+            return
+        }
         do {
             accountContainer = try container ?? AccountPersistence.makeContainer()
             reloadAccounts()
@@ -75,34 +81,70 @@ final class AppState: ObservableObject {
     var currentAccountIdentity: AccountIdentity? { currentUser?.identity }
     
     private var bootstrapTask: Task<Void, Never>?
+    private var bootstrapRequest = UUID()
     private var hasBootstrapped = false
+    private var validationTask: Task<Void, Never>?
     
     @discardableResult
     func bootstrap(force: Bool = false) -> Task<Void, Never>? {
         guard !isWorking else { return nil }
+        if let bootstrapTask, !bootstrapTask.isCancelled { return bootstrapTask }
         if hasBootstrapped && !force { return nil }
-        guard let modelContext = accountContainer?.mainContext else { return nil }
+        guard accountContainer != nil || needsInitialStorage else { return nil }
 
-        bootstrapTask?.cancel()
+        let request = UUID()
+        bootstrapRequest = request
         if currentUser == nil { status = .checking }
         hasBootstrapped = true
 
         bootstrapTask = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
+            defer { if self.bootstrapRequest == request { self.bootstrapTask = nil } }
+            let openedInitialStorage = self.needsInitialStorage
+            if openedInitialStorage {
+                let started = PennedDiagnostics.markStartup("account-store.start")
+                do {
+                    let container = try await Task.detached(priority: .userInitiated) {
+                        try AccountPersistence.makeContainer()
+                    }.value
+                    try Task.checkCancellation()
+                    self.accountContainer = container
+                    self.needsInitialStorage = false
+                } catch is CancellationError {
+                    return
+                } catch {
+                    self.needsInitialStorage = false
+                    self.errorMessage = AccountError.storageUnavailable.localizedDescription
+                    self.status = .signedOut
+                    _ = PennedDiagnostics.markStartup("account-store.failed", since: started)
+                    return
+                }
+                _ = PennedDiagnostics.markStartup("account-store.ready", since: started)
+            }
+            guard let modelContext = self.accountContainer?.mainContext else { return }
+            let started = PennedDiagnostics.markStartup("account-validation.start")
 
             do {
-                let user = try await self.auth.fetchMeWithAutoRefresh(modelContext: modelContext)
+                // Mount the library from the locally-stored session immediately.
+                // Remote verification (Supabase token refresh / Apple credential
+                // state) is a network round-trip that previously held the loading
+                // screen for the full network timeout when the backend was slow or
+                // unreachable. It now runs in the background in startSessionValidation,
+                // which signs out only on a genuine revocation/expiry — never on a
+                // transient network failure.
+                let user = try self.auth.restoreLocalUser(modelContext: modelContext)
                 guard !Task.isCancelled else { return }
+                _ = PennedDiagnostics.markStartup("account-validation.local", since: started)
                 self.setSignedIn(user)
+                self.startSessionValidation(for: user, started: started)
             } catch {
+                _ = PennedDiagnostics.markStartup("account-validation.finished", since: started)
                 guard !Task.isCancelled else { return }
+                if openedInitialStorage { self.reloadAccounts() }
                 if let authError = error as? AuthService.AuthServiceError {
                     self.status = .signedOut
                     self.syncRequest = UUID(); self.syncTask?.cancel(); self.syncState = ""
                     if authError == .notSignedIn { return }
-                } else if error as? EmailAuthError == .sessionExpired {
-                    self.status = .signedOut
-                    self.syncRequest = UUID(); self.syncTask?.cancel(); self.syncState = ""
                 } else if self.currentUser == nil { self.status = .signedOut }
                 self.errorMessage = error.localizedDescription
             }
@@ -110,8 +152,34 @@ final class AppState: ObservableObject {
         return bootstrapTask
     }
 
+    private func startSessionValidation(for user: AuthUser, started: TimeInterval) {
+        let identity = user.identity
+        validationTask?.cancel()
+        validationTask = Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            defer { _ = PennedDiagnostics.markStartup("account-validation.finished", since: started) }
+            do {
+                try await self.auth.validateActiveSession(user)
+            } catch is CancellationError {
+                return
+            } catch {
+                // Only a genuine revocation/expiry signs the account out. A
+                // transient network failure surfaces as EmailAuthError.network
+                // (or a raw URLError) and leaves the optimistic session in place,
+                // so a slow or offline backend never forces a sign-out at launch.
+                guard !Task.isCancelled, self.currentUser?.identity == identity else { return }
+                let revoked = error is AuthService.AuthServiceError || (error as? EmailAuthError) == .sessionExpired
+                guard revoked else { return }
+                self.status = .signedOut
+                self.syncRequest = UUID(); self.syncTask?.cancel(); self.syncState = ""
+                self.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     func setSignedIn(_ user: AuthUser) {
         bootstrapTask?.cancel()
+        validationTask?.cancel()
         syncRequest = UUID(); syncTask?.cancel()
         hasBootstrapped = true
         status = user.remoteAuthDeleted ? .deletionPending(user) : .signedIn(user)

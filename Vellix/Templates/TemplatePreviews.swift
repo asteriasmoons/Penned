@@ -16,6 +16,7 @@ struct TemplateGalleryThumbnail: View {
 struct TemplateFullPreview: View {
     let title: String
     let document: DocumentRecord
+    var useTemplateTitle = "Use Template"
     let useTemplate: () -> Void
     let close: () -> Void
 
@@ -27,10 +28,10 @@ struct TemplateFullPreview: View {
                     .frame(maxWidth: .infinity)
                     .padding(VellixSpacing.lg)
             }
-            .background(VellixSurface.appBackground)
+            .background { previewBackground(VellixSurface.appBackground) }
 
             Button(action: useTemplate) {
-                Text("Use Template")
+                Text(useTemplateTitle)
                     .font(.system(.headline, design: .rounded).weight(.black))
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: 50)
@@ -38,9 +39,17 @@ struct TemplateFullPreview: View {
             .buttonStyle(.borderedProminent)
             .tint(PennedSheetStyle.accent)
             .padding(VellixSpacing.lg)
-            .background(VellixSurface.paper)
+            .background { previewBackground(VellixSurface.paper) }
         }
         .background(VellixBackground())
         .pennedSheet(title: title, close: close)
+    }
+
+    @ViewBuilder private func previewBackground(_ fallback: Color) -> some View {
+        #if os(iOS)
+        PadWorkspacePageBackground(fallback: fallback)
+        #else
+        fallback
+        #endif
     }
 }

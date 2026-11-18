@@ -59,7 +59,8 @@ struct LibrarySearchField: View {
             .pennedIconMenuStyle().fixedSize()
         }
         .padding(.horizontal, 14).frame(height: 44)
-        .background(Color.primary.opacity(0.10), in: Capsule())
+        .pennedPhoneDarkChrome(cornerRadius: 100)
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.7))
     }
 
     @ViewBuilder private var searchInput: some View {
@@ -73,6 +74,7 @@ struct LibrarySearchField: View {
 
 struct LibraryBottomBar: View {
     @EnvironmentObject private var environment: AppEnvironment
+    @State private var showTemplatePicker = false
 
     var body: some View {
         HStack {
@@ -81,30 +83,35 @@ struct LibraryBottomBar: View {
                 destination(.favorites, icon: "starfill")
                 destination(.calendar, icon: "mooncal")
             }
-            .padding(4).background(.regularMaterial, in: Capsule())
+            .padding(4).pennedPhoneDarkChrome(cornerRadius: 100)
             .overlay(Capsule().strokeBorder(VellixSurface.controlInk.opacity(0.12), lineWidth: 1))
             Spacer(minLength: 12)
             HStack(spacing: 4) {
                 Button { environment.focusLibrarySearch() } label: {
                     LibraryIcon(name: "searchwavy").frame(width: 42, height: 44)
                 }.accessibilityLabel("Search").help("Search")
-                Menu {
-                    Button("New Page") {
-                        let folder = environment.selectedDestination == .allDocuments ? environment.selectedFolderID : nil
-                        _ = environment.createDocument(folderID: folder == "__unsorted" ? nil : folder)
+                if environment.selectedDestination != .templates {
+                    Menu {
+                        Button("New Page") {
+                            let folder = environment.selectedDestination == .allDocuments ? environment.selectedFolderID : nil
+                            _ = environment.createDocument(folderID: folder == "__unsorted" ? nil : folder)
+                        }
+                        Button("New Folder") { environment.createFolder() }
+                        Button("From Template") { showTemplatePicker = true }
+                    } label: {
+                        LibraryIcon(name: "addwavy", size: 26).frame(width: 42, height: 44)
                     }
-                    Button("New Folder") { environment.createFolder() }
-                    Button("From Template") { navigate(.templates) }
-                } label: {
-                    LibraryIcon(name: "addwavy", size: 26).frame(width: 42, height: 44)
+                    .pennedIconMenuStyle()
+                    .accessibilityLabel("Create").help("Create")
                 }
-                .pennedIconMenuStyle()
-                .accessibilityLabel("Create").help("Create")
             }
-            .padding(4).background(.regularMaterial, in: Capsule())
+            .padding(4).pennedPhoneDarkChrome(cornerRadius: 100)
             .overlay(Capsule().strokeBorder(VellixSurface.controlInk.opacity(0.12), lineWidth: 1))
         }
         .buttonStyle(.plain).padding(.horizontal, 16).padding(.bottom, 8)
+        .sheet(isPresented: $showTemplatePicker) {
+            TemplateDocumentCreationSheet()
+        }
     }
 
     private func destination(_ destination: AppDestination, icon: String) -> some View {
@@ -112,7 +119,11 @@ struct LibraryBottomBar: View {
             LibraryIcon(name: icon, size: 25)
                 .foregroundStyle(environment.selectedDestination == destination ? (destination == .calendar ? CalendarStyle.accent : VellixSurface.accent) : Color.primary)
                 .frame(width: 52, height: 48)
-                .background(environment.selectedDestination == destination ? Color.black.opacity(0.35) : .clear, in: Capsule())
+                .background {
+                    if environment.selectedDestination == destination {
+                        Capsule().fill(.ultraThinMaterial)
+                    }
+                }
         }
         .accessibilityLabel(destination.title).help(destination.title)
     }

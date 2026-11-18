@@ -4,6 +4,7 @@ struct CardPhotoSearchSheet: View {
     @Environment(\.dismiss) private var dismiss
     var select: (CardRemotePhoto) -> Void
     @State private var query = ""
+    @FocusState private var queryFocused: Bool
     @State private var photos: [CardRemotePhoto] = []
     @State private var page = 1
     @State private var hasMore = false
@@ -16,7 +17,7 @@ struct CardPhotoSearchSheet: View {
             VStack(spacing: 12) {
                 HStack(spacing: 10) {
                     Image("searchwavy").renderingMode(.template).resizable().scaledToFit().frame(width: 18, height: 18).foregroundStyle(.secondary)
-                    TextField("Search Unsplash", text: $query).textFieldStyle(.plain)
+                    TextField("Search Unsplash", text: $query).textFieldStyle(.plain).focused($queryFocused)
                 }.padding(12).pennedSheetField().padding(.horizontal)
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 10)], spacing: 14) {
@@ -37,7 +38,11 @@ struct CardPhotoSearchSheet: View {
                 }
             }
             .navigationTitle("Unsplash")
-            .pennedSheet(title: "Unsplash", close: { dismiss() })
+            .pennedSheet(title: "Unsplash", close: { dismiss() }) {
+                #if os(iOS)
+                PennedSheetKeyboardDismissButton { queryFocused = false }
+                #endif
+            }
             .task(id: query) {
                 requestID = UUID()
                 hasMore = false

@@ -123,6 +123,10 @@ enum TipTapEditorAssetCache {
                 with: "<script>\n\(safeJS)\n</script>"
             )
         }
+        if let syntax = try? String(contentsOf: bundleURL.appendingPathComponent("code-syntax.js"), encoding: .utf8) {
+            html = html.replacingOccurrences(of: #"<script src="./code-syntax.js"></script>"#,
+                with: "<script>\n\(syntax.replacingOccurrences(of: "</script>", with: "<\\/script>"))\n</script>")
+        }
         let tableCSS = try String(contentsOf: bundleURL.appendingPathComponent("vellix-tables.css"), encoding: .utf8)
         html = html.replacingOccurrences(of: #"<link rel="stylesheet" href="./vellix-tables.css" />"#,
             with: "<style>\(tableCSS)</style>")
@@ -513,11 +517,6 @@ final class Coordinator:
     ) {
         guard message.name == "tiptap" else {
             return
-        }
-
-        if let dictionary = message.body as? [String: Any] {
-            let kind = dictionary["kind"] as? String ?? "unknown"
-            logInfo("📨 TRACE WKScriptMessage kind=\(kind)")
         }
 
         session.handleRawMessage(message.body)

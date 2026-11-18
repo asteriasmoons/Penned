@@ -37,6 +37,56 @@ final class TemplateGalleryImporter {
         guard let snapshot = package.nativeSnapshot else {
             throw PublishingFailure.invalidContent("This template does not contain editable Penned documents.")
         }
+        return try importSnapshot(snapshot, title: package.title, intoSpace: spaceID, personalTemplate: personalTemplate) { root, _, _, _, _ in root }
+    }
+
+    func prepareInsertion(_ snapshot: TemplateGalleryNativeSnapshot, into documentID: String) throws -> TemplateInsertionContent {
+        let target = try DocumentRepository(database: database).requireDocument(id: documentID)
+        guard !target.isTrashed, !target.isArchived else { throw VellixError.documentNotFound(documentID) }
+        if target.templateID == nil && snapshot.documents.contains(where: { TemplateComponentDefinition.contains(in: $0.tipTapJSON) }) {
+            throw VellixError.impossibleMove("This template contains Daily Note components. Use it in Daily Notes settings.")
+        }
+        return try importSnapshot(snapshot, title: target.title, intoSpace: target.spaceID, personalTemplate: nil) { root, ids, attachments, collections, db in
+            try SpaceOwnership.changingOwnership(in: db) {
+                let current = try SpaceOwnership.document(documentID, scope: target.spaceID, in: db)
+                guard !current.isTrashed, !current.isArchived else { throw VellixError.documentNotFound(documentID) }
+                for id in ids.values where id != root.id {
+                    guard var child = try DocumentRecord.fetchOne(db, key: id) else { continue }
+                    if child.parentDocumentID == root.id || child.parentDocumentID == nil { child.parentDocumentID = current.id }
+                    child.folderID = current.folderID
+                    child.templateID = current.templateID
+                    child.tipTapJSON = try StructuredTemplateContent.replacingPaths(child.tipTapJSON, paths: [root.id: current.id]) ?? child.tipTapJSON
+                    try child.update(db)
+                    try DocumentRepository.upsertSearchIndex(child, in: db)
+                }
+                try db.execute(sql: "UPDATE attachments SET documentID=? WHERE documentID=?", arguments: [current.id, root.id])
+                try db.execute(sql: "UPDATE collections SET documentID=? WHERE documentID=?", arguments: [current.id, root.id])
+                let json = try StructuredTemplateContent.replacingPaths(root.tipTapJSON, paths: [root.id: current.id]) ?? root.tipTapJSON
+                try DocumentRepository.deleteSearchIndex(id: root.id, in: db)
+                try db.execute(sql: "DELETE FROM documents WHERE id=?", arguments: [root.id])
+                return TemplateInsertionContent(canonicalJSON: json, documentIDs: Set(ids.values).subtracting([root.id]),
+                    attachments: attachments, collectionIDs: Set(collections.values))
+            }
+        }
+    }
+
+    func discardInsertion(_ content: TemplateInsertionContent) throws {
+        try database.write { db in
+            for id in content.collectionIDs { try db.execute(sql: "DELETE FROM collections WHERE id=?", arguments: [id]) }
+            for id in content.documentIDs {
+                try DocumentRepository.deleteSearchIndex(id: id, in: db)
+                try db.execute(sql: "DELETE FROM documents WHERE id=?", arguments: [id])
+            }
+            for attachment in content.attachments { try db.execute(sql: "DELETE FROM attachments WHERE id=?", arguments: [attachment.id]) }
+        }
+        for attachment in content.attachments {
+            for path in attachment.storedPaths { try? attachmentStore.removeFile(relativePath: path) }
+        }
+    }
+
+    private func importSnapshot<T>(_ snapshot: TemplateGalleryNativeSnapshot, title: String, intoSpace spaceID: String?,
+                                   personalTemplate: TemplateRecord?,
+                                   finish: (DocumentRecord, [String: String], [AttachmentRecord], [String: String], Database) throws -> T) throws -> T {
         try snapshot.validate()
         guard snapshot.attachments.allSatisfy({ snapshot.attachmentFiles[$0.relativePath] != nil }) else {
             throw PublishingFailure.invalidContent("An attachment is missing from this template.")
@@ -44,7 +94,7 @@ final class TemplateGalleryImporter {
 
         var importedFiles: [String] = []
         do {
-            let root = try database.write { db -> DocumentRecord in
+            let root = try database.write { db -> T in
                 if let personalTemplate {
                     try LibraryAccess.requireSpace(personalTemplate.spaceID, in: db)
                     try personalTemplate.insert(db)
@@ -115,7 +165,7 @@ final class TemplateGalleryImporter {
                     copy.createdAt = Date()
                     copy.updatedAt = Date()
                     copy.revision = 1
-                    if source.id == snapshot.rootDocumentID { copy.title = package.title }
+                    if source.id == snapshot.rootDocumentID { copy.title = title }
                     copy.cover = copy.cover.map { pathMap[$0] ?? $0 }
                     copy.appearanceJSON = try StructuredTemplateContent.replacingPaths(copy.appearanceJSON, paths: pathMap)
                     copy.cardStyleJSON = try StructuredTemplateContent.replacingPaths(copy.cardStyleJSON, paths: pathMap)
@@ -203,7 +253,7 @@ final class TemplateGalleryImporter {
                     personalTemplate.tipTapJSON = root.tipTapJSON
                     try personalTemplate.update(db)
                 }
-                return root
+                return try finish(root, idMap, importedAttachments, collectionIDs, db)
             }
             return root
         } catch {
@@ -211,4 +261,11 @@ final class TemplateGalleryImporter {
             throw error
         }
     }
+}
+
+struct TemplateInsertionContent {
+    let canonicalJSON: String
+    let documentIDs: Set<String>
+    let attachments: [AttachmentRecord]
+    let collectionIDs: Set<String>
 }

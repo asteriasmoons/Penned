@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Testing
+import WebKit
 #if os(macOS)
 import AppKit
 #endif

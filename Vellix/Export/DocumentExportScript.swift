@@ -84,9 +84,7 @@ enum DocumentExportScript {
     const heading = el('header', 'export-heading');
     if (options.cover) { const img = el('img', 'export-cover'); img.src = options.cover; img.alt = ''; heading.append(img); }
     if (options.showTitle) {
-      const title = el('div', 'export-title');
-      if (options.icon) { const icon = el('img'); icon.src = options.icon; icon.style.cssText = 'width:26px;height:26px;display:inline-block;vertical-align:middle;margin:0 8px 0 0'; title.append(icon); }
-      title.append(document.createTextNode(options.title)); heading.append(title);
+      heading.append(el('div', 'export-title', options.title));
     }
     if (options.subtitle) heading.append(el('div', 'export-subtitle', options.subtitle));
     if (heading.childElementCount) flow.append(heading);
@@ -142,6 +140,11 @@ enum DocumentExportScript {
       }
     }
     content.querySelectorAll('.penned-collection-footer,.penned-collection-entry-actions,.penned-collection-header > button:last-child,.column-resize-handle,.resize-handle,.table-resize-handle,.vellix-table-cell-menu,.vellix-table-resize-line,.vellix-plain-callout-color-button,.vellix-blockquote-color-button,.ProseMirror-gapcursor,.ProseMirror-trailingBreak,[data-placeholder-overlay],.penned-attachment-actions').forEach(n=>n.remove());
+    content.querySelectorAll('.penned-information-card-disclosure').forEach(n=>n.remove());
+    content.querySelectorAll('.penned-information-card[data-ic-collapsed]').forEach(n=>{
+      n.removeAttribute('data-ic-collapsed');
+      n.removeAttribute('data-ic-collapsible');
+    });
     // Drop the action column without dropping any actual property columns.
     content.querySelectorAll('.penned-collection-row').forEach(n=>n.lastElementChild?.remove());
     content.querySelectorAll('.penned-collection-table').forEach(n=>n.style.removeProperty('--collection-tracks'));
@@ -188,6 +191,7 @@ enum DocumentExportScript {
       const width=table.getBoundingClientRect().width,available=flow.clientWidth;
       if(width>available){const scale=available/width;table.style.transformOrigin='top left';table.style.transform=`scale(${scale})`;wrapper.style.height=table.getBoundingClientRect().height+'px';}
     });
+    window.pennedRepaintScallopedLabels?.(flow);
     // Repaint gradient text against export line geometry, preserving angle and
     // a continuous gradient across lines and differently formatted runs.
     flow.querySelectorAll('.vellix-gradient-fragment').forEach(n=>n.replaceWith(...n.childNodes));
@@ -231,11 +235,12 @@ enum DocumentExportScript {
       context.globalCompositeOperation='source-in';context.fillStyle=color;context.fillRect(0,0,canvas.width,canvas.height);
       return canvas.toDataURL('image/png');
     };
-    for(const span of flow.querySelectorAll('.penned-collection-icon')){
+    for(const span of flow.querySelectorAll('.penned-collection-icon,.penned-icon-callout-tint')){
       const computed=getComputedStyle(span),mask=computed.webkitMaskImage||computed.maskImage;
       if(!mask||mask==='none')continue;
       const rect=span.getBoundingClientRect();
-      const png=await rasterizeMaskedIcon(mask,rect.width||18,rect.height||18,computed.color);
+      const tint=span.classList.contains('penned-icon-callout-tint')?computed.backgroundColor:computed.color;
+      const png=await rasterizeMaskedIcon(mask,rect.width||18,rect.height||18,tint);
       if(!png)continue;
       span.style.setProperty('mask-image','none','important');
       span.style.setProperty('-webkit-mask-image','none','important');
@@ -244,6 +249,17 @@ enum DocumentExportScript {
       span.style.setProperty('background-size','contain','important');
       span.style.setProperty('background-repeat','no-repeat','important');
       span.style.setProperty('background-position','center','important');
+    }
+    const grainTiles=new Map();
+    for(const grain of flow.querySelectorAll('.penned-label-grain')){
+      const computed=getComputedStyle(grain),mask=computed.webkitMaskImage||computed.maskImage;
+      const tint=computed.backgroundColor;
+      if(!grainTiles.has(tint))grainTiles.set(tint,await rasterizeMaskedIcon(mask,128,128,tint));
+      const png=grainTiles.get(tint);
+      if(!png){grain.remove();continue;}
+      grain.style.setProperty('background',`url("${png}") 0 0 / 192px 192px repeat`,'important');
+      grain.style.setProperty('-webkit-mask','none','important');
+      grain.style.setProperty('mask','none','important');
     }
     const origin=flow.getBoundingClientRect().top, height=Math.ceil(flow.getBoundingClientRect().height);
     // Collections flow across paper boundaries; a tall gallery card must not

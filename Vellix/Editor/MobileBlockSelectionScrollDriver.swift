@@ -8,7 +8,9 @@ nonisolated struct MobileBlockSelectionDrag {
     let revision: Int
     let active: Bool
     let point: CGPoint
-    let deltaY: CGFloat
+    let screenY: CGFloat
+    let direction: Int
+    let distance: CGFloat
 
     init?(payload: [String: Any]) {
         guard let token = payload["token"] as? Int, token > 0,
@@ -18,15 +20,21 @@ nonisolated struct MobileBlockSelectionDrag {
         if active {
             guard let revision = payload["revision"] as? Int, revision >= 0,
                   let x = payload["x"] as? Double, let y = payload["y"] as? Double,
-                  let delta = payload["deltaY"] as? Double,
-                  [x, y, delta].allSatisfy(\.isFinite) else { return nil }
+                  let screenY = payload["screenY"] as? Double,
+                  let direction = payload["direction"] as? Int, direction == 1 || direction == -1,
+                  let distance = payload["distance"] as? Double, distance > 0,
+                  [x, y, screenY, distance].allSatisfy(\.isFinite) else { return nil }
             self.revision = revision
             point = CGPoint(x: CGFloat(x), y: CGFloat(y))
-            deltaY = CGFloat(delta)
+            self.screenY = CGFloat(screenY)
+            self.direction = direction
+            self.distance = CGFloat(distance)
         } else {
             revision = 0
             point = .zero
-            deltaY = 0
+            screenY = 0
+            direction = 0
+            distance = 0
         }
     }
 }
@@ -41,8 +49,8 @@ final class MobileBlockSelectionScrollDriver {
     private var revision = 0
     private var generation = 0
     private var fingerInWindow = CGPoint.zero
+    private var lastScreenY: CGFloat?
     private var velocity: CGFloat = 0
-    private var dragDistance: CGFloat = 0
     private var previousTimestamp: CFTimeInterval = 0
     private var evaluating = false
 
@@ -60,18 +68,32 @@ final class MobileBlockSelectionScrollDriver {
             stop()
             token = drag.token
         }
+        guard drag.revision > revision else { return }
         self.scrollView = scrollView
         self.webView = webView
         self.canScroll = canScroll
         revision = drag.revision
-        fingerInWindow = webView.convert(drag.point, to: window)
-        if abs(drag.deltaY) > 0.25 {
-            let direction: CGFloat = drag.deltaY > 0 ? 1 : -1
-            if velocity * direction < 0 { dragDistance = 0 }
-            dragDistance += abs(drag.deltaY)
-            velocity = direction * min(1440, max(360, dragDistance * 12))
+        if let lastScreenY {
+            // A local touch point can arrive after the native scroll view has
+            // moved again. Once anchored, track the finger in screen space.
+            fingerInWindow.y += drag.screenY - lastScreenY
+        } else {
+            fingerInWindow = webView.convert(drag.point, to: window)
         }
-        guard velocity != 0 else { return }
+        lastScreenY = drag.screenY
+        let viewport = scrollView.convert(scrollView.bounds, to: window)
+            .intersection(window.bounds.inset(by: window.safeAreaInsets))
+        let edgeZone: CGFloat = 48
+        let edgeDistance = drag.direction > 0 ? viewport.maxY - fingerInWindow.y : fingerInWindow.y - viewport.minY
+        guard !viewport.isEmpty, edgeDistance < edgeZone else {
+            // In the middle of the page the finger, not a timer, extends the range.
+            velocity = 0
+            displayLink?.isPaused = true
+            previousTimestamp = 0
+            return
+        }
+        let strength = min(1, max(0, (edgeZone - edgeDistance) / edgeZone))
+        velocity = CGFloat(drag.direction) * (100 + 800 * strength)
         if let displayLink {
             if displayLink.isPaused { previousTimestamp = 0 }
             displayLink.isPaused = false
@@ -93,8 +115,8 @@ final class MobileBlockSelectionScrollDriver {
         displayLink = nil
         token = nil
         revision = 0
+        lastScreenY = nil
         velocity = 0
-        dragDistance = 0
         previousTimestamp = 0
         evaluating = false
         canScroll = nil
@@ -109,16 +131,23 @@ final class MobileBlockSelectionScrollDriver {
             stop()
             return
         }
+        guard velocity != 0 else { link.isPaused = true; return }
         let elapsed = previousTimestamp == 0 ? 1.0 / 60 : min(1.0 / 30, max(0, link.timestamp - previousTimestamp))
         previousTimestamp = link.timestamp
         let insets = scrollView.adjustedContentInset
         let minimum = -insets.top
         let maximum = max(minimum, scrollView.contentSize.height - scrollView.bounds.height + insets.bottom)
         guard maximum > minimum else { link.isPaused = true; return }
-        let target = min(maximum, max(minimum, scrollView.contentOffset.y + velocity * CGFloat(elapsed)))
-        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: target), animated: false)
+        let offset = scrollView.contentOffset
+        let target = min(maximum, max(minimum, offset.y + velocity * CGFloat(elapsed)))
+        let direction = velocity > 0 ? 1 : -1
+        // Clamping an already overscrolled offset must not move the page
+        // opposite to the requested direction.
+        if (target - offset.y) * CGFloat(direction) > 0 {
+            scrollView.setContentOffset(CGPoint(x: offset.x, y: target), animated: false)
+        }
         let point = webView.convert(fingerInWindow, from: window)
-        let boundary = velocity > 0 && target >= maximum ? "end" : velocity < 0 && target <= minimum ? "start" : ""
+        let boundary = direction > 0 && target >= maximum ? "end" : direction < 0 && target <= minimum ? "start" : ""
         // Keep scrolling each frame; coalesce range updates while one is in flight.
         guard !evaluating else { return }
         let generation = self.generation
@@ -128,8 +157,9 @@ final class MobileBlockSelectionScrollDriver {
             guard let self, let webView, self.generation == generation else { return }
             do {
                 let active = try await webView.callAsyncJavaScript("""
-                    return window.PennedBlockSelection?.continueDragScroll({token, revision, y, boundary}) === true;
-                    """, arguments: ["token": token, "revision": revision, "y": Double(point.y), "boundary": boundary], in: nil, contentWorld: .page)
+                    return window.PennedBlockSelection?.continueDragScroll({token, revision, y, direction}) === true;
+                    """, arguments: ["token": token, "revision": revision, "y": Double(point.y),
+                                     "direction": direction], in: nil, contentWorld: .page)
                 guard self.generation == generation else { return }
                 self.evaluating = false
                 if active as? Bool != true { self.stop() }

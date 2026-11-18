@@ -44,6 +44,10 @@ struct SpaceManagementView: View {
         }
         .navigationTitle("Spaces").tint(VellixSurface.accent)
         #if os(iOS)
+        .scrollContentBackground(.hidden)
+        .background { PadWorkspacePageBackground(fallback: VellixSurface.workspace) }
+        #endif
+        #if os(iOS)
         .toolbar { ToolbarItem(placement: .primaryAction) { EditButton() } }
         #endif
         .disabled(environment.isSwitchingSpace)

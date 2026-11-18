@@ -25,7 +25,14 @@ struct PennedAppearanceSettingsView: View {
             .font(.system(.body, design: .rounded).weight(.black))
             .padding(20).frame(maxWidth: 620).frame(maxWidth: .infinity)
         }
-        .background(VellixSurface.appBackground).foregroundStyle(VellixSurface.ink)
+        .background {
+            #if os(iOS)
+            PadWorkspacePageBackground(fallback: VellixSurface.appBackground)
+            #else
+            VellixSurface.appBackground
+            #endif
+        }
+        .foregroundStyle(VellixSurface.ink)
         .tint(VellixSurface.violet)
     }
 }

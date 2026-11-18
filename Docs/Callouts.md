@@ -1,5 +1,73 @@
 # Callouts
 
+## Current Behavior
+
+Use **Add Block > Content Blocks > Callouts > Icon** on iPhone or iPad, or
+**Insert > Callouts > Icon** in the Mac inspector. Slash search offers
+**Icon Callout** and **Plain Callout**. Plain keeps its existing rich text,
+color action, resizing, and row layout. Its saved color is now an opaque fill
+with contrasting default text, just like Grid Cards. Web clip source cards
+keep their separate styling.
+
+Icon Callout is a separate `iconCallout` block with no title or fixed height.
+Its text wraps next to the left icon and can be edited and formatted in place.
+Both callouts use the existing 12-point corners. Insertion opens **Callout
+Settings**; tap the icon to reopen it. Settings can also edit an ordinary,
+unformatted body. Formatted or mixed-content bodies remain editable in the
+document without being flattened by the settings sheet.
+
+Choose a Penned icon, a photo, or an image file. Library icons retain the
+existing mask, tint, and asset renderer. Imported art retains its colors,
+transparency, and proportions; a separate import step trims thin alpha
+artifacts around the silhouette and stores the prepared PNG as a normal
+document attachment. **Icon Color** works for both library icons and imported
+images. Imported images keep their original colors unless a tint is set. Tint
+fills the visible shape with the chosen color, using the image's transparency
+to preserve its edges. Use **Original Colors** to remove the tint without
+reimporting the image. **Text Color** sets the default text color for the
+callout without changing explicit inline colors. Use **Automatic** to restore
+background-based contrast. Each color is set through its picker, with no presets.
+The settings travel with the block and render in previews, PDF and Word exports,
+and the public reader. **Dismiss Keyboard** uses the same control as Heading Label Settings
+on iPhone/iPad and leaves the sheet open. **Done** saves the draft; closing
+without Done leaves the block's saved settings alone.
+
+There is no database or sync-protocol change: the block saves the attachment
+path in its attributes and CloudKit transfers the PNG via the usual attachment
+record. Native previews and published reader source understand the block.
+Existing Grid Cards are unchanged, and legacy `callout` JSON still opens as
+[Grid Cards](GridCards.md), not as Icon Callouts.
+
+### Source and Rollout
+
+- Editor source: `src/icon-callout.js`, `grid-card.js`, `editor.js`,
+  `attachments.js`, `callout-list-backspace.js`, and `tiptap.html`.
+- Native editor and sheets: `IconCalloutSettings.swift`, `GridCardSettingsSheet.swift`,
+  `HeadingLabelSettings.swift`, `TipTapBridgeTypes.swift`,
+  `TipTapEditorSession.swift`, `MacTipTapEditorSession.swift`,
+  `DocumentEditorView.swift`, `MacEditorPresentations.swift`,
+  `MacInsertInspector.swift`, `MacFormatInspector.swift`, and
+  `MobileBlockSelection.swift`.
+- Persistence and rendering: `TipTapContentAnalyzer.swift`, `AttachmentMedia.swift`,
+  `ImmediateDocumentPreview.swift`, `GalleryDocumentPreview.swift`,
+  `DocumentPreviewContent.swift`, `DocumentThumbnailLayout.swift`, and
+  `NestedPageThumbnail.swift`. `DocumentMarkdownExport.swift` preserves the
+  text; `DocumentWordExport.swift` also includes the custom image and solid
+  background. `DocumentExportScript.swift` flattens the image tint for PDF output.
+- Publishing: `PublishingProjection.swift`, the publishing service's
+  `contract.ts`, and editor `src/public-document.js` keep the private path
+  out of public content and reference the published image through its media ID.
+
+No builds or tests were run. The embedded editor bundle and public reader
+assets were not regenerated. Regenerate the native editor bundle from
+`penned-editor` with `npm run build` before building/installing the app.
+Update all editing devices before opening documents containing Icon Callouts.
+Public publishing also needs the updated service and regenerated reader assets.
+
+## Historical Implementation
+
+The notes below describe the pre-Grid Cards implementation and its verification.
+
 Existing icon callouts remain the `callout` node. Their IDs, icons, colors,
 formatted content, icon picker, and saved JSON are not migrated or replaced.
 Populated text aligns with the top of the entire icon button, not the icon glyph

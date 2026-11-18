@@ -10,7 +10,7 @@ struct LibraryFolderIcon: View {
     var size: CGFloat = 24
 
     var body: some View {
-        LibraryIcon(name: VellixAssetIconLibrary.names.contains(folder.icon ?? "") ? (folder.icon ?? "linesfolderfill") : "linesfolderfill", size: size)
+        LibraryIcon(name: VellixAssetIconLibrary.isSupported(folder.icon ?? "") ? (folder.icon ?? "linesfolderfill") : "linesfolderfill", size: size)
             .foregroundStyle(Color(vellixHex: folder.iconColorHex ?? "#909090"))
     }
 }
@@ -68,7 +68,7 @@ struct FolderEditorSheet: View {
         self.request = request
         _name = State(initialValue: request.folder?.title ?? "New Folder")
         let asset = request.folder?.icon ?? "linesfolderfill"
-        _icon = State(initialValue: VellixAssetIconLibrary.names.contains(asset) ? asset : "linesfolderfill")
+        _icon = State(initialValue: VellixAssetIconLibrary.isSupported(asset) ? asset : "linesfolderfill")
         _color = State(initialValue: Color(vellixHex: request.folder?.iconColorHex ?? "#909090"))
     }
 
@@ -118,7 +118,7 @@ struct FolderEditorSheet: View {
         .sheet(item: $picker) { selection in
             switch selection {
             case .icon:
-                VellixIconLibraryPicker(title: "Folder Icon") { selected in
+                VellixIconLibraryPicker(title: "Folder Icon", selectedIcon: icon) { selected in
                     icon = selected.name
                     picker = nil
                 }

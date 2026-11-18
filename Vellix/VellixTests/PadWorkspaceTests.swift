@@ -38,7 +38,7 @@ struct PadWorkspaceTests {
         #expect(app.selectedDestination == .favorites)
     }
 
-    @Test func smallerGalleryCardsUseAvailableColumnsWithoutStretching() {
+    @Test func galleryChoosesColumnsForAvailableWidth() {
         let portrait = PadWorkspaceMetrics(width: 889, height: 1280)
         let landscape = PadWorkspaceMetrics(width: 1280, height: 889)
         #expect(PadWorkspaceMetrics.galleryColumns(width: 857, preferred: portrait.preferredColumns) == 3)
@@ -49,21 +49,20 @@ struct PadWorkspaceTests {
         #expect(PadWorkspaceMetrics(width: 1920, height: 1080).preferredColumns > 4)
     }
 
-    @Test func galleryAddsTenPercentWidthThenFivePercentProportionalEnlargement() {
+    @Test func galleryCardsFillWidthBetweenEqualInsets() {
         let phoneWidth: CGFloat = 430
         let phoneCardWidth = (phoneWidth - 16 * 2 - 10) / 2
         #expect(PadWorkspaceMetrics.phoneGalleryCardWidth == phoneCardWidth)
         let enlarged = phoneCardWidth * 1.1 * 1.05
         #expect(abs(PadWorkspaceMetrics.galleryPreferredCardWidth - enlarged) < 0.001)
-        #expect(PadWorkspaceMetrics.galleryCardWidth(available: phoneWidth, columns: 2) == phoneCardWidth)
-        for (width, columns): (CGFloat, Int) in [(1280, 5), (889, 3), (944, 3), (300, 1)] {
-            #expect(abs(PadWorkspaceMetrics.galleryCardWidth(available: width, columns: columns) - enlarged) < 0.001)
+        for (width, columns): (CGFloat, Int) in [(820, 3), (1280, 5), (889, 3), (944, 3), (300, 1)] {
+            let cardWidth = PadWorkspaceMetrics.galleryCardWidth(available: width, columns: columns)
+            #expect(abs(cardWidth * CGFloat(columns) + CGFloat(columns - 1) * 10 - (width - 40)) < 0.001)
         }
         let oldHeight = phoneCardWidth * 740 / 360 * 0.8
         let newHeight = enlarged * 740 / 360 * PadWorkspaceMetrics.galleryPreviewHeightFraction
         #expect(abs(newHeight / oldHeight - 1.05) < 0.001)
-        #expect(PadWorkspaceMetrics.galleryCardWidth(available: 889, columns: 5, compact: true) == 144)
-        #expect(PadWorkspaceMetrics.galleryCardWidth(available: 150, columns: 1) == 118)
+        #expect(PadWorkspaceMetrics.galleryCardWidth(available: 150, columns: 1) == 110)
     }
 
     @Test func tabsCreateSelectCloseAndKeepOneUsableDestination() async throws {

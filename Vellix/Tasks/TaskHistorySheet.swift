@@ -118,7 +118,7 @@ struct TaskHistorySheet: View {
 
     private func reload() {
         do {
-            guard let current = try environment.documents.taskForHistoryPage(id: DocumentTaskPages.detailID(request.id)) else {
+            guard let current = try environment.tasks.all(includeTemplates: true, includeInactive: true).first(where: { $0.id == request.id }) else {
                 isAvailable = false
                 errorMessage = nil
                 return

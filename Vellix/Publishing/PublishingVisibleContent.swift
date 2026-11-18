@@ -14,7 +14,6 @@ enum PublishingVisibleContent {
             var preview: [String: Any] = ["title": record.title, "excerpt": String(record.previewText.prefix(400)),
                 "targetDocumentID": record.id, "fontStyle": record.appearance.fontStyle.rawValue,
                 "textColorHex": record.appearance.textColorHex]
-            if let icon = record.icon { preview["icon"] = icon }
             if record.appearance.displaysCover {
                 if let cover = record.cover { preview["cover"] = ["relativePath": cover] }
                 else if let photo = record.appearance.coverPhoto { preview["coverPhoto"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(photo)) }

@@ -31,7 +31,11 @@ struct PadSettingsView: View {
         GeometryReader { geometry in
             let columns = geometry.size.width >= 760
             HStack(spacing: 0) {
-                if columns { categories.background(VellixSurface.sidebar).frame(width: min(336, max(260, geometry.size.width * 0.38))) }
+                if columns {
+                    categories
+                        .background { PadWorkspaceBlurSurface(style: .dark) }
+                        .frame(width: min(336, max(260, geometry.size.width * 0.38)))
+                }
                 VStack(spacing: 0) {
                     HStack(spacing: 12) {
                         if !columns { PadIconButton("Settings Categories", icon: "columns") { showingCategories = true } }
@@ -44,6 +48,7 @@ struct PadSettingsView: View {
                             PadIconButton("New Folder", icon: "addwavy") { environment.requestFolderCreation(parentFolderID: nil) }
                         }
                     }.padding(.horizontal, 24).frame(minHeight: 60)
+                        .background(Color.black)
                     NavigationStack { page }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
@@ -52,7 +57,8 @@ struct PadSettingsView: View {
                     .presentationDetents([.medium, .large])
             }
         }
-        .background(VellixSurface.appBackground).foregroundStyle(VellixSurface.ink)
+        .background(Color.black)
+        .foregroundStyle(VellixSurface.ink)
         .fontDesign(.rounded).tint(VellixSurface.violet)
         .accessibilityIdentifier("ipad-settings-workspace")
     }
@@ -100,7 +106,7 @@ struct PadSettingsView: View {
                 AccountLibrarySheet(identity: identity, embeddedInWorkspace: true)
             } else { AccountSettingsView(embeddedInWorkspace: true) }
         case .templates: TemplatesView()
-        case .folders: DocumentBrowserView(mode: .folders, documents: [])
+        case .folders: DocumentBrowserView(mode: .folders)
         case .tags: TagBrowserView()
         case .dailyNotes: DailyNotesSettingsView(isWorkspaceEmbedded: true)
         case .spaces: PadSpaceManagementView()
@@ -132,7 +138,8 @@ struct PadSpaceManagementView: View {
                     Spacer()
                     EditButton()
                 }.font(.system(.subheadline, design: .rounded).weight(.black))
-                    .padding(.horizontal, 24).frame(minHeight: 48).background(VellixSurface.appBackground)
+                    .padding(.horizontal, 24).frame(minHeight: 48)
+                    .background(Color.black)
             }
             .environment(\.editMode, $editMode)
         #else

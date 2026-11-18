@@ -9,12 +9,12 @@ log text and retain the `list-caret-v1` version and `PENNED-LIST` filter.
 ## Automatic Capture
 
 The earlier Safari console expression was a manual read, not installed
-diagnostics. Temporary automatic diagnostics now run in the actual iOS/iPadOS
-document editor WebView in native Debug builds, including template editing.
+diagnostics. The capture runs in iOS/iPadOS Debug editor WebViews, including
+template editing, when enabled with the `-PennedListDiagnostics` launch argument.
 
 In Xcode's debug console, filter for `PENNED-LIST`.
 
-1. Build/run Penned's Debug configuration from Xcode on the affected device.
+1. Add `-PennedListDiagnostics` under **Edit Scheme > Run > Arguments** and run the Debug build.
 2. Confirm `PENNED-LIST native diagnostics enabled`, followed by a JSON record
    with `"event":"installed"` and `"version":"list-caret-v1"`.
 3. Reproduce Return exiting item 4, Numbered List restoring it, tapping below

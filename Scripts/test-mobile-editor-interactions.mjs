@@ -29,7 +29,7 @@ async function fixture(t, content, mobile = true) {
     { runScripts: "outside-only", pretendToBeVisual: true, url: "https://penned.test" });
   t.after(() => dom.window.close());
   const w = dom.window, events = [];
-  let nativeSuppressed = false, nativeSlashMenu = null;
+  let nativeSlashMenu = null;
   let transactionTime = Date.now();
   w.Date.now = () => transactionTime;
   w.console.log = w.console.info = () => {};
@@ -37,11 +37,7 @@ async function fixture(t, content, mobile = true) {
   w.ResizeObserver = class { observe() {} disconnect() {} };
   w.webkit = { messageHandlers: { tiptap: { postMessage: event => {
     events.push(event);
-    if (event.kind === "mobileSlashSuppression") {
-      nativeSuppressed = event.payload.suppressed;
-      if (nativeSuppressed) nativeSlashMenu = null;
-    }
-    if (event.kind === "slashMenu" && (!nativeSuppressed || !event.payload.visible)) {
+    if (event.kind === "slashMenu") {
       nativeSlashMenu = event.payload.visible ? event.payload : null;
     }
   } } } };
@@ -105,6 +101,17 @@ test("slash divider consumes the slash paragraph without leaving a blank above",
   assert.equal(editor.state.doc.textContent, "KeepTail");
 });
 
+for (const [key, query, type] of [["tabs", "/tabs", "tabs"], ["informationCard", "/informationcard", "informationCard"], ["fields", "/fields", "minimalFields"]]) {
+  test(`slash ${key} inserts at a block boundary`, async t => {
+    const { w, editor, caret } = await fixture(t, [paragraph("top", "Keep"), paragraph("slash", query), paragraph("tail", "Tail")]);
+    caret("slash", query.length);
+    assert.equal(await w.tiptapCommand("chooseSlashItem", { key }), true);
+    assert.deepEqual(json(editor.getJSON()).content.map(node => node.type), ["paragraph", type, "paragraph"]);
+    assert.equal(editor.state.doc.firstChild.textContent, "Keep");
+    assert.equal(editor.state.doc.lastChild.textContent, "Tail");
+  });
+}
+
 const divider = (id, style = "thinLine") => ({ type: "divider", attrs: { id, style } });
 function tapDivider(w, editor, id, y = 126) {
   const element = editor.view.dom.querySelector(`[data-vellix-divider][id="${id}"]`);
@@ -114,6 +121,28 @@ function tapDivider(w, editor, id, y = 126) {
   (element.firstElementChild ?? element).dispatchEvent(event);
   return event;
 }
+
+test("Washi Tape size defaults to Thick and saves without changing the image or tint", async t => {
+  const imagePath = "washi-tape.png";
+  const color = "#20B9C4";
+  const { w, editor, events } = await fixture(t, [
+    { type: "divider", attrs: { id: "tape", style: "washiTape", imagePath, color } },
+    paragraph("after", "Keep"),
+  ]);
+  tapDivider(w, editor, "tape");
+  assert.equal(events.findLast(event => event.kind === "washiTapeSettings")?.payload.tapeSize, "thick");
+  const result = await w.tiptapCommand("washiTapeUpdate", {
+    blockID: "tape", originalPath: imagePath, imagePath, originalTapeSize: "thick", tapeSize: "thin",
+  });
+  const attrs = result.document.content[0].attrs;
+  assert.equal(attrs.tapeSize, "thin");
+  assert.equal(attrs.imagePath, imagePath);
+  assert.equal(attrs.color, color);
+  await w.tiptapCommand("setContent", result);
+  assert.ok(editor.view.dom.querySelector('[data-divider-style="washiTape"][data-tape-size="thin"]'));
+  tapDivider(w, editor, "tape");
+  assert.equal(events.findLast(event => event.kind === "washiTapeSettings")?.payload.tapeSize, "thin");
+});
 
 for (const style of ["thinLine", "thickLine", "dottedCircles", "fourCircles"]) {
   test(`tapping below a reopened terminal divider creates and focuses a typing paragraph (${style})`, async t => {
@@ -215,9 +244,8 @@ test("tap-away dismissal keeps literal slash and does not reopen on continued ty
   const { w, editor, events, caret, nativeSlashMenu } = await fixture(t, [paragraph("slash", "/")]);
   caret("slash", 1);
   assert.equal(events.findLast(event => event.kind === "slashMenu")?.payload.visible, true);
-  assert.equal(await w.tiptapCommand("mobileDismissSlashMenu"), true);
+  assert.equal(await w.tiptapCommand("dismissSlashMenu"), true);
   assert.equal(editor.state.doc.textContent, "/");
-  assert.equal(events.findLast(event => event.kind === "mobileSlashSuppression")?.payload.suppressed, true);
   assert.equal(nativeSlashMenu(), null);
   editor.commands.insertContent("path");
   assert.equal(editor.state.doc.textContent, "/path");
@@ -227,27 +255,43 @@ test("tap-away dismissal keeps literal slash and does not reopen on continued ty
   w.document.dispatchEvent(enter);
   assert.equal(enter.defaultPrevented, false, "dismissed slash must not capture Enter as a menu choice");
   editor.commands.insertContent(" /");
-  assert.equal(events.findLast(event => event.kind === "mobileSlashSuppression")?.payload.suppressed, false);
   assert.equal(events.findLast(event => event.kind === "slashMenu")?.payload.visible, true, "a new slash must still open the menu");
   assert.ok(nativeSlashMenu(), "the new menu must reach the native view on the first slash keystroke");
+});
+
+test("backspacing a dismissed slash and retyping it at the same position reopens the picker", async t => {
+  const { w, editor, caret, nativeSlashMenu } = await fixture(t, [paragraph("slash")]);
+  caret("slash");
+  editor.commands.insertContent("/");
+  assert.ok(nativeSlashMenu());
+  const { doc, selection } = editor.state;
+  await w.tiptapCommand("dismissSlashMenu");
+  assert.equal(nativeSlashMenu(), null);
+  assert.equal(editor.state.doc, doc, "tap-away must not edit the document");
+  assert.equal(editor.state.selection, selection, "tap-away must not move the caret");
+
+  editor.commands.deleteRange({ from: selection.from - 1, to: selection.from });
+  assert.equal(editor.state.doc.textContent, "");
+  assert.equal(nativeSlashMenu(), null);
+  editor.commands.insertContent("/");
+  assert.equal(editor.state.selection.from, selection.from);
+  assert.ok(nativeSlashMenu(), "the replacement slash must open the picker immediately");
 });
 
 test("dismissal resets for a different document", async t => {
   const { w, events, caret } = await fixture(t, [paragraph("one", "/")]);
   caret("one", 1);
-  await w.tiptapCommand("mobileDismissSlashMenu");
+  await w.tiptapCommand("dismissSlashMenu");
   await w.tiptapCommand("setContent", { document: { type: "doc", content: [paragraph("two", "/")] } });
   caret("two", 0);
   caret("two", 1);
-  assert.equal(events.findLast(event => event.kind === "mobileSlashSuppression")?.payload.suppressed, false);
   assert.equal(events.findLast(event => event.kind === "slashMenu")?.payload.visible, true);
 });
 
-test("dismissal without a slash clears native suppression instead of disabling future menus", async t => {
+test("dismissal without a slash does not disable future menus", async t => {
   const { w, editor, events, caret } = await fixture(t, [paragraph("text", "Hello")]);
   caret("text", 5);
-  await w.tiptapCommand("mobileDismissSlashMenu");
-  assert.equal(events.findLast(event => event.kind === "mobileSlashSuppression")?.payload.suppressed, false);
+  await w.tiptapCommand("dismissSlashMenu");
   editor.commands.insertContent(" /");
   assert.equal(events.findLast(event => event.kind === "slashMenu")?.payload.visible, true);
 });
@@ -348,10 +392,10 @@ test("mobile edits round-trip through the existing document snapshot and load co
   assert.equal(saved.content.find(node => node.type === "divider").attrs.style, "fourCircles");
 });
 
-test("without the iOS adapter the shipping editor bridge remains untouched", async t => {
+test("slash dismissal is handled by the shared editor without the iOS adapter", async t => {
   const { w, editor } = await fixture(t, [paragraph("empty")], false);
   assert.equal(editor.storage.pennedMobileInteractions, undefined);
-  assert.equal(await w.tiptapCommand("mobileDismissSlashMenu"), false);
+  assert.equal(await w.tiptapCommand("dismissSlashMenu"), true);
 });
 
 test("native mobile titles, tap-away and resource wiring are platform isolated", async () => {
@@ -369,7 +413,7 @@ test("native mobile titles, tap-away and resource wiring are platform isolated",
   const host = await read("Vellix/Editor/TipTapWebView.swift");
   assert.match(host, /#if os\(iOS\)\s+contentController\.addUserScript\(WKUserScript\(source: MobileBlockSelection\.script, injectionTime: \.atDocumentStart[^]*?source: MobileEditorInteractions\.script, injectionTime: \.atDocumentEnd[^]*?#endif/);
   const session = await read("Vellix/Editor/TipTapEditorSession.swift");
-  assert.match(session, /if mobileSlashMenuSuppressed, state != nil \{ return \}/);
+  assert.match(session, /send\(TipTapEditorCommand\("dismissSlashMenu"\)\)/);
   for (const file of ["PennedMac/Editor/MacTipTapWebView.swift", "PennedMac/Editor/MacTipTapEditorSession.swift", "Vellix/VellixEditor.bundle/tiptap.html"]) {
     assert.doesNotMatch(await read(file), /MobileEditorInteractions|mobileDismissSlashMenu|singleLinePageTitle/);
   }

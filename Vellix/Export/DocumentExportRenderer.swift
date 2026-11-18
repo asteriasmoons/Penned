@@ -73,7 +73,7 @@ final class DocumentExportRenderer: NSObject, WKScriptMessageHandler, WKNavigati
             }
             let options: [String: Any] = ["width": size.width, "height": size.height, "title": page.title,
                 "subtitle": page.subtitle ?? "", "showTitle": settings.showTitle, "showTags": settings.showTags,
-                "cover": cover, "icon": page.icon.flatMap { TipTapEditorIconRenderer.dataURL(for: $0, tintHex: appearance.textColorHex) } ?? "",
+                "cover": cover,
                 "fontFamily": appearance.fontStyle.cssFamily, "textColor": appearance.textColorHex,
                 "fontScale": settings.fontSize.scale, "backdrop": backdrop, "paper": paper,
                 "entryFields": entryFields, "collections": snapshot.collections(for: page), "assetURLs": assetURLs,

@@ -209,17 +209,38 @@ removed. The entire highlighted secondary gallery toolbar (sort, presentation,
 Select, extra actions and search) is removed. The unmarked sidebar toggle,
 destination title and main actions menu remain. iPhone keeps its existing controls.
 
-Using the earlier 194-point card width as the baseline, current iPad previews are
-10% wider followed by a small 5% proportional enlargement: 224.07 points wide.
-The previous bottom crop is adjusted to keep the displayed height increase at 5%,
-rather than also stretching it by the width-only increase. The same existing
-renderer and leading-aligned gallery are used, with unchanged gaps and insets.
-At the supplied 889-point portrait width this produces three columns; narrower
-windows and wider landscapes continue to adapt. These changes are applied once,
-not compounded each time the request is revisited. Tag results share the sizing.
+The roughly 224-point target now chooses the column count only; it no longer
+caps the preview width. `PadWorkspaceModel.swift`, `DocumentBrowserView.swift`,
+and `TagBrowserView.swift` share the available width evenly between the chosen
+columns, with 20-point insets on both sides and 10-point column gaps. At an
+820-point portrait width, three roughly 253-point previews fill the row. The crop
+fraction and iPhone layout are unchanged. `PadWorkspaceTests.swift` now checks
+the width-filling policy rather than the old cap.
 
-The earlier sizing history below records the previous 194-point/.8-crop stage;
-the values in this subsection describe the current implementation.
+`PadWorkspaceSidebar.swift` matches the Switch Space chevron to the 19-point
+ellipsis. `PadWorkspaceView.swift` lets the tab close button use a 28-point
+background without shrinking its icon or tap area. Other controls keep their
+existing sizing. No build or tests were run for this update.
+
+The iPad Templates list in `VellixShellView.swift` now uses solid black across
+the entire screen instead of the gray workspace blur. The template rows,
+thumbnails, actions, and iPhone background are unchanged.
+
+### Editor Formatting Bar
+
+`PadWorkspaceView.swift` keeps the active editor deck in the main layout.
+`DocumentEditorView.swift` hosts the exact iPhone formatting toolbar in a
+UIKit child controller on iPad and constrains its bottom to the native
+[`UIKeyboardLayoutGuide`](https://developer.apple.com/documentation/uikit/adjusting-your-layout-with-keyboard-layout-guide).
+The guide is installed before the keyboard opens, and the overlay passes
+touches outside the bar through to the editor. The bar follows a docked
+keyboard and stays at the editor's bottom safe area when the keyboard floats
+or a hardware keyboard is used. Visibility accepts either WebKit focus or
+a visible iPad keyboard, excluding title editing, locked pages and block
+selection. The scroll inset follows the same rule. `TipTapEditorSession.swift`
+exposes the existing blur command for the iPad dismiss button. The iPhone
+and block-selection bars are unchanged. No build, tests, or on-device
+visual check were run.
 
 All preview-generation, snapshot, appearance and TipTap rendering internals are
 unchanged. DocumentBrowserView still uses

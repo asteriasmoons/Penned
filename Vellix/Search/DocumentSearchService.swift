@@ -11,7 +11,6 @@ struct SearchResult: Identifiable, Hashable {
     var documentID: String
     var title: String
     var excerpt: String
-    var icon: String?
     var locationPath: String
     var updatedAt: Date
     var isFavorite: Bool
@@ -39,7 +38,6 @@ final class DocumentSearchService: @unchecked Sendable {
                         d.id AS documentID,
                         d.title AS title,
                         d.previewText AS fallbackPreview,
-                        d.icon AS icon,
                         d.updatedAt AS updatedAt,
                         d.isFavorite AS isFavorite,
                         d.folderID AS folderID,
@@ -73,7 +71,6 @@ final class DocumentSearchService: @unchecked Sendable {
                     documentID: row["documentID"],
                     title: row["title"],
                     excerpt: excerpt,
-                    icon: row["icon"],
                     locationPath: location.isEmpty ? "Library" : location,
                     updatedAt: row["updatedAt"],
                     isFavorite: row["isFavorite"]

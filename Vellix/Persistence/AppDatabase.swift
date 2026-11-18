@@ -5,9 +5,37 @@
 
 import Foundation
 import GRDB
+import os
+
+nonisolated enum PennedCrashLog {
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "im.lystaria.Vellix",
+                                       category: "DatabaseConcurrency")
+
+    static func failure(_ context: String, _ error: Error, outcome: String) {
+        let code: Int
+        if let databaseError = error as? DatabaseError { code = Int(databaseError.extendedResultCode.rawValue) }
+        else { code = (error as NSError).code }
+        // Error descriptions can contain SQL arguments, attachment paths, or CloudKit payload details.
+        logger.error("📻 [PENNED-CRASH-LOGS] \(context, privacy: .public) outcome=\(outcome, privacy: .public) error=\(String(describing: type(of: error)), privacy: .public) code=\(code, privacy: .public)")
+    }
+
+    static func deferred(_ context: String, seconds: TimeInterval) {
+        logger.notice("📻 [PENNED-CRASH-LOGS] \(context, privacy: .public) outcome=retryScheduled delaySeconds=\(seconds, privacy: .public)")
+    }
+
+    static func recovered(_ context: String) {
+        logger.notice("📻 [PENNED-CRASH-LOGS] \(context, privacy: .public) outcome=recovered")
+    }
+
+    static func isTemporarySQLiteError(_ error: Error) -> Bool {
+        guard let error = error as? DatabaseError else { return false }
+        return error.resultCode == .SQLITE_BUSY || error.resultCode == .SQLITE_INTERRUPT
+    }
+}
 
 enum VellixError: LocalizedError, Equatable {
     case database(String)
+    case nestedDatabaseAccess(attempted: String, current: String)
     case documentNotFound(String)
     case invalidEditorJSON(String)
     case editorBridge(String)
@@ -21,6 +49,8 @@ enum VellixError: LocalizedError, Equatable {
         switch self {
         case .database(let message):
             return "Database error: \(message)"
+        case .nestedDatabaseAccess(let attempted, let current):
+            return "Database error: Nested \(attempted) during \(current); use the existing database connection."
         case .documentNotFound(let id):
             return "Document was not found: \(id)"
         case .invalidEditorJSON(let message):
@@ -41,23 +71,36 @@ enum VellixError: LocalizedError, Equatable {
 }
 
 final class AppDatabase: @unchecked Sendable {
+    private nonisolated static let accessThreadKey = "im.lystaria.Penned.AppDatabase.access"
     private let writer: any DatabaseWriter
     let isInMemory: Bool
     let libraryID: String
     private let lease = LibraryLease()
+    private let syncTrace: PennedSyncTrace.DatabaseObserver?
 
-    init(_ writer: any DatabaseWriter, isInMemory: Bool = false) throws {
+    convenience init(_ writer: any DatabaseWriter, isInMemory: Bool = false) throws {
+        try self.init(writer, isInMemory: isInMemory, migrator: .vellixMigrator)
+    }
+
+    private nonisolated init(_ writer: any DatabaseWriter, isInMemory: Bool = false, migrator: DatabaseMigrator) throws {
+        try Self.requireTopLevelAccess("initialize")
         self.writer = writer
         self.isInMemory = isInMemory
         self.libraryID = LibraryRecord.localID
-        try writer.writeWithoutTransaction { LibraryAccess.configure($0, libraryID: "*") }
+        let syncTrace = PennedSyncTrace.DatabaseObserver(inMemory: isInMemory)
+        self.syncTrace = syncTrace
+        writer.writeWithoutTransaction { db in
+            LibraryAccess.configure(db, libraryID: "*")
+            syncTrace?.install(in: db)
+        }
         let wasEmpty = try writer.read { db in
             for table in ["spaces", "documents", "folders", "templates"] where try db.tableExists(table) {
                 if try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM \(table) LIMIT 1)") == true { return false }
             }
             return true
         }
-        try DatabaseMigrator.vellixMigrator.migrate(writer)
+        try migrator.migrate(writer)
+        if let syncTrace { writer.writeWithoutTransaction { syncTrace.completedMigration(in: $0) } }
         // Only a known-empty install can identify migration-created scaffolding.
         // Never classify an existing user's Spaces by title or apparent emptiness.
         if wasEmpty {
@@ -70,6 +113,7 @@ final class AppDatabase: @unchecked Sendable {
     nonisolated private init(sharing database: AppDatabase, libraryID: String) {
         writer = database.writer
         isInMemory = database.isInMemory
+        syncTrace = database.syncTrace
         self.libraryID = libraryID
     }
 
@@ -77,35 +121,93 @@ final class AppDatabase: @unchecked Sendable {
     nonisolated func invalidate() { lease.invalidate() }
     nonisolated var isAccessible: Bool { lease.isValid }
 
+    nonisolated func observeSyncJournal(libraryID: String, onError: @escaping @MainActor @Sendable (Error) -> Void,
+                                       onCommit: @escaping @MainActor @Sendable () -> Void) throws -> AnyDatabaseCancellable {
+        try Self.requireTopLevelAccess("observeSyncJournal")
+        try lease.check()
+        // Window environments share the writer, but not their NotificationCenter identities.
+        let request = SQLRequest<String>(sql: "SELECT mutationID FROM librarySyncItems WHERE libraryID=?",
+                                         arguments: [libraryID])
+        // GRDB calls both closures on the writer. Only deliver a wakeup, never
+        // invoke app or sync code synchronously from that connection.
+        return DatabaseRegionObservation(tracking: request).start(in: writer, onError: { error in
+            DispatchQueue.main.async { onError(error) }
+        }) { _ in
+            DispatchQueue.main.async { onCommit() }
+        }
+    }
+
+    // Registers Vellix's custom SQL on a connection:
+    //   - LOCALIZED_STANDARD: Finder-style, locale- and numeric-aware string
+    //     comparison matching the gallery's historical `localizedStandardCompare`,
+    //     so database-level keyset title ordering is identical to the old in-memory
+    //     ordering.
+    //   - penned_contains: case/diacritic-insensitive substring test matching
+    //     `localizedCaseInsensitiveContains`, used for exact title search (body
+    //     search uses the FTS index instead).
+    // Constructed locally per connection so nothing is captured across isolation.
+    nonisolated static func registerCustomSQL(_ db: Database) {
+        db.add(collation: DatabaseCollation("LOCALIZED_STANDARD") { lhs, rhs in
+            lhs.localizedStandardCompare(rhs)
+        })
+        db.add(function: DatabaseFunction("penned_contains", argumentCount: 2, pure: true) { values in
+            guard let haystack = String.fromDatabaseValue(values[0]) else { return false }
+            guard let needle = String.fromDatabaseValue(values[1]), !needle.isEmpty else { return true }
+            return haystack.localizedCaseInsensitiveContains(needle)
+        })
+    }
+
     static func makeShared() throws -> AppDatabase {
+        try makeShared(migrator: .vellixMigrator)
+    }
+
+    static func openSharedInBackground() async throws -> AppDatabase {
+        let migrator = DatabaseMigrator.vellixMigrator
+        return try await Task.detached(priority: .userInitiated) {
+            try makeShared(migrator: migrator)
+        }.value
+    }
+
+    private nonisolated static func makeShared(migrator: DatabaseMigrator) throws -> AppDatabase {
         var configuration = Configuration()
+        // GRDB serializes in-process writers. This bounded wait is for file
+        // contention, not permission to replay an arbitrary write closure.
+        configuration.busyMode = .timeout(0.15)
         configuration.prepareDatabase { db in
             try db.execute(sql: "PRAGMA foreign_keys = ON")
-            try db.execute(sql: "PRAGMA journal_mode = WAL")
+            registerCustomSQL(db)
         }
 
-        let directory = try applicationSupportDirectory()
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-
-        let databaseURL = directory.appendingPathComponent("Vellix.sqlite")
-        let pool = try DatabasePool(path: databaseURL.path, configuration: configuration)
-        return try AppDatabase(pool)
+        do {
+            try requireTopLevelAccess("initialize")
+            let directory = try applicationSupportDirectory()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let databaseURL = directory.appendingPathComponent("Vellix.sqlite")
+            let poolStart = PennedDiagnostics.markStartup("db-pool.start")
+            let pool = try DatabasePool(path: databaseURL.path, configuration: configuration)
+            PennedDiagnostics.markStartup("db-pool.ready", since: poolStart)
+            let migrateStart = PennedDiagnostics.markStartup("db-migrate.start")
+            let opened = try AppDatabase(pool, migrator: migrator)
+            PennedDiagnostics.markStartup("db-migrate.ready", since: migrateStart)
+            return opened
+        } catch {
+            PennedCrashLog.failure("category=database access=startup", error, outcome: "openFailed")
+            throw error
+        }
     }
 
     static func makeInMemory() throws -> AppDatabase {
         var configuration = Configuration()
         configuration.prepareDatabase { db in
             try db.execute(sql: "PRAGMA foreign_keys = ON")
+            registerCustomSQL(db)
         }
 
         let queue = try DatabaseQueue(configuration: configuration)
         return try AppDatabase(queue, isInMemory: true)
     }
 
-    static func applicationSupportDirectory() throws -> URL {
+    nonisolated static func applicationSupportDirectory() throws -> URL {
         let baseURL = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -119,45 +221,111 @@ final class AppDatabase: @unchecked Sendable {
         )
     }
 
-    nonisolated func read<T>(_ value: (Database) throws -> T) throws -> T {
-        try writer.read { db in
-            try lease.check()
-            LibraryAccess.configure(db, libraryID: libraryID)
-            return try value(db)
+    // These markers describe only the synchronous SQL closure on the executing
+    // thread, never a Task or a whole queue. Independent WAL readers still run in
+    // parallel. A nested caller must use the Database it was already handed.
+    private nonisolated static func requireTopLevelAccess(_ access: String) throws {
+        if let outer = Thread.current.threadDictionary[accessThreadKey] as? String {
+            throw VellixError.nestedDatabaseAccess(attempted: access, current: outer)
         }
     }
 
-    nonisolated func writeMetadata<T>(_ updates: (Database) throws -> T) throws -> T {
-        try writer.write { db in
-            try lease.check()
-            LibraryAccess.configure(db, libraryID: libraryID)
-            return try updates(db)
+    private nonisolated func withConnection<T>(_ access: String, _ db: Database, _ body: () throws -> T) throws -> T {
+        let context = Thread.current.threadDictionary
+        context[Self.accessThreadKey] = access
+        defer { context.removeObject(forKey: Self.accessThreadKey) }
+        try lease.check()
+        LibraryAccess.configure(db, libraryID: libraryID)
+        return try body()
+    }
+
+    private nonisolated static func reportFailure(_ error: Error, access: String, file: StaticString, line: UInt) {
+        let nested: Bool
+        if let error = error as? VellixError, case .nestedDatabaseAccess = error { nested = true }
+        else { nested = false }
+        guard nested || error is DatabaseError else { return }
+        var context = "category=database access=\(access) site=\(file):\(line)"
+        if let outer = Thread.current.threadDictionary[accessThreadKey] as? String { context += " nestedIn=\(outer)" }
+        PennedCrashLog.failure(context, error, outcome: "returnedError")
+    }
+
+    nonisolated func read<T>(file: StaticString = #fileID, line: UInt = #line,
+                             _ value: (Database) throws -> T) throws -> T {
+        do {
+            try Self.requireTopLevelAccess("read")
+            return try writer.read { db in try withConnection("read", db) { try value(db) } }
+        } catch {
+            Self.reportFailure(error, access: "read", file: file, line: line)
+            throw error
         }
     }
 
-    nonisolated func write<T>(_ updates: (Database) throws -> T) throws -> T {
+    nonisolated func readAsync<T: Sendable>(file: StaticString = #fileID, line: UInt = #line,
+                                            _ value: @Sendable (Database) throws -> T) async throws -> T {
+        do {
+            try Self.requireTopLevelAccess("asyncRead")
+            try Task.checkCancellation()
+            return try await writer.read { [self] db in
+                try withConnection("asyncRead", db) { try value(db) }
+            }
+        } catch {
+            Self.reportFailure(error, access: "asyncRead", file: file, line: line)
+            throw error
+        }
+    }
+
+    private nonisolated func transaction<T>(access: String, file: StaticString, line: UInt, function: StaticString,
+                                             _ updates: (Database) throws -> T) throws -> T {
+        do {
+            try Self.requireTopLevelAccess(access)
+            return try writer.writeWithoutTransaction { db in
+                // Keep the guard active during COMMIT and its GRDB observers too.
+                try withConnection(access, db) {
+                    var result: T?
+                    try db.inTransaction {
+                        syncTrace?.markOrigin(file: file, line: line, function: function)
+                        result = try updates(db)
+                        try lease.check()
+                        return .commit
+                    }
+                    return result!
+                }
+            }
+        } catch {
+            Self.reportFailure(error, access: access, file: file, line: line)
+            throw error
+        }
+    }
+
+    nonisolated func writeMetadata<T>(file: StaticString = #fileID, line: UInt = #line,
+                                      function: StaticString = #function, _ updates: (Database) throws -> T) throws -> T {
+        try transaction(access: "metadataWrite", file: file, line: line, function: function, updates)
+    }
+
+    nonisolated func write<T>(file: StaticString = #fileID, line: UInt = #line,
+                              function: StaticString = #function, _ updates: (Database) throws -> T) throws -> T {
         var tasksChanged = false
         var tagsChanged = false
-        let value = try writer.write { db in
-            try lease.check()
-            LibraryAccess.configure(db, libraryID: libraryID)
+        let value = try transaction(access: "write", file: file, line: line, function: function) { db in
             let value = try updates(db)
             tasksChanged = try DocumentTaskIndex.reconcile(in: db)
             tagsChanged = try DocumentTagIndex.reconcile(in: db)
+            // The preview descriptor index mirrors the task/tag indexes: its triggers
+            // mark changed documents dirty, and draining here keeps it current after
+            // every local save and every synchronization import, with no path able to
+            // forget it. Normally the dirty set holds only the just-written documents.
+            _ = try DocumentPreviewDescriptorIndex.reconcile(in: db)
             return value
         }
         let notify: @Sendable () -> Void = { [self, tasksChanged, tagsChanged] in
+            guard isAccessible else { return }
             if tasksChanged { NotificationCenter.default.post(name: .vellixTasksChanged, object: self) }
             if tagsChanged { NotificationCenter.default.post(name: .pennedTagsChanged, object: self) }
             NotificationCenter.default.post(name: .pennedCollectionsChanged, object: self)
         }
-        if Thread.isMainThread {
-            notify()
-        } else {
-            // A synchronous editor flush may be waiting for this writer on main.
-            // Posting here can wait for a .main observer and deadlock both queues.
-            DispatchQueue.main.async(execute: notify)
-        }
+        // Never invoke a subscriber inline, including when GCD runs a database
+        // closure on the main thread. Subscribers can immediately read or write.
+        DispatchQueue.main.async(execute: notify)
         return value
     }
 }
@@ -501,6 +669,39 @@ extension DatabaseMigrator {
                 CREATE INDEX galleryTemplates_category_order
                     ON galleryTemplates(categoryID, sortOrder);
                 """)
+        }
+
+        migrator.registerMigration("v32_cloudkit_document_baselines") { db in
+            // Older conflict handling could transplant a current tag onto a
+            // draft it never merged. Force those queued drafts to reconcile.
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS librarySyncBaselines (
+                  libraryID TEXT NOT NULL, recordName TEXT NOT NULL,
+                  payload BLOB NOT NULL, PRIMARY KEY(libraryID,recordName)
+                );
+                INSERT OR IGNORE INTO librarySyncBaselines(libraryID,recordName,payload)
+                SELECT libraryID,recordName,payload FROM librarySyncItems
+                WHERE recordName LIKE 'documents-%' AND deleted=0 AND dirty=0
+                  AND mutationID=ackMutation AND length(systemFields)>0;
+                UPDATE librarySyncItems SET systemFields=NULL, ackMutation=''
+                WHERE dirty=1 AND deleted=0 AND recordName LIKE 'documents-%'
+                  AND EXISTS (
+                    SELECT 1 FROM librarySyncConflicts AS retained
+                    WHERE retained.libraryID=librarySyncItems.libraryID
+                      AND retained.recordName=librarySyncItems.recordName
+                      AND retained.deleted=0
+                      AND retained.reason='Incoming remote revision retained; unsynced local changes protected'
+                  );
+                """)
+        }
+
+        migrator.registerMigration("v33_preview_descriptors") { db in
+            // A local-only derived index of preview-relevant document facts. It is
+            // deliberately outside LibrarySyncSchema.tables (no sync triggers are
+            // created for it) so the sync record validator's exact column-set match
+            // against `documents` is never affected. Existing descriptors
+            // are filled in separately after the workspace is mounted.
+            try DocumentPreviewDescriptorIndex.install(in: db)
         }
 
         return migrator

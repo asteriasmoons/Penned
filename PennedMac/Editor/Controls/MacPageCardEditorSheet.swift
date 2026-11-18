@@ -6,6 +6,7 @@ struct PageCardEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     var request: PageCardEditorRequest
     var store: AttachmentStore
+    @ObservedObject var previews: DocumentPreviewCache
     var save: (PageCardStyle, Data?) async throws -> Void
     @State private var style: PageCardStyle
     @State private var pendingImage: Data?
@@ -13,9 +14,10 @@ struct PageCardEditorSheet: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    init(request: PageCardEditorRequest, store: AttachmentStore, save: @escaping (PageCardStyle, Data?) async throws -> Void) {
+    init(request: PageCardEditorRequest, store: AttachmentStore, previews: DocumentPreviewCache, save: @escaping (PageCardStyle, Data?) async throws -> Void) {
         self.request = request
         self.store = store
+        self.previews = previews
         self.save = save
         let style = request.document.cardStyle ?? PageCardStyle()
         _style = State(initialValue: style)
@@ -57,7 +59,8 @@ struct PageCardEditorSheet: View {
                 #if os(iOS)
                 TabView(selection: $style.size) {
                     ForEach(PageCardSize.allCases) { size in
-                        PageCardView(document: request.document, style: sampleStyle(size), photo: currentPhoto, isStylePreview: true)
+                        PageCardView(document: request.document, style: sampleStyle(size), photo: currentPhoto,
+                            isStylePreview: style.previewStyle != .openPage, previews: previews)
                             .shadow(color: .black.opacity(0.4), radius: 16, x: 0, y: 14)
                             .frame(width: proxy.size.width, height: 216)
                             .tag(size)
@@ -71,7 +74,8 @@ struct PageCardEditorSheet: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
                         ForEach(PageCardSize.allCases) { size in
-                            PageCardView(document: request.document, style: sampleStyle(size), photo: currentPhoto, isStylePreview: true)
+                            PageCardView(document: request.document, style: sampleStyle(size), photo: currentPhoto,
+                                isStylePreview: style.previewStyle != .openPage, previews: previews)
                                 .shadow(color: .black.opacity(0.4), radius: 16, x: 0, y: 14)
                                 .frame(width: size == .wide || size == .large ? max(318, min(350, proxy.size.width - 24)) : 250, height: 216)
                                 .contentShape(Rectangle())
@@ -118,10 +122,7 @@ struct PageCardEditorSheet: View {
             Text("Card Style").font(.system(size: 18, weight: .semibold))
             PennedSheetFieldDivider()
             Text("PREVIEWS").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                previewOption(pages: true)
-                previewOption(pages: false)
-            }
+            PageCardPreviewOptions(style: $style, appearance: paperOptionAppearance)
             Text("CUSTOM BACKGROUND").font(.caption.weight(.medium)).foregroundStyle(.secondary)
             Button { showBackdrop = true } label: {
                 HStack {
@@ -141,25 +142,6 @@ struct PageCardEditorSheet: View {
         .padding(18).frame(maxWidth: 550, maxHeight: .infinity, alignment: .topLeading)
         .background(VellixSurface.controlInk.opacity(0.015), in: RoundedRectangle(cornerRadius: 24))
         .overlay(RoundedRectangle(cornerRadius: 24).stroke(VellixSurface.controlInk.opacity(0.10), lineWidth: 1))
-    }
-
-    private func previewOption(pages: Bool) -> some View {
-        Button { style.showsPages = pages } label: {
-            Group {
-                if pages {
-                    NestedPageThumbnail(json: TipTapContentAnalyzer.emptyDocumentJSON, title: "Card Title", appearance: paperOptionAppearance,
-                        size: style.size == .compact ? CGSize(width: 23, height: 30) : CGSize(width: 37, height: 48), isCardSheet: true, isStylePreview: true)
-                        .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 2)
-                        .frame(width: 38, height: 38)
-                        .background { if style.size == .compact { Circle().fill(VellixSurface.controlInk.opacity(0.08)) } }
-                        .overlay { if style.size == .compact { Circle().stroke(VellixSurface.controlInk.opacity(0.7), lineWidth: 1) } }
-                }
-                else { Image("eyeslash").renderingMode(.template).resizable().scaledToFit().frame(width: 24, height: 24).foregroundStyle(.secondary) }
-            }
-            .frame(width: 92, height: 66)
-            .pennedSheetField()
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(pages == style.showsPages ? Color(vellixHex: "#2EC5F4") : VellixSurface.controlInk.opacity(0.12), lineWidth: pages == style.showsPages ? 2 : 1))
-        }.buttonStyle(.plain).accessibilityLabel(pages ? "Page Sheets" : "No Page Sheets")
     }
 
     private var paperOptionAppearance: DocumentAppearance {

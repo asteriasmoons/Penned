@@ -9,6 +9,7 @@ import CoreGraphics
 import os
 import WebKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 #if canImport(UIKit)
 import UIKit
@@ -17,19 +18,69 @@ import AppKit
 #endif
 
 @MainActor
+final class PennedDocumentOpeningTiming {
+    private static let logger = Logger(subsystem: "im.lystaria.Vellix", category: "PennedDocumentOpening")
+    private static var sequence = 0
+    private let started = ProcessInfo.processInfo.systemUptime
+    private let request: Int
+    private var phases = Set<String>()
+    let trace: PennedDocumentOpenTrace?
+
+    init(trace: PennedDocumentOpenTrace? = nil) {
+        self.trace = trace
+        Self.sequence += 1
+        request = Self.sequence
+        mark("tap")
+    }
+
+    func mark(_ phase: String, route: String = "") {
+        guard phases.insert(phase).inserted else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        Self.logger.notice("[Penned Open] request=\(self.request, privacy: .public) phase=\(phase, privacy: .public) route=\(route, privacy: .public) uptimeMS=\(Int64(now * 1_000), privacy: .public) elapsedMS=\(Int((now - self.started) * 1_000), privacy: .public)")
+    }
+}
+
+@MainActor
 final class TipTapEditorSession: ObservableObject {
     @Published private(set) var isReady = false
     @Published private(set) var isLoadingDocument = false
     @Published private(set) var isPresentationReady = false
     private var presentation = DocumentPresentationState()
     private var presentationTask: Task<Void, Never>?
+    private var presentationInputsRevision = 0
+    private var preparedInputsRevision: Int?
     private var confirmingFrameGeneration: Int?
     private var pendingNativePresentationHeights: [String: (viewID: String, height: CGFloat)] = [:]
     private var currentAppearance: DocumentAppearance?
     private(set) var applicationColorScheme: ColorScheme = .dark
     private var pageReferenceColorScheme: ColorScheme = .dark
     private var pageReferenceFontStyle: DocumentFontStyle?
+    private var pageReferenceSnapshotKeys: [String: String] = [:]
+    private var pagePreviewObservation: AnyCancellable?
+    weak var documentPreviewCache: DocumentPreviewCache? {
+        didSet {
+            pagePreviewObservation = documentPreviewCache?.$contentRevision.dropFirst().sink { [weak self] _ in
+                guard let self else { return }
+                self.setPageReferences(self.pageRecords)
+            }
+        }
+    }
     var preparesInteractivePresentation = true
+    var isStandbyRuntime = false
+    var openingTiming: PennedDocumentOpeningTiming?
+    var openingTrace: PennedDocumentOpenTrace? { openingTiming?.trace }
+    private var openingLoadTrace: PennedDocumentOpenTrace?
+    private var openingFrameTrace: PennedDocumentOpenTrace?
+    private var openingWebTrace: (generation: Int, trace: PennedDocumentOpenTrace)?
+    private lazy var openingSessionID = UUID()
+    private var openingDiagnosticStates: [String: String] = [:]
+    #if DEBUG && os(iOS)
+    private var openingVisibilityRequested = false
+    #endif
+    #if os(iOS)
+    private var pasteRequestID = 0
+    #endif
+    private var observedInteractionEnabled = false
     var presentationDiagnostics: String {
         "generation=\(presentation.generation) webPrepared=\(presentation.webPrepared) contentReady=\(presentation.isContentReady) snapshotPending=\(confirmingFrameGeneration != nil) nativePending=\(pendingNativePresentationHeights.count)"
     }
@@ -52,7 +103,6 @@ final class TipTapEditorSession: ObservableObject {
     private(set) var caretUpdate: TipTapCaretUpdate?
     let caretUpdates = PassthroughSubject<TipTapCaretUpdate?, Never>()
     @Published var slashMenuState: TipTapSlashMenuState?
-    private var mobileSlashMenuSuppressed = false
     @Published var tagRequest: InlineTagRequest?
     @Published var pageBreakRegions: [TipTapPageBreakRegion] = []
     @Published private(set) var collectionRegions: [TipTapCollectionRegion] = []
@@ -63,10 +113,20 @@ final class TipTapEditorSession: ObservableObject {
     private(set) var editingEnabled = true
 
     var onEvent: ((TipTapEditorEvent) -> Void)?
+    var ownsEditorPresentation: (() -> Bool)?
+    var isReturningFromDocument = false
+    var acceptsEditorPresentationRequests: Bool {
+        isReady && !isLoadingDocument && loadedDocumentID != nil && !isReturningFromDocument &&
+            ownsEditorPresentation?() == true
+    }
     var documentForRecovery: (() -> (id: String, json: String)?)?
 
     private weak var webView: WKWebView?
     var tagNavigationWebView: WKWebView? { webView }
+    #if os(iOS)
+    lazy var renderRecovery = TipTapRenderRecovery(session: self)
+    var renderingDocumentID: String? { loadedDocumentID ?? pendingDocument?.id ?? recoveryDocument?.id }
+    #endif
     private var loadedDocumentID: String?
     private var pendingDocument: (id: String, json: String)?
     private var recoveryDocument: (id: String, json: String)?
@@ -87,9 +147,84 @@ final class TipTapEditorSession: ObservableObject {
     private let logger = Logger(subsystem: "im.lystaria.Vellix", category: "TipTapBridge")
     private var startupStartTime: CFAbsoluteTime?
 
+    #if DEBUG && os(iOS)
+    var keyboardTraceState: String {
+        let document = PennedKeyboardTrace.documentToken(loadedDocumentID ?? pendingDocument?.id ?? editingContext?.documentID)
+        let mode = ["off", "single", "multi"].contains(selectionMode) ? selectionMode : "other"
+        return "doc=\(document) gen=\(loadGeneration) editing=\(isEditing) editable=\(editingEnabled) ready=\(isReady) loading=\(isLoadingDocument) presented=\(isPresentationReady) mode=\(mode) blocks=\(selectedBlockCount)"
+    }
+    #endif
+
     private func startupElapsedMS() -> Int {
         guard let startupStartTime else { return -1 }
         return Int((CFAbsoluteTimeGetCurrent() - startupStartTime) * 1000)
+    }
+
+    func beginOpening(_ timing: PennedDocumentOpeningTiming) {
+        timing.trace?.event("session-opening-start",
+            "previousLoadRequest=\(openingLoadTrace?.requestID?.uuidString ?? "-") frameProducerRequest=\(openingFrameTrace?.requestID?.uuidString ?? "-") \(openingReadinessState(for: timing.trace?.documentID ?? ""))")
+        openingDiagnosticStates.removeAll(keepingCapacity: true)
+        #if DEBUG && os(iOS)
+        openingVisibilityRequested = false
+        #endif
+        openingTiming = timing
+        observedInteractionEnabled = false
+    }
+
+    func openingReadinessState(for documentID: String) -> String {
+        let bounds = webView?.bounds
+        return "session=\(openingSessionID) bridgeReady=\(isReady) loading=\(isLoadingDocument) hasLoadedDocument=\(hasLoadedDocument(documentID)) presentationReady=\(isPresentationReady) bridgeErrorMessage=\(bridgeErrorMessage == nil ? "none" : "present") loadedDocument=\(loadedDocumentID ?? "-") queuedDocument=\(pendingDocument?.id ?? "-") renderedDocument=\(renderedDocumentID ?? "-") loadGeneration=\(loadGeneration) presentationGeneration=\(presentation.generation) interactive=\(preparesInteractivePresentation) taskInFlight=\(presentationTask != nil) webPrepared=\(presentation.webPrepared) contentReady=\(presentation.isContentReady) inputRevision=\(presentationInputsRevision) preparedInputRevision=\(preparedInputsRevision.map { String($0) } ?? "-") webView=\(webView != nil) bounds=\(bounds.map { "\($0.width)x\($0.height)" } ?? "-") boundsNonzero=\((bounds?.width ?? 0) > 0 && (bounds?.height ?? 0) > 0) snapshotGeneration=\(confirmingFrameGeneration.map { String($0) } ?? "-") nativeResizes=\(pendingNativePresentationHeights.count) frameProducerRequest=\(openingFrameTrace?.requestID?.uuidString ?? "-")"
+    }
+
+    private func openingStateOnce(_ event: String, key: String, _ fields: @autoclosure () -> String) {
+        guard let trace = openingTrace, openingDiagnosticStates[event] != key else { return }
+        openingDiagnosticStates[event] = key
+        trace.event(event, fields())
+    }
+
+    #if DEBUG && os(iOS)
+    func traceOpeningSurface(eligible: Bool) {
+        openingVisibilityRequested = eligible
+        guard eligible, let trace = openingTrace else { return }
+        trace.event("editor-surface-eligible", openingReadinessState(for: trace.documentID))
+        // Read the UIKit host after the SwiftUI visibility update, without forcing layout.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.openingTrace?.requestID == trace.requestID else { return }
+            self.traceOpeningContentVisibility()
+        }
+    }
+
+    private func traceOpeningContentVisibility() {
+        guard openingVisibilityRequested, let trace = openingTrace,
+              openingDiagnosticStates["editor-content-visible"] == nil else { return }
+        let rendered = renderedDocumentID == trace.documentID
+        guard isPresentationReady, rendered, let webView, let window = webView.window else {
+            openingStateOnce("editor-content-visibility-blocked", key: "\(isPresentationReady):\(rendered):\(webView?.window != nil)",
+                             "renderedMatches=\(rendered) hasWindow=\(webView?.window != nil) \(openingReadinessState(for: trace.documentID))")
+            return
+        }
+        var ancestor: UIView? = webView
+        var hidden = false
+        while let view = ancestor {
+            if view.isHidden || view.alpha <= 0.01 || (view.layer.presentation()?.opacity ?? 1) <= 0.01 {
+                hidden = true
+                break
+            }
+            ancestor = view.superview
+        }
+        let intersectsWindow = !webView.bounds.isEmpty && webView.convert(webView.bounds, to: window).intersects(window.bounds)
+        if !hidden && intersectsWindow {
+            openingStateOnce("editor-content-visible", key: "visible", "evidence=ready-matching-rendered-document-in-visible-window \(openingReadinessState(for: trace.documentID))")
+        } else {
+            openingStateOnce("editor-content-visibility-blocked", key: "\(hidden):\(intersectsWindow)",
+                             "hiddenAncestor=\(hidden) intersectsWindow=\(intersectsWindow) \(openingReadinessState(for: trace.documentID))")
+        }
+    }
+    #endif
+
+    func noteInteractivePresentation() {
+        observedInteractionEnabled = true
+        openingTiming?.mark("interaction-enabled")
     }
 
     func attach(webView: WKWebView) {
@@ -98,6 +233,10 @@ final class TipTapEditorSession: ObservableObject {
             return
         }
 
+        #if DEBUG && os(iOS)
+        PennedKeyboardTrace.record("session.attach", session: self, webView: webView,
+            "previousWK=\(PennedKeyboardTrace.identity(self.webView))", live: true)
+        #endif
         startupStartTime = CFAbsoluteTimeGetCurrent()
         logger.info("⏱️ STARTUP +0ms session attach new webView pending=\(self.pendingDocument?.id ?? "nil", privacy: .public)")
         self.webView = webView
@@ -120,6 +259,9 @@ final class TipTapEditorSession: ObservableObject {
             return
         }
 
+        #if DEBUG && os(iOS)
+        PennedKeyboardTrace.record("session.detach", session: self, webView: webView, live: true)
+        #endif
         logger.info("🧭 TRACE TipTapEditorSession.detach active webView")
         pauseAttachmentPlayback()
         self.webView = nil
@@ -133,12 +275,16 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     func markNavigationStarted() {
+        openingTrace?.event("web-navigation-reset", openingReadinessState(for: openingTrace?.documentID ?? ""))
+        #if DEBUG && os(iOS)
+        PennedKeyboardTrace.record("session.navigationReset", session: self, live: true)
+        #endif
         // A retained WKWebView can navigate again after its content process exits.
         // Requeue the model's latest text before clearing the old bridge state.
         preservesRecoveryPayload = preservesRecoveryPayload || loadedDocumentID != nil
         pendingDocument = documentForRecovery?() ?? pendingDocument ?? recoveryDocument
         loadGeneration += 1
-        setMobileSlashMenuSuppressed(false)
+        slashMenuState = nil
         tagRequest = nil
         formattingState = TipTapFormattingState()
         resetPresentation(documentID: pendingDocument?.id ?? loadedDocumentID)
@@ -160,17 +306,38 @@ final class TipTapEditorSession: ObservableObject {
         }
         // SwiftUI checks this on every WebView update; no-op checks must not publish state or send bridge commands.
         if !force {
-            if isReady, webView != nil, loadedDocumentID == documentID { return }
+            if isReady, webView != nil, loadedDocumentID == documentID {
+                if openingTrace != nil {
+                    openingStateOnce("load-no-op", key: "loaded:\(loadGeneration):\(bridgeErrorMessage != nil)",
+                                     "reason=same-loaded-document \(openingReadinessState(for: documentID))")
+                }
+                return
+            }
             if (!isReady || webView == nil), let pendingDocument, pendingDocument.id == documentID,
-               pendingDocument.json == canonicalJSON || preservesRecoveryPayload { return }
+               pendingDocument.json == canonicalJSON || preservesRecoveryPayload {
+                if openingTrace != nil {
+                    openingStateOnce("load-no-op", key: "queued:\(loadGeneration)",
+                                     "reason=same-queued-document preservesRecovery=\(preservesRecoveryPayload) \(openingReadinessState(for: documentID))")
+                }
+                return
+            }
+        }
+        #if DEBUG && os(iOS)
+        PennedKeyboardTrace.record("session.load", session: self,
+            "targetDoc=\(PennedKeyboardTrace.documentToken(documentID)) force=\(force)", live: true)
+        #endif
+        if PennedSyncTrace.documentID == documentID {
+            PennedSyncTrace.record("editor.load", "force=\(force) ready=\(isReady) \(PennedSyncTrace.body(canonicalJSON))")
         }
         preservesRecoveryPayload = false
         loadGeneration += 1
         let generation = loadGeneration
-        logger.info("VELLIX-OPEN load id=\(documentID, privacy: .public) bytes=\(canonicalJSON.count) head=\(String(canonicalJSON.prefix(80)), privacy: .public)")
+        let openTrace = openingTrace
+        openingLoadTrace = openTrace
+        let loadStarted = openTrace?.event("editor-load-start", "force=\(force) \(openingReadinessState(for: documentID))")
+        openingTiming?.mark("load-start", route: isReady ? "bridge-ready" : "bridge-starting")
         recoveryDocument = (documentID, canonicalJSON)
         tagRequest = nil
-        refreshAttachments(documentID: documentID, json: canonicalJSON)
         logger.info("📄 TRACE load request id=\(documentID, privacy: .public) ready=\(self.isReady) force=\(force) loaded=\(self.loadedDocumentID ?? "nil", privacy: .public) bytes=\(canonicalJSON.count)")
         guard isReady, webView != nil else {
             formattingState = TipTapFormattingState()
@@ -180,6 +347,7 @@ final class TipTapEditorSession: ObservableObject {
             resetPresentation(documentID: documentID)
             awaitingRenderedDocumentID = documentID
             setRenderedDocumentID(nil)
+            openTrace?.event("editor-load-queued", openingReadinessState(for: documentID), since: loadStarted)
             return
         }
 
@@ -194,29 +362,52 @@ final class TipTapEditorSession: ObservableObject {
         loadedDocumentID = documentID
         awaitingRenderedDocumentID = documentID
         setRenderedDocumentID(nil)
+        refreshAttachments(documentID: documentID, json: canonicalJSON)
+        openingTiming?.mark("attachments-resolved")
         logger.info("⏱️ STARTUP +\(self.startupElapsedMS())ms icon registration start")
+        let iconsStarted = openTrace?.event("load-icon-registration-start")
         registerIconAssets(editorIconNames(fromCanonicalJSON: canonicalJSON)) { [weak self] in
-            guard let self, self.loadGeneration == generation, self.isReady else { return }
+            guard let self, self.loadGeneration == generation, self.isReady else {
+                openTrace?.event("load-callback-discarded", "callback=icon-registration expectedGeneration=\(generation) actualGeneration=\(self?.loadGeneration ?? -1) sessionAlive=\(self != nil) bridgeReady=\(self?.isReady == true)", since: iconsStarted)
+                return
+            }
+            openTrace?.event("load-icon-registration-completed", since: iconsStarted)
+            self.openingTiming?.mark("document-icons-registered")
             self.logger.info("⏱️ STARTUP +\(self.startupElapsedMS())ms icon registration complete")
             self.logger.info("⏱️ STARTUP +\(self.startupElapsedMS())ms setContent send")
-            self.send(TipTapEditorCommand.loadDocument(canonicalJSON: canonicalJSON)) { [weak self] result in
-                guard let self, self.loadGeneration == generation, self.isReady else { return }
-                self.logger.info("⏱️ STARTUP +\(self.startupElapsedMS())ms setContent completion")
-                if case .failure = result {
-                    self.finishDocumentLoad(result, generation: generation)
+            let contentStarted = openTrace?.event("set-content-start", self.openingReadinessState(for: documentID))
+            var command = TipTapEditorCommand.loadDocument(canonicalJSON: canonicalJSON)
+            if openTrace != nil { command.args["openingLoadDiagnosticGeneration"] = generation }
+            self.send(command) { [weak self] result in
+                guard let self, self.loadGeneration == generation, self.isReady else {
+                    openTrace?.event("load-callback-discarded", "callback=set-content expectedGeneration=\(generation) actualGeneration=\(self?.loadGeneration ?? -1) sessionAlive=\(self != nil) bridgeReady=\(self?.isReady == true)", since: contentStarted)
                     return
                 }
+                self.logger.info("⏱️ STARTUP +\(self.startupElapsedMS())ms setContent completion")
+                if case .failure(let error) = result {
+                    openTrace?.event("set-content-failed", "error=\(PennedDocumentOpenTrace.errorCode(error))", since: contentStarted)
+                    self.finishDocumentLoad(result, generation: generation, trace: openTrace, started: loadStarted)
+                    return
+                }
+                openTrace?.event("set-content-acknowledged", "generation=\(generation)", since: contentStarted)
                 // setContent resets TipTap's selection mode/editability. Restore the
                 // native lock state before exposing the newly loaded document.
+                let editableStarted = openTrace?.event("set-editability-start", "enabled=\(self.editingEnabled)")
                 self.send(TipTapEditorCommand.setEditable(self.editingEnabled)) { [weak self] result in
-                    self?.finishDocumentLoad(result, generation: generation)
+                    openTrace?.event("set-editability-completed", "sessionAlive=\(self != nil) expectedGeneration=\(generation) actualGeneration=\(self?.loadGeneration ?? -1)", since: editableStarted)
+                    self?.finishDocumentLoad(result, generation: generation, trace: openTrace, started: loadStarted)
                 }
             }
         }
     }
 
-    private func finishDocumentLoad(_ result: Result<Void, Error>, generation: Int) {
+    private func finishDocumentLoad(_ result: Result<Void, Error>, generation: Int, trace: PennedDocumentOpenTrace?, started: TimeInterval?) {
+        #if DEBUG && os(iOS)
+        PennedKeyboardTrace.record("session.loadCompletion", session: self,
+            "requestedGen=\(generation) stale=\(loadGeneration != generation || !isReady)")
+        #endif
         guard loadGeneration == generation, isReady else {
+            trace?.event("load-callback-discarded", "callback=finish-load expectedGeneration=\(generation) actualGeneration=\(loadGeneration) bridgeReady=\(isReady)", since: started)
             logger.info("VELLIX-OPEN finishDocumentLoad SKIP loadGen=\(self.loadGeneration) gen=\(generation) isReady=\(self.isReady)")
             return
         }
@@ -225,10 +416,13 @@ final class TipTapEditorSession: ObservableObject {
             pendingDocument = documentForRecovery?() ?? recoveryDocument
             loadedDocumentID = nil
             bridgeErrorMessage = error.localizedDescription
+            trace?.event("editor-load-failed", "error=\(PennedDocumentOpenTrace.errorCode(error))", since: started)
             logger.error("VELLIX-OPEN finishDocumentLoad FAIL error=\(error.localizedDescription, privacy: .public)")
             return
         }
         logger.info("VELLIX-OPEN finishDocumentLoad OK docID=\(self.loadedDocumentID ?? "nil", privacy: .public) -> preparePresentation")
+        openingTiming?.mark("content-and-editability-acknowledged")
+        trace?.event("document-loaded", openingReadinessState(for: trace?.documentID ?? ""), since: started)
         preparePresentation()
     }
 
@@ -335,23 +529,79 @@ final class TipTapEditorSession: ObservableObject {
         if placeholderMode { togglePlaceholderMode() }
     }
 
-    func currentJSON(suspendingEditing: Bool = false) async throws -> String? {
+    func hasLoadedDocument(_ documentID: String) -> Bool {
+        isReady && !isLoadingDocument && loadedDocumentID == documentID && bridgeErrorMessage == nil
+    }
+
+    func resumeRetainedPresentation(for documentID: String) {
+        // A loaded editor can retain an error from a prior operation. Retry
+        // presentation without re-injecting JSON over its live document.
+        guard isReady, !isLoadingDocument, loadedDocumentID == documentID, webView != nil,
+              bridgeErrorMessage != nil else { return }
+        openingTrace?.event("retained-presentation-error-cleared", openingReadinessState(for: documentID))
+        bridgeErrorMessage = nil
+        if !isPresentationReady {
+            if presentation.isContentReady, preparedInputsRevision == presentationInputsRevision {
+                confirmPresentationIfReady()
+            } else {
+                preparePresentation()
+            }
+        }
+    }
+
+    func currentJSON(suspendingEditing: Bool = false, preservingBlockSelection: Bool = false,
+                     file: StaticString = #fileID, line: UInt = #line, function: StaticString = #function) async throws -> String? {
         guard isReady, !isLoadingDocument, let loadedDocumentID, let webView else { return nil }
         let generation = loadGeneration
-        let result = try await webView.callAsyncJavaScript("if (suspend) await window.tiptapCommand('setEditable', {editable: false}); return await window.tiptapCommand('getDocument', {});",
-            arguments: ["suspend": suspendingEditing], in: nil, contentWorld: .page)
+        #if DEBUG && os(iOS)
+        let trace = PennedKeyboardTrace.record("bridge.snapshot.begin", session: self, webView: webView,
+            "suspend=\(suspendingEditing) preserveSelection=\(preservingBlockSelection) at=\(file):\(line) \(function)",
+            live: suspendingEditing)
+        var bridgeReturned = false
+        defer {
+            if let trace {
+                PennedKeyboardTrace.record("bridge.snapshot.end", session: self, webView: webView,
+                    "sent_seq=\(trace) returned=\(bridgeReturned) requestGen=\(generation)")
+            }
+        }
+        #endif
+        let result = try await webView.callAsyncJavaScript("if (suspend) await window.tiptapCommand('setEditable', {editable: false, preservingBlockSelection}); return await window.tiptapCommand('getDocument', {});",
+            arguments: ["suspend": suspendingEditing, "preservingBlockSelection": preservingBlockSelection], in: nil, contentWorld: .page)
+        #if DEBUG && os(iOS)
+        bridgeReturned = true
+        #endif
         guard loadGeneration == generation, isReady, !isLoadingDocument else { return nil }
         let json = try TipTapContentAnalyzer.normalizePayloadToJSON(result)
         recoveryDocument = (loadedDocumentID, json)
         return json
     }
 
-    func focus() {
-        send(TipTapEditorCommand.focusEditor())
+    func focus(file: StaticString = #fileID, line: UInt = #line, function: StaticString = #function) {
+        send(TipTapEditorCommand.focusEditor(), file: file, line: line, function: function)
     }
 
-    func focusDocumentEnd() {
-        send(TipTapEditorCommand.focusDocumentEnd())
+    func blur(file: StaticString = #fileID, line: UInt = #line, function: StaticString = #function) {
+        send(TipTapEditorCommand("blur"), file: file, line: line, function: function)
+    }
+    /// Resign the actual WKWebView editing responder before presenting a
+    /// native sheet. A JS blur alone does not reliably dismiss WKContentView's
+    /// software keyboard when WebKit is processing a long-press.
+    func endWebEditingForSettings(file: StaticString = #fileID, line: UInt = #line, function: StaticString = #function) {
+        #if os(iOS)
+        #if DEBUG
+        PennedKeyboardTrace.record("ui.endEditing", session: self,
+            "action=WKWebView.endEditing+resignFirstResponder at=\(file):\(line) \(function)", live: true)
+        #endif
+        webView?.endEditing(true)
+        webView?.resignFirstResponder()
+        #elseif os(macOS)
+        webView?.window?.makeFirstResponder(nil)
+        #endif
+    }
+
+
+    func focusDocumentEnd(file: StaticString = #fileID, line: UInt = #line, function: StaticString = #function) {
+        send(TipTapEditorCommand.focusDocumentEnd(), file: file, line: line, function: function)
     }
 
     func requestCaretVisibility() {
@@ -365,10 +615,12 @@ final class TipTapEditorSession: ObservableObject {
         caretUpdates.send(update)
     }
 
-    func setEditable(_ editable: Bool) {
+    func setEditable(_ editable: Bool, preservingBlockSelection: Bool = false,
+                     file: StaticString = #fileID, line: UInt = #line, function: StaticString = #function) {
         editingEnabled = editable
-        if !editable { textConversionState = TipTapTextConversionState() }
-        send(TipTapEditorCommand.setEditable(editable))
+        if !editable && (!preservingBlockSelection || selectionMode == "off") { textConversionState = TipTapTextConversionState() }
+        send(TipTapEditorCommand.setEditable(editable, preservingBlockSelection: preservingBlockSelection),
+             file: file, line: line, function: function)
     }
 
     func setTheme(_ theme: String) {
@@ -378,6 +630,7 @@ final class TipTapEditorSession: ObservableObject {
     func setAppearance(_ appearance: DocumentAppearance) {
         currentAppearance = appearance
         setPageReferences(pageRecords)
+        if stagePresentationInputChange() { return }
         guard isReady, webView != nil else {
             logger.info("🎨 TRACE setAppearance queued ready=\(self.isReady)")
             pendingAppearance = appearance
@@ -393,12 +646,13 @@ final class TipTapEditorSession: ObservableObject {
         guard applicationColorScheme != scheme else { return }
         applicationColorScheme = scheme
         if let currentAppearance { setAppearance(currentAppearance) }
-        setPageReferences(pageRecords)
+        else { setPageReferences(pageRecords) }
     }
 
     func setPageReferences(_ records: [DocumentRecord]) {
         let font: DocumentFontStyle? = currentAppearance?.fontStyle == .hachiMaruPop ? .hachiMaruPop : nil
-        guard records != pageRecords || pageReferenceColorScheme != applicationColorScheme || pageReferenceFontStyle != font else { return }
+        let keys = Dictionary(uniqueKeysWithValues: records.map { ($0.id, documentPreviewCache?.cardPresentationKey(for: $0, colorScheme: applicationColorScheme) ?? "") })
+        guard records != pageRecords || keys != pageReferenceSnapshotKeys || pageReferenceColorScheme != applicationColorScheme || pageReferenceFontStyle != font else { return }
         let schemeChanged = pageReferenceColorScheme != applicationColorScheme
         let fontChanged = pageReferenceFontStyle != font
         pageReferenceColorScheme = applicationColorScheme
@@ -409,11 +663,26 @@ final class TipTapEditorSession: ObservableObject {
             return (id, payload)
         })
         pageReferencePayload = records.map { record in
-            if previous[record.id] == record, !fontChanged, !(schemeChanged && record.appearance.isThemeDependent), let cached = presentations[record.id] { return cached }
-            return PageReferencePresentation.bridgeObject(record, attachmentStore: attachmentStore, colorScheme: applicationColorScheme, containingFontStyle: font)
+            if previous[record.id] == record, keys[record.id] == pageReferenceSnapshotKeys[record.id], !fontChanged, !(schemeChanged && record.appearance.isThemeDependent), let cached = presentations[record.id] { return cached }
+            return PageReferencePresentation.bridgeObject(record, attachmentStore: attachmentStore, colorScheme: applicationColorScheme, containingFontStyle: font, previews: documentPreviewCache)
         }
+        pageReferenceSnapshotKeys = keys
         pageRecords = records
-        if isReady { sendPageReferences() }
+        if !stagePresentationInputChange(), isReady { sendPageReferences() }
+    }
+
+    private var stagesInitialPresentation: Bool {
+        preparesInteractivePresentation && !isPresentationReady
+    }
+
+    private func stagePresentationInputChange() -> Bool {
+        guard stagesInitialPresentation else { return false }
+        presentationInputsRevision &+= 1
+        if presentation.isContentReady {
+            confirmingFrameGeneration = nil
+            preparePresentation()
+        }
+        return true
     }
 
     private func sendPageReferences() {
@@ -421,21 +690,25 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     func setCollections(_ payloads: [[String: Any]], preparingForDisplay: Bool = false) {
-        // Do NOT tear down an editor that is already presentation-ready. It was shown and
-        // confirmed once, so its WebKit pixels are valid. Re-running the off-screen snapshot
+        // Do NOT tear down an editor whose live content is already presentation-ready.
+        // The visible viewport is refreshed separately on return; readiness is not a
+        // guarantee that hidden WebKit tiles remain painted. Re-running the off-screen snapshot
         // "proof of pixels" handshake for a warm model is unnecessary, and it deadlocks on iPad:
         // the editor is still at opacity 0 in the deck during the open (selectedDocumentID only
         // flips once it is marked ready), so takeSnapshot never calls back and the open hangs to
         // the 12s timeout ("This page could not be prepared"). Pushing the updated collections to
         // JS below re-renders the live editor in place, which is all a warm re-show needs.
         _ = preparingForDisplay
+        guard !NSArray(array: collectionPayloads).isEqual(to: payloads) else { return }
         collectionPayloads = payloads
-        if isReady {
-            let icons = Set(payloads.flatMap { ($0["fields"] as? [[String: Any]] ?? []).compactMap { $0["icon"] as? String } })
-            registerIconAssets(icons) { [weak self] in
-                guard let self else { return }
-                self.send(TipTapEditorCommand("setCollections", args: ["collections": self.collectionPayloads])) { [weak self] _ in self?.preparePresentation() }
-            }
+        if !stagePresentationInputChange(), isReady { sendCollections() }
+    }
+
+    private func sendCollections() {
+        let icons = Set(collectionPayloads.flatMap { ($0["fields"] as? [[String: Any]] ?? []).compactMap { $0["icon"] as? String } })
+        registerIconAssets(icons) { [weak self] in
+            guard let self else { return }
+            self.send(TipTapEditorCommand("setCollections", args: ["collections": self.collectionPayloads]))
         }
     }
 
@@ -453,6 +726,10 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     func nativeCollectionDidLayout(blockID: String, viewID: String, height: CGFloat, needsResize: Bool) {
+        if openingTrace != nil, !isPresentationReady {
+            openingStateOnce("native-collection-layout", key: "\(presentation.generation):\(needsResize)",
+                             "needsResize=\(needsResize) requiredForReadiness=false \(openingReadinessState(for: openingTrace?.documentID ?? ""))")
+        }
         if needsResize {
             pendingNativePresentationHeights[blockID] = (viewID, height)
             resizeNativeCollection(blockID: blockID, viewID: viewID, height: height)
@@ -464,50 +741,100 @@ final class TipTapEditorSession: ObservableObject {
 
     private func confirmPresentationIfReady() {
         logger.info("VELLIX-OPEN confirm contentReady=\(self.presentation.isContentReady) nativePending=\(self.pendingNativePresentationHeights.count) bounds=\(self.webView.map { "\(Int($0.bounds.width))x\(Int($0.bounds.height))" } ?? "nil") presReady=\(self.isPresentationReady)")
-        guard !isPresentationReady, presentation.isContentReady,
-              let webView, webView.bounds.width > 0, webView.bounds.height > 0 else { return }
+        guard !isPresentationReady, presentation.isContentReady, preparedInputsRevision == presentationInputsRevision,
+              let webView, webView.bounds.width > 0, webView.bounds.height > 0 else {
+            if let trace = openingTrace, !isPresentationReady {
+                let hasBounds = (self.webView?.bounds.width ?? 0) > 0 && (self.webView?.bounds.height ?? 0) > 0
+                let reason = !presentation.isContentReady ? "javascript-layout-not-ready" :
+                    preparedInputsRevision != presentationInputsRevision ? "input-revision-mismatch" :
+                    self.webView == nil ? "webview-unattached" : "webview-bounds-zero"
+                openingStateOnce("frame-check-blocked",
+                                 key: "\(presentation.generation):\(presentation.isContentReady):\(preparedInputsRevision == presentationInputsRevision):\(self.webView != nil):\(hasBounds)",
+                                 "reason=\(reason) fallbackArmedForCurrentGeneration=\(confirmingFrameGeneration == presentation.generation) \(openingReadinessState(for: trace.documentID))")
+            }
+            return
+        }
         let generation = presentation.generation
-        guard confirmingFrameGeneration != generation else { return }
+        guard confirmingFrameGeneration != generation else {
+            if openingTrace != nil {
+                openingStateOnce("frame-check-in-flight", key: String(generation), "generation=\(generation)")
+            }
+            return
+        }
         confirmingFrameGeneration = generation
         let configuration = WKSnapshotConfiguration()
-        configuration.rect = CGRect(x: 0, y: 0, width: webView.bounds.width, height: min(900, webView.bounds.height))
+        configuration.rect = CGRect(x: 0, y: 0, width: webView.bounds.width, height: min(240, webView.bounds.height))
+        configuration.snapshotWidth = NSNumber(value: Double(min(160, webView.bounds.width)))
         configuration.afterScreenUpdates = true
+        openingTiming?.mark("frame-check-start")
+        let trace = openingTrace
+        let started = trace?.event("snapshot-start", "afterScreenUpdates=true \(openingReadinessState(for: trace?.documentID ?? ""))")
         // A JS layout frame is not proof that WebKit has produced displayable pixels.
         webView.takeSnapshot(with: configuration) { [weak self] image, error in
-            guard let self, self.presentation.generation == generation else { return }
-            self.logger.info("VELLIX-OPEN snapshot RETURNED image=\(image != nil) error=\(error?.localizedDescription ?? "none", privacy: .public)")
-            self.confirmingFrameGeneration = nil
-            guard image != nil else {
-                self.bridgeErrorMessage = error?.localizedDescription ?? "The page could not be prepared for display."
+            trace?.event("snapshot-returned", "imageAvailable=\(image != nil) error=\(PennedDocumentOpenTrace.errorCode(error))", since: started)
+            guard let self, self.presentation.generation == generation, self.confirmingFrameGeneration == generation else {
+                trace?.event("frame-callback-discarded", "callback=snapshot sessionAlive=\(self != nil) expectedGeneration=\(generation) actualGeneration=\(self?.presentation.generation ?? -1) confirmingGeneration=\(self?.confirmingFrameGeneration ?? -1)", since: started)
                 return
             }
+            self.logger.info("VELLIX-OPEN snapshot RETURNED image=\(image != nil) error=\(error?.localizedDescription ?? "none", privacy: .public)")
+            guard image != nil else {
+                // The web layout and bounds already passed. Let the existing fallback
+                // confirm this generation even if WebKit returns no image.
+                trace?.event("snapshot-unavailable", "reason=\(error == nil ? "no-image" : "webkit-error") fallbackArmed=true", since: started)
+                return
+            }
+            self.confirmingFrameGeneration = nil
             self.presentation.framePresented(generation: generation)
+            self.openingFrameTrace = trace
             self.isPresentationReady = self.presentation.isReady
+            trace?.event("frame-confirmed", "route=snapshot currentOpeningRequest=\(self.openingTrace?.requestID?.uuidString ?? "-") \(self.openingReadinessState(for: trace?.documentID ?? ""))", since: started)
+            self.openingTiming?.mark("presentation-ready", route: "snapshot")
+            if self.preparesInteractivePresentation, self.isPresentationReady { self.noteInteractivePresentation() }
         }
         // WKWebView.takeSnapshot(afterScreenUpdates:) can silently never call back when the
         // web view isn't on-screen yet (it is still at opacity 0 in the editor deck while it
         // prepares). Don't let that hang the open: the JS layout frame already confirms the
         // content is laid out, so present anyway if the snapshot hasn't returned promptly.
+        let armed = trace?.event("layout-fallback-armed", "delayMS=750 generation=\(generation)")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
+            trace?.event("layout-fallback-fired", "generation=\(generation)", since: armed)
             guard let self, self.confirmingFrameGeneration == generation,
                   self.presentation.generation == generation, !self.isPresentationReady,
-                  self.presentation.isContentReady else { return }
+                  self.presentation.isContentReady else {
+                trace?.event("layout-fallback-skipped", "sessionAlive=\(self != nil) expectedGeneration=\(generation) actualGeneration=\(self?.presentation.generation ?? -1) confirmingGeneration=\(self?.confirmingFrameGeneration ?? -1) alreadyReady=\(self?.isPresentationReady == true) contentReady=\(self?.presentation.isContentReady == true)", since: armed)
+                return
+            }
             self.confirmingFrameGeneration = nil
             self.presentation.framePresented(generation: generation)
+            self.openingFrameTrace = trace
             self.isPresentationReady = self.presentation.isReady
+            trace?.event("frame-confirmed", "route=layout-fallback currentOpeningRequest=\(self.openingTrace?.requestID?.uuidString ?? "-") \(self.openingReadinessState(for: trace?.documentID ?? ""))", since: started)
+            self.openingTiming?.mark("presentation-ready", route: "layout-fallback")
+            if self.preparesInteractivePresentation, self.isPresentationReady { self.noteInteractivePresentation() }
         }
     }
 
     func editorDidLayout() {
+        if let trace = openingTrace, !isPresentationReady {
+            let hasBounds = (webView?.bounds.width ?? 0) > 0 && (webView?.bounds.height ?? 0) > 0
+            openingStateOnce("native-webview-layout", key: "\(presentation.generation):\(hasBounds)", openingReadinessState(for: trace.documentID))
+        }
         confirmPresentationIfReady()
+        #if DEBUG && os(iOS)
+        traceOpeningContentVisibility()
+        #endif
     }
 
     private func resetPresentation(documentID: String?) {
+        openingTrace?.event("presentation-reset", "target=\(documentID ?? "-") generation=\(presentation.generation) cancelsPreparation=\(presentationTask != nil)")
+        openingFrameTrace = nil
         canUndo = false
         canRedo = false
         textConversionState = TipTapTextConversionState()
         isConvertingSelectedText = false
         presentationTask?.cancel()
+        presentationTask = nil
+        preparedInputsRevision = nil
         confirmingFrameGeneration = nil
         presentation.begin(documentID: documentID)
         pendingNativePresentationHeights = [:]
@@ -516,23 +843,64 @@ final class TipTapEditorSession: ObservableObject {
 
     private func preparePresentation() {
         logger.info("VELLIX-OPEN preparePresentation enter interactive=\(self.preparesInteractivePresentation) isReady=\(self.isReady) loading=\(self.isLoadingDocument) presReady=\(self.isPresentationReady) hasWebView=\(self.webView != nil) docID=\(self.loadedDocumentID ?? "nil", privacy: .public)")
-        guard preparesInteractivePresentation, isReady, !isLoadingDocument, !isPresentationReady, let webView, let documentID = loadedDocumentID else {
+        guard preparesInteractivePresentation, isReady, !isLoadingDocument, !isPresentationReady,
+              presentationTask == nil, (!presentation.isContentReady || preparedInputsRevision != presentationInputsRevision),
+              let webView, let documentID = loadedDocumentID else {
+            if let trace = openingTrace, !isPresentationReady {
+                let reason = !preparesInteractivePresentation ? "not-interactive" :
+                    !isReady ? "bridge-not-ready" : isLoadingDocument ? "document-loading" :
+                    presentationTask != nil ? "preparation-in-flight" :
+                    presentation.isContentReady && preparedInputsRevision == presentationInputsRevision ? "inputs-already-prepared" :
+                    self.webView == nil ? "webview-unattached" : "loaded-document-missing"
+                openingStateOnce("presentation-preparation-blocked",
+                                 key: "\(presentation.generation):\(reason)",
+                                 "reason=\(reason) \(openingReadinessState(for: trace.documentID))")
+            }
             logger.info("VELLIX-OPEN preparePresentation GUARD-FAIL (did not run)")
             return
         }
-        presentationTask?.cancel()
         let generation = presentation.startPreparation()
-        let args: [String: Any] = ["collections": collectionPayloads, "pages": pageReferencePayload, "files": attachmentFiles.map(\.object),
+        let inputsRevision = presentationInputsRevision
+        let trace = openingTrace
+        let started = trace?.event("presentation-preparation-start", openingReadinessState(for: documentID))
+        openingTiming?.mark("layout-start")
+        var args: [String: Any] = ["collections": collectionPayloads, "pages": pageReferencePayload, "files": attachmentFiles.map(\.object),
             "appearance": currentAppearance.map { TipTapEditorCommand.setAppearance($0.resolved(for: applicationColorScheme), interfaceScheme: applicationColorScheme).args } ?? [:]]
+        if let trace {
+            args["openingDiagnosticGeneration"] = generation
+            openingWebTrace = (generation, trace)
+        }
+        let presentationArgs = args
         let icons = Set(collectionPayloads.flatMap { ($0["fields"] as? [[String: Any]] ?? []).compactMap { $0["icon"] as? String } })
         presentationTask = Task { [weak self, weak webView] in
-            guard let self, let webView else { return }
+            guard let self, let webView else {
+                trace?.event("presentation-callback-discarded", "callback=task-start sessionAlive=\(self != nil) webViewAlive=\(webView != nil)", since: started)
+                return
+            }
+            let iconsStarted = trace?.event("presentation-icon-registration-start")
             await withCheckedContinuation { continuation in self.registerIconAssets(icons) { continuation.resume() } }
-            guard !Task.isCancelled, self.loadedDocumentID == documentID else { return }
+            trace?.event("presentation-icon-registration-completed", since: iconsStarted)
+            guard !Task.isCancelled, self.loadedDocumentID == documentID else {
+                trace?.event("presentation-callback-discarded", "callback=icon-registration taskCancelled=\(Task.isCancelled) documentMatches=\(self.loadedDocumentID == documentID)", since: started)
+                return
+            }
+            let jsStarted = trace?.event("javascript-presentation-start", "generation=\(generation) inputRevision=\(inputsRevision)")
             do {
-                let result = try await webView.callAsyncJavaScript("return await window.tiptapCommand('preparePresentation', args);",
-                    arguments: ["args": args], in: nil, contentWorld: .page) as? [String: Any] ?? [:]
-                guard !Task.isCancelled, self.loadedDocumentID == documentID else { return }
+                let rawResult = try await webView.callAsyncJavaScript("return await window.tiptapCommand('preparePresentation', args);",
+                    arguments: ["args": presentationArgs], in: nil, contentWorld: .page)
+                let result = rawResult as? [String: Any] ?? [:]
+                trace?.event("javascript-presentation-returned", "generation=\(generation) layoutPayload=\(result["nativeViews"] is [[String: String]]) webMilestones=\(result["openingDiagnostic"] as? Bool == true)", since: jsStarted)
+                guard !Task.isCancelled, self.loadedDocumentID == documentID,
+                      self.presentation.generation == generation else {
+                    trace?.event("presentation-callback-discarded", "callback=javascript taskCancelled=\(Task.isCancelled) documentMatches=\(self.loadedDocumentID == documentID) expectedGeneration=\(generation) actualGeneration=\(self.presentation.generation)", since: jsStarted)
+                    return
+                }
+                self.presentationTask = nil
+                if self.presentationInputsRevision != inputsRevision {
+                    trace?.event("presentation-inputs-changed", "expectedRevision=\(inputsRevision) actualRevision=\(self.presentationInputsRevision)", since: started)
+                    self.preparePresentation()
+                    return
+                }
                 var nativeViews: [String: String] = [:]
                 for region in result["nativeViews"] as? [[String: String]] ?? [] {
                     if let block = region["blockID"], let view = region["viewID"] { nativeViews[block] = view }
@@ -540,34 +908,20 @@ final class TipTapEditorSession: ObservableObject {
                 self.pendingNativePresentationHeights = self.pendingNativePresentationHeights.filter {
                     nativeViews[$0.key] == $0.value.viewID
                 }
+                self.preparedInputsRevision = inputsRevision
                 self.presentation.prepared(generation: generation, nativeViews: nativeViews)
+                self.setRenderedDocumentID(documentID)
+                trace?.event("javascript-layout-acknowledged", "nativeRegions=\(nativeViews.count) \(self.openingReadinessState(for: documentID))", since: started)
+                self.openingTiming?.mark("layout-ready")
                 self.logger.info("VELLIX-OPEN prepared nativeViews=\(nativeViews.count) contentReady=\(self.presentation.isContentReady)")
                 self.confirmPresentationIfReady()
-                self.schedulePresentationWatchdog(generation: generation, documentID: documentID)
             } catch {
+                trace?.event("javascript-presentation-failed", "taskCancelled=\(Task.isCancelled) error=\(PennedDocumentOpenTrace.errorCode(error))", since: jsStarted)
                 guard !Task.isCancelled else { return }
+                self.presentationTask = nil
                 self.logger.error("VELLIX-OPEN preparePresentation JS ERROR=\(error.localizedDescription, privacy: .public)")
                 self.bridgeErrorMessage = error.localizedDescription
             }
-        }
-    }
-
-    // The content is laid out once preparePresentation returns, but presentation is gated
-    // on every native collection/page region reporting its layout — which never happens
-    // while the editor is still off-screen (opacity 0) warming in the editor deck. Don't
-    // let that hang the open: if it hasn't presented shortly, force it through.
-    private func schedulePresentationWatchdog(generation: Int, documentID: String) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-            guard let self else { return }
-            self.logger.info("VELLIX-OPEN watchdog fire gen=\(generation) presGen=\(self.presentation.generation) docMatch=\(self.loadedDocumentID == documentID) presReady=\(self.isPresentationReady) bounds=\(self.webView.map { "\(Int($0.bounds.width))x\(Int($0.bounds.height))" } ?? "nil")")
-            guard self.presentation.generation == generation,
-                  self.loadedDocumentID == documentID, !self.isPresentationReady,
-                  let webView = self.webView, webView.bounds.width > 0, webView.bounds.height > 0 else { return }
-            self.confirmingFrameGeneration = nil
-            self.pendingNativePresentationHeights = [:]
-            self.presentation.forceReady(generation: generation)
-            self.isPresentationReady = self.presentation.isReady
-            self.logger.info("VELLIX-OPEN watchdog FORCED presReady=\(self.isPresentationReady)")
         }
     }
 
@@ -588,66 +942,16 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     func insertBlock(_ blockType: String) {
+        if blockType == "tabs" { print("🧩 TABS SESSION: insertBlock reached, ready=\(isReady), webView=\(webView != nil)") }
         guard !["heading5", "heading6", "toggleHeading5", "toggleHeading6"].contains(blockType) else { return }
-        if blockType == "callout" {
-            registerIconAsset("sparkle") { [weak self] in
-                self?.send(TipTapEditorCommand.insertBlock(blockType))
-            }
-            return
-        }
-
         send(TipTapEditorCommand.insertBlock(blockType))
     }
 
-    func insertCallout(icon: String, text: String, color: String = "#ffffff") {
-        let icon = normalizedIconName(icon)
-        registerIconAsset(icon) { [weak self] in
-            self?.send(TipTapEditorCommand.insertCallout(icon: icon, text: text, color: color))
-        }
-    }
-
-    func insertPlainCallout(color: String) {
-        send(TipTapEditorCommand("insertBlock", args: ["blockType": "plainCallout", "color": color]))
-    }
-
-    func preparePlainCalloutInsertion() async throws -> String {
-        guard isReady, !isLoadingDocument, editingEnabled, let documentID = loadedDocumentID else {
-            throw VellixError.editorBridge("The editor is not ready.")
-        }
-        let generation = loadGeneration
-        guard let token = try await attachmentCommand("plainCalloutCaptureInsertion") as? String else {
-            throw VellixError.editorBridge("Select an insertion point for the callout.")
-        }
-        guard loadedDocumentID == documentID, loadGeneration == generation, editingEnabled else {
-            endPlainCalloutInsertion(token: token)
-            throw VellixError.editorBridge("The document changed. Select the insertion point again.")
-        }
-        return token
-    }
-
-    func insertPlainCallout(color: String, insertionToken: String) async throws {
-        guard isReady, !isLoadingDocument, editingEnabled else { throw VellixError.editorBridge("The editor is not ready.") }
-        let inserted = try await attachmentCommand("insertBlock", args: [
-            "blockType": "plainCallout", "color": color, "insertionToken": insertionToken,
-        ]) as? Bool
-        guard inserted == true else { throw VellixError.editorBridge("The callout insertion point is no longer available.") }
-    }
-
-    func endPlainCalloutInsertion(token: String) {
-        send(TipTapEditorCommand("plainCalloutEndInsertion", args: ["token": token]))
-    }
-
-    func setSelectedBlockType(_ blockType: String, level: Int? = nil, color: String? = nil) {
-        guard !["heading5", "heading6", "toggleHeading5", "toggleHeading6"].contains(blockType) else { return }
+    func setSelectedBlockType(_ blockType: String, level: Int? = nil, color: String? = nil, selectionTarget: String? = nil) {
+        guard canApplySelectionStyle(to: selectionTarget),
+              !["heading5", "heading6", "toggleHeading5", "toggleHeading6"].contains(blockType) else { return }
         if ["heading", "toggleListItem"].contains(blockType), let level, !(1...4).contains(level) { return }
-        if blockType == "callout" {
-            registerIconAsset("sparkle") { [weak self] in
-                self?.send(TipTapEditorCommand.setSelectedBlockType(blockType, level: level, color: color))
-            }
-            return
-        }
-
-        send(TipTapEditorCommand.setSelectedBlockType(blockType, level: level, color: color))
+        send(TipTapEditorCommand.setSelectedBlockType(blockType, level: level, color: color, selectionTarget: selectionTarget))
     }
 
     func indentSelectedBlocks() {
@@ -666,8 +970,15 @@ final class TipTapEditorSession: ObservableObject {
         send(TipTapEditorCommand.setSelectedCalloutColor(color))
     }
 
-    func formatSelectedBlocks(action: String, value: String? = nil) {
-        send(TipTapEditorCommand.formatSelectedBlocks(action: action, value: value))
+    func formatSelectedBlocks(action: String, value: String? = nil, selectionTarget: String? = nil) {
+        guard canApplySelectionStyle(to: selectionTarget) else { return }
+        send(TipTapEditorCommand.formatSelectedBlocks(action: action, value: value, selectionTarget: selectionTarget))
+    }
+
+    private func canApplySelectionStyle(to target: String?) -> Bool {
+        guard let target else { return true }
+        return isReady && !isLoadingDocument && editingEnabled && selectionMode != "off"
+            && formattingState.selectedBlocksStyle?.target == target
     }
 
     func toggleTextMark(_ mark: String) {
@@ -706,9 +1017,76 @@ final class TipTapEditorSession: ObservableObject {
                 }
             }
         }
-        if target == "callout" { registerIconAsset("sparkle", completion: apply) }
-        else { apply() }
+        apply()
     }
+
+    func cancelBlockConversion() {
+        send(TipTapEditorCommand("cancelBlockConversion"))
+    }
+
+    func beginLinkEditing(_ mode: DocumentLinkRequest.Mode, blockID: String? = nil) async throws -> DocumentLinkRequest {
+        guard let documentID = loadedDocumentID, linkContextIsCurrent(documentID, loadGeneration) else { throw staleLink() }
+        let generation = loadGeneration
+        var args: [String: Any] = ["mode": mode.rawValue]
+        args["blockID"] = blockID
+        guard let result = try await attachmentCommand("linksBegin", args: args) as? [String: Any],
+              let token = result["token"] as? String, linkContextIsCurrent(documentID, generation) else { throw staleLink() }
+        return DocumentLinkRequest(id: token, documentID: documentID, generation: generation, mode: mode,
+            href: result["href"] as? String ?? "", existing: result["existing"] as? Bool == true,
+            isRich: result["kind"] as? String == "rich")
+    }
+
+    func applyLink(_ request: DocumentLinkRequest, url: URL?, kind: LinkInsertionKind, label: String) async throws {
+        guard linkContextIsCurrent(request.documentID, request.generation) else { throw staleLink() }
+        var args: [String: Any] = ["token": request.id, "remove": url == nil, "kind": kind.rawValue, "label": label]
+        if let url {
+            args["href"] = url.absoluteString
+            if (request.isRich || (request.mode == .insert && kind == .rich)), url.absoluteString != request.href {
+                args["metadata"] = try? await fetchLinkMetadata(url, documentID: request.documentID, generation: request.generation)
+            }
+        }
+        guard linkContextIsCurrent(request.documentID, request.generation),
+              try await attachmentCommand("linksApply", args: args) as? Bool == true,
+              linkContextIsCurrent(request.documentID, request.generation) else { throw staleLink() }
+    }
+
+    func endLinkEditing(_ request: DocumentLinkRequest) {
+        guard linkContextIsCurrent(request.documentID, request.generation) else { return }
+        send(TipTapEditorCommand("linksEnd", args: ["token": request.id]))
+    }
+
+    func actOnLink(_ link: SelectedDocumentLink, action: String, layout: RichLinkLayout? = nil) async throws {
+        guard let documentID = loadedDocumentID, linkContextIsCurrent(documentID, loadGeneration),
+              formattingState.selectedLink?.id == link.id else { throw staleLink() }
+        let generation = loadGeneration
+        var args: [String: Any] = ["blockID": link.id, "href": link.href, "action": action, "kind": link.isRich ? "rich" : "text"]
+        args["layout"] = layout?.rawValue
+        if let url = DocumentLinkURL.web(link.href) {
+            if action == "reload" {
+                guard let metadata = try await fetchLinkMetadata(url, documentID: documentID, generation: generation) else {
+                    throw VellixError.editorBridge("The site did not return preview information.")
+                }
+                args["metadata"] = metadata
+            } else if action == "convert" && !link.isRich && !link.hasMetadata {
+                args["metadata"] = try? await fetchLinkMetadata(url, documentID: documentID, generation: generation)
+            }
+        }
+        guard linkContextIsCurrent(documentID, generation),
+              try await attachmentCommand("linksSelected", args: args) as? Bool == true,
+              linkContextIsCurrent(documentID, generation) else { throw staleLink() }
+    }
+
+    private func fetchLinkMetadata(_ url: URL, documentID: String, generation: Int) async throws -> [String: Any]? {
+        guard let page = try await DocumentLinkMetadataSource.fetch(url) else { return nil }
+        guard linkContextIsCurrent(documentID, generation) else { throw staleLink() }
+        return try await attachmentCommand("linksMetadata", args: ["html": page.html, "href": page.href]) as? [String: Any]
+    }
+
+    private func linkContextIsCurrent(_ documentID: String, _ generation: Int) -> Bool {
+        isReady && !isLoadingDocument && editingEnabled && loadedDocumentID == documentID && loadGeneration == generation
+    }
+
+    private func staleLink() -> VellixError { .editorBridge("This link selection changed. Select the link or text again.") }
 
     func beginTextColorEditing() async throws -> InlineTextColorEditorRequest? {
         guard isReady, !isLoadingDocument, editingEnabled, formattingState.hasTextSelection,
@@ -743,15 +1121,296 @@ final class TipTapEditorSession: ObservableObject {
         send(TipTapEditorCommand("textColorEnd", args: ["token": context.token, "restoreFocus": restoreFocus && editingEnabled]))
     }
 
-    func updateCalloutIcon(blockID: String?, icon: String) {
-        let icon = normalizedIconName(icon)
-        registerIconAsset(icon) { [weak self] in
-            self?.send(TipTapEditorCommand.updateCalloutIcon(blockID: blockID, icon: icon))
+    func updateCalloutColor(blockID: String, color: String) {
+        send(TipTapEditorCommand.updateCalloutColor(blockID: blockID, color: color))
+    }
+
+    func listGridRequestSelectedSettings() {
+        guard isReady, editingEnabled, !isLoadingDocument, selectionMode == "off",
+              formattingState.canOpenListGridSettings else { return }
+        send(TipTapEditorCommand("listGridRequestSelectedSettings"))
+    }
+
+    func requestBlockSettings() {
+        guard isReady, editingEnabled, !isLoadingDocument, selectionMode == "off" else { return }
+        if formattingState.blockSettingsKind == nil {
+            listGridRequestSelectedSettings()
+        } else {
+            send(TipTapEditorCommand("requestBlockSettings"))
         }
     }
 
-    func updateCalloutColor(blockID: String, color: String) {
-        send(TipTapEditorCommand.updateCalloutColor(blockID: blockID, color: color))
+    func requestSelectedBlockSettings(_ target: TipTapSelectedBlockSettings) {
+        guard isReady, editingEnabled, !isLoadingDocument, selectionMode != "off",
+              let loadedDocumentID, renderedDocumentID == loadedDocumentID,
+              formattingState.selectedBlockSettings == target else { return }
+        send(TipTapEditorCommand("requestSelectedBlockSettings", args: [
+            "kind": target.kind, "blockID": target.blockID, "selectionTarget": target.selectionTarget,
+        ]))
+    }
+
+    func previewCodeBlock(_ request: CodeBlockEditorRequest, draft: CodeBlockConfiguration?, documentID: String) {
+        guard isReady, !isLoadingDocument, loadedDocumentID == documentID else { return }
+        send(CodeBlockBridge.preview(request, draft: draft))
+    }
+
+    func commitGridCard(_ request: GridCardSettingsRequest, settings: GridCardSettings, documentID: String) async throws -> String {
+        guard isReady, !isLoadingDocument, editingEnabled, loadedDocumentID == documentID, let webView else {
+            throw VellixError.editorBridge("This document is no longer open for editing.")
+        }
+        let generation = loadGeneration
+        let result = try await request.commit(settings, in: webView)
+        guard loadGeneration == generation, loadedDocumentID == documentID, let snapshot = result as? [String: Any] else {
+            throw VellixError.editorBridge("This Grid Card changed or was removed. Reopen its settings to continue.")
+        }
+        return try TipTapContentAnalyzer.normalizePayloadToJSON(snapshot)
+    }
+
+    func commitIconCallout(_ request: IconCalloutSettingsRequest, settings: IconCalloutSettings,
+                           text: String?, documentID: String) async throws -> String {
+        guard isReady, !isLoadingDocument, editingEnabled, loadedDocumentID == documentID, let webView else {
+            throw VellixError.editorBridge("This document is no longer open for editing.")
+        }
+        let generation = loadGeneration
+        let result = try await request.commit(settings, text: text, in: webView)
+        guard loadGeneration == generation, loadedDocumentID == documentID, let snapshot = result as? [String: Any] else {
+            throw VellixError.editorBridge("This callout changed or was removed. Reopen its settings to continue.")
+        }
+        return try TipTapContentAnalyzer.normalizePayloadToJSON(snapshot)
+    }
+
+    func commitWashiTape(_ request: WashiTapeRequest, imagePath: String?, photo: CardRemotePhoto?, tapeSize: WashiTapeSize, documentID: String) async throws -> String {
+        guard isReady, !isLoadingDocument, editingEnabled, loadedDocumentID == documentID, let webView else {
+            throw VellixError.editorBridge("This document is no longer open for editing.")
+        }
+        let generation = loadGeneration
+        let result = try await request.commit(imagePath: imagePath, photo: photo, tapeSize: tapeSize, in: webView)
+        guard loadGeneration == generation, loadedDocumentID == documentID, let snapshot = result as? [String: Any] else {
+            throw VellixError.editorBridge("This Washi Tape changed or was removed. Reopen its settings to continue.")
+        }
+        return try TipTapContentAnalyzer.normalizePayloadToJSON(snapshot)
+    }
+
+    func commitHeadingLabel(_ request: HeadingLabelRequest, settings: HeadingLabelSettings, text: String, documentID: String) async throws -> String {
+        guard isReady, !isLoadingDocument, editingEnabled, loadedDocumentID == documentID, let webView else {
+            throw VellixError.editorBridge("This document is no longer open for editing.")
+        }
+        let generation = loadGeneration
+        let result = try await request.commit(settings, text: text, in: webView)
+        guard loadGeneration == generation, loadedDocumentID == documentID, let snapshot = result as? [String: Any] else {
+            throw VellixError.editorBridge("This heading changed or was removed. Reopen its settings to continue.")
+        }
+        return try TipTapContentAnalyzer.normalizePayloadToJSON(snapshot)
+    }
+
+    func commitCodeBlock(_ request: CodeBlockEditorRequest, draft: CodeBlockConfiguration, documentID: String) async throws -> String {
+        guard isReady, !isLoadingDocument, editingEnabled, loadedDocumentID == documentID, let webView else {
+            throw VellixError.editorBridge("This document is no longer open for editing.")
+        }
+        let generation = loadGeneration
+        let result = try await CodeBlockBridge.commit(request, draft: draft, in: webView)
+        guard loadGeneration == generation, loadedDocumentID == documentID, let json = result as? [String: Any] else {
+            throw VellixError.editorBridge("This Code Block changed or was removed. Copy your draft before closing, then reopen the block.")
+        }
+        return try TipTapContentAnalyzer.normalizePayloadToJSON(json)
+    }
+
+    func listGridSetColor(blockID: String, target: String, color: String) {
+        send(TipTapEditorCommand("listGridSetColor", args: ["blockId": blockID, "target": target, "color": color]))
+    }
+
+    func listGridSetProportion(blockID: String, documentID: String, leftFraction: Int?) async throws -> Int {
+        let name = leftFraction == nil ? "listGridRestoreProportion" : "listGridSetProportion"
+        let values: [String: Any] = leftFraction.map { ["leftFraction": $0] } ?? [:]
+        let result = try await listGridSettingsCommand(name, blockID: blockID, documentID: documentID, values: values)
+        guard let applied = result as? Int, (20...80).contains(applied) else {
+            throw VellixError.editorBridge("The List Grid column width could not be applied.")
+        }
+        return applied
+    }
+
+    func listGridSetRowStyle(blockID: String, documentID: String, index: Int, style: TipTapListGridRowStyle) async throws {
+        let result = try await listGridSettingsCommand("listGridSetRowStyle", blockID: blockID, documentID: documentID,
+            values: ["index": index, "rowStyle": style.rawValue])
+        guard result as? Bool == true else {
+            throw VellixError.editorBridge("The List Grid row style could not be applied.")
+        }
+    }
+
+    private func listGridSettingsCommand(_ name: String, blockID: String, documentID: String,
+                                         values: [String: Any]) async throws -> Any? {
+        guard isReady, editingEnabled, !isLoadingDocument, renderedDocumentID == documentID,
+              loadedDocumentID == documentID, let webView else {
+            throw VellixError.editorBridge("The List Grid is no longer open for editing.")
+        }
+        let generation = loadGeneration
+        var args = values
+        args["blockId"] = blockID
+        let result = try await webView.callAsyncJavaScript("return await window.tiptapCommand(name, args);",
+            arguments: ["name": name, "args": args], in: nil, contentWorld: .page)
+        guard generation == loadGeneration, renderedDocumentID == documentID else {
+            throw VellixError.editorBridge("The List Grid is no longer open for editing.")
+        }
+        return result
+    }
+
+    func listGridAddRow(blockID: String) {
+        send(TipTapEditorCommand("listGridAddRow", args: ["blockId": blockID]))
+    }
+
+    func listGridRemoveRow(blockID: String, index: Int) {
+        send(TipTapEditorCommand("listGridRemoveRow", args: ["blockId": blockID, "index": index]))
+    }
+
+    // MARK: Tabs block
+
+    func resetTabsNavigation() {
+        guard isReady, !isLoadingDocument else { return }
+        send(TipTapEditorCommand("tabsResetNavigation"))
+    }
+
+    /// Generic appearance/structure setter. `value` is a hex string, Int, Bool,
+    /// or option string; the JS side sanitizes it per attribute.
+    func tabsSetAttr(blockID: String, key: String, value: Any) {
+        send(TipTapEditorCommand("tabsSetAttr", args: ["blockId": blockID, "key": key, "value": value]))
+    }
+
+    func tabsSetIcon(blockID: String, icon: String) {
+        let icon = normalizedIconName(icon)
+        registerIconAsset(icon) { [weak self] in
+            self?.send(TipTapEditorCommand("tabsSetAttr", args: ["blockId": blockID, "key": "icon", "value": icon]))
+        }
+    }
+
+    func tabsSetDefaultTab(blockID: String, tabID: String) {
+        send(TipTapEditorCommand("tabsSetDefaultTab", args: ["blockId": blockID, "tabId": tabID]))
+    }
+
+    /// Add a tab to the tabs block that currently contains the selection
+    /// (used by the keyboard add-menu, where no block id is in hand).
+    func tabsAddToSelection() {
+        send(TipTapEditorCommand("tabsAddToSelection"))
+    }
+
+    /// Adds a tab and resolves to the new tab's id, so the settings sheet can
+    /// keep its local tab list in sync.
+    @discardableResult
+    func tabsAddTab(blockID: String, documentID: String, name: String? = nil) async throws -> String? {
+        var values: [String: Any] = [:]
+        if let name, !name.isEmpty { values["name"] = name }
+        return try await tabsCommand("tabsAddTab", blockID: blockID, documentID: documentID, values: values) as? String
+    }
+
+    func tabsCommitText(blockID: String, documentID: String,
+                        headerText: [String: String], tabNames: [String: String]) {
+        guard isReady, editingEnabled, !isLoadingDocument,
+              renderedDocumentID == documentID, loadedDocumentID == documentID else { return }
+        for (key, text) in headerText { tabsSetAttr(blockID: blockID, key: key, value: text) }
+        for (tabID, name) in tabNames { tabsRenameTab(blockID: blockID, tabID: tabID, name: name) }
+    }
+
+    func tabsRenameTab(blockID: String, tabID: String, name: String) {
+        send(TipTapEditorCommand("tabsRenameTab", args: ["blockId": blockID, "tabId": tabID, "name": name]))
+    }
+
+    /// Duplicates a tab and resolves to the clone's id.
+    @discardableResult
+    func tabsDuplicateTab(blockID: String, documentID: String, tabID: String) async throws -> String? {
+        try await tabsCommand("tabsDuplicateTab", blockID: blockID, documentID: documentID,
+                              values: ["tabId": tabID]) as? String
+    }
+
+    private func tabsCommand(_ name: String, blockID: String, documentID: String,
+                             values: [String: Any]) async throws -> Any? {
+        guard isReady, editingEnabled, !isLoadingDocument, renderedDocumentID == documentID,
+              loadedDocumentID == documentID, let webView else {
+            throw VellixError.editorBridge("The tabs block is no longer open for editing.")
+        }
+        let generation = loadGeneration
+        var args = values
+        args["blockId"] = blockID
+        let result = try await webView.callAsyncJavaScript("return await window.tiptapCommand(name, args);",
+            arguments: ["name": name, "args": args], in: nil, contentWorld: .page)
+        guard generation == loadGeneration, renderedDocumentID == documentID else {
+            throw VellixError.editorBridge("The tabs block is no longer open for editing.")
+        }
+        return result
+    }
+
+    func tabsRemoveTab(blockID: String, tabID: String) {
+        send(TipTapEditorCommand("tabsRemoveTab", args: ["blockId": blockID, "tabId": tabID]))
+    }
+
+    func tabsReorderTabs(blockID: String, order: [String]) {
+        send(TipTapEditorCommand("tabsReorderTabs", args: ["blockId": blockID, "order": order]))
+    }
+
+    func informationCardSetAttr(blockID: String, key: String, value: Any) {
+        send(TipTapEditorCommand("informationCardSetAttr", args: ["blockId": blockID, "key": key, "value": value]))
+    }
+
+    // MARK: Minimal Fields block
+
+    /// Generic appearance setter; `value` is a hex string, Int or Bool, sanitized JS-side.
+    func minimalFieldsSetAttr(blockID: String, key: String, value: Any) {
+        send(TipTapEditorCommand("minimalFieldsSetAttr", args: ["blockId": blockID, "key": key, "value": value]))
+    }
+
+    func minimalFieldsRemoveRecord(blockID: String, recordID: String) {
+        send(TipTapEditorCommand("minimalFieldsRemoveRecord", args: ["blockId": blockID, "recordId": recordID]))
+    }
+
+    func minimalFieldsReorderRecords(blockID: String, order: [String]) {
+        send(TipTapEditorCommand("minimalFieldsReorderRecords", args: ["blockId": blockID, "order": order]))
+    }
+
+    func minimalFieldsRemoveField(blockID: String, recordID: String, fieldID: String) {
+        send(TipTapEditorCommand("minimalFieldsRemoveField", args: ["blockId": blockID, "recordId": recordID, "fieldId": fieldID]))
+    }
+
+    func minimalFieldsReorderFields(blockID: String, recordID: String, order: [String]) {
+        send(TipTapEditorCommand("minimalFieldsReorderFields", args: ["blockId": blockID, "recordId": recordID, "order": order]))
+    }
+
+    /// Adds a record and resolves to its new id so the settings sheet stays in sync.
+    @discardableResult
+    func minimalFieldsAddRecord(blockID: String, documentID: String) async throws -> String? {
+        try await minimalFieldsCommand("minimalFieldsAddRecord", blockID: blockID, documentID: documentID, values: [:]) as? String
+    }
+
+    @discardableResult
+    func minimalFieldsDuplicateRecord(blockID: String, documentID: String, recordID: String) async throws -> String? {
+        try await minimalFieldsCommand("minimalFieldsDuplicateRecord", blockID: blockID, documentID: documentID,
+                                       values: ["recordId": recordID]) as? String
+    }
+
+    @discardableResult
+    func minimalFieldsAddField(blockID: String, documentID: String, recordID: String) async throws -> String? {
+        try await minimalFieldsCommand("minimalFieldsAddField", blockID: blockID, documentID: documentID,
+                                       values: ["recordId": recordID]) as? String
+    }
+
+    @discardableResult
+    func minimalFieldsDuplicateField(blockID: String, documentID: String, recordID: String, fieldID: String) async throws -> String? {
+        try await minimalFieldsCommand("minimalFieldsDuplicateField", blockID: blockID, documentID: documentID,
+                                       values: ["recordId": recordID, "fieldId": fieldID]) as? String
+    }
+
+    private func minimalFieldsCommand(_ name: String, blockID: String, documentID: String,
+                                      values: [String: Any]) async throws -> Any? {
+        guard isReady, editingEnabled, !isLoadingDocument, renderedDocumentID == documentID,
+              loadedDocumentID == documentID, let webView else {
+            throw VellixError.editorBridge("The Minimal Fields block is no longer open for editing.")
+        }
+        let generation = loadGeneration
+        var args = values
+        args["blockId"] = blockID
+        let result = try await webView.callAsyncJavaScript("return await window.tiptapCommand(name, args);",
+            arguments: ["name": name, "args": args], in: nil, contentWorld: .page)
+        guard generation == loadGeneration, renderedDocumentID == documentID else {
+            throw VellixError.editorBridge("The Minimal Fields block is no longer open for editing.")
+        }
+        return result
     }
 
     func updateBlockquoteColor(blockID: String, color: String) {
@@ -786,8 +1445,24 @@ final class TipTapEditorSession: ObservableObject {
         send(TipTapEditorCommand("dismissBlockActions", args: ["token": requestToken]))
     }
 
-    func copySelectedBlocks() {
-        send(TipTapEditorCommand.copySelectedBlocks())
+    func copySelectedBlocks(completion: ((Bool) -> Void)? = nil) {
+        guard isReady, !isLoadingDocument, selectedBlockCount > 0, selectionMode != "off",
+              acceptsEditorPresentationRequests else { completion?(false); return }
+        let documentID = loadedDocumentID
+        let generation = loadGeneration
+        Task { [weak self] in
+            guard let self else { completion?(false); return }
+            let copied: Bool
+            do {
+                let result = try await self.attachmentCommand("copySelectedBlocks")
+                copied = result as? Bool == true
+            } catch {
+                copied = false
+            }
+            guard self.loadedDocumentID == documentID, self.loadGeneration == generation,
+                  self.acceptsEditorPresentationRequests else { completion?(false); return }
+            completion?(copied)
+        }
     }
 
     func cutSelectedBlocks() {
@@ -800,6 +1475,13 @@ final class TipTapEditorSession: ObservableObject {
 
     func requestSelectedBlocksForSubpage() {
         send(TipTapEditorCommand.requestSelectedBlocksForSubpage())
+    }
+
+    func placeGroupedPage(token: String, documentID: String, parentID: String) async throws -> Bool {
+        guard isReady, !isLoadingDocument, renderedDocumentID == parentID, let webView else { return false }
+        let result = try await webView.callAsyncJavaScript("return await window.tiptapCommand('placeGroupedPage', args);",
+            arguments: ["args": ["token": token, "documentId": documentID]], in: nil, contentWorld: .page)
+        return result as? Bool == true
     }
 
     func selectAllBlocks() {
@@ -819,13 +1501,7 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     func dismissSlashMenu() {
-        setMobileSlashMenuSuppressed(true)
-        send(TipTapEditorCommand("mobileDismissSlashMenu"))
-    }
-
-    func setMobileSlashMenuSuppressed(_ suppressed: Bool) {
-        mobileSlashMenuSuppressed = suppressed
-        if suppressed { slashMenuState = nil }
+        send(TipTapEditorCommand("dismissSlashMenu"))
     }
 
     func updateEditorContentGeometry(height: CGFloat, visualContentBottom: CGFloat) {
@@ -846,10 +1522,16 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     func undo() {
+        #if os(iOS)
+        cancelPendingPaste()
+        #endif
         send(TipTapEditorCommand.undo())
     }
 
     func redo() {
+        #if os(iOS)
+        cancelPendingPaste()
+        #endif
         send(TipTapEditorCommand.redo())
     }
 
@@ -858,22 +1540,19 @@ final class TipTapEditorSession: ObservableObject {
               editingEnabled, selectionMode == "off" else { return }
         let generation = loadGeneration
         #if canImport(UIKit)
-        guard webView.window != nil else { return }
+        guard webView.window?.windowScene?.activationState == .foregroundActive, Self.hasPasteboardContent else { return }
+        cancelPendingPaste()
+        let request = pasteRequestID
+        if performPaste(in: webView) { return }
         webView.callAsyncJavaScript("return await window.tiptapCommand('mobilePreparePaste');",
             arguments: [:], in: nil, in: .page) { [weak self, weak webView] result in
-            guard let self, let webView, self.loadGeneration == generation,
+            guard let self, let webView, self.pasteRequestID == request, self.loadGeneration == generation,
                   self.isReady, !self.isLoadingDocument, self.editingEnabled,
-                  self.selectionMode == "off", webView.window != nil else { return }
-            switch result {
-            case .failure(let error): self.bridgeErrorMessage = error.localizedDescription
-            case .success(let focused):
-                let action = #selector(UIResponderStandardEditActions.paste(_:))
-                guard focused as? Bool == true, let responder = self.pasteResponder(in: webView),
-                      responder.canPerformAction(action, withSender: nil),
-                      UIApplication.shared.sendAction(action, to: responder, from: nil, for: nil) else {
-                    self.bridgeErrorMessage = "Paste is not available for the current clipboard content."
-                    return
-                }
+                  self.selectionMode == "off", webView.window?.windowScene?.activationState == .foregroundActive else { return }
+            guard case .success(let focused) = result, focused as? Bool == true,
+                  Self.hasPasteboardContent, self.performPaste(in: webView) else {
+                self.logger.debug("Paste skipped: editor responder or clipboard not available.")
+                return
             }
         }
         #elseif canImport(AppKit)
@@ -891,6 +1570,31 @@ final class TipTapEditorSession: ObservableObject {
     }
 
     #if canImport(UIKit)
+    static var hasPasteboardContent: Bool {
+        let clipboard = UIPasteboard.general
+        return clipboard.hasStrings || clipboard.hasImages || clipboard.hasURLs ||
+            clipboard.types.contains(UTType.html.identifier) || clipboard.types.contains(UTType.fileURL.identifier)
+    }
+
+    func cancelPendingPaste() {
+        pasteRequestID &+= 1
+    }
+
+    func suspendWebInput() {
+        cancelPendingPaste()
+        endWebEditingForSettings()
+        if isReady { send(TipTapEditorCommand("mobileSuspendInput")) }
+        isEditing = false
+        setCaretUpdate(nil)
+    }
+
+    private func performPaste(in webView: WKWebView) -> Bool {
+        let action = #selector(UIResponderStandardEditActions.paste(_:))
+        guard let responder = pasteResponder(in: webView),
+              responder.canPerformAction(action, withSender: nil) else { return false }
+        return UIApplication.shared.sendAction(action, to: responder, from: nil, for: nil)
+    }
+
     private func pasteResponder(in view: UIView) -> UIResponder? {
         if view.isFirstResponder { return view }
         for child in view.subviews {
@@ -910,7 +1614,28 @@ final class TipTapEditorSession: ObservableObject {
             }
 
             let payload = dictionary["payload"] as? [String: Any] ?? [:]
+            if kind == "openingDiagnostic" {
+                if let phase = payload["phase"] as? String, let generation = payload["generation"] as? Int {
+                    switch phase {
+                    case "tiptap-set-content-returned" where generation == loadGeneration:
+                        openingLoadTrace?.event(phase, "loadGeneration=\(generation)")
+                    case "fonts-wait-start", "fonts-wait-completed", "image-decode-start", "image-decode-completed":
+                        if let origin = openingWebTrace, generation == origin.generation {
+                            origin.trace.event(phase, "presentationGeneration=\(origin.generation) currentGeneration=\(presentation.generation) count=\(payload["count"] as? Int ?? -1) fontsLoading=\(payload["fontsLoading"] as? Bool == true) browserMS=\(payload["browserMS"] as? Int ?? -1)")
+                        }
+                    default: break
+                    }
+                }
+                return
+            }
             #if os(iOS)
+            if kind == "blockSelectionState" {
+                guard let count = payload["count"] as? Int, let reportedMode = payload["mode"] as? String else { return }
+                let mode = count > 0 && ["single", "multi"].contains(reportedMode) ? reportedMode : "off"
+                if selectionMode != mode { handle(.selectionModeChanged(mode)) }
+                handle(.blockSelectionChanged(mode == "off" ? 0 : count))
+                return
+            }
             if kind == "blockSelectionDrag" {
                 if let drag = MobileBlockSelectionDrag(payload: payload) { blockSelectionDragUpdates.send(drag) }
                 return
@@ -929,7 +1654,6 @@ final class TipTapEditorSession: ObservableObject {
                 return
             }
             #endif
-            logger.info("📥 TRACE TIPTAP IN kind=\(kind, privacy: .public) payload=\(self.payloadSummary(payload), privacy: .public)")
             if kind == "diag" {
                 let message = payload["message"] as? String ?? ""
                 logger.info("VELLIX-DIAG \(message, privacy: .public)")
@@ -945,17 +1669,26 @@ final class TipTapEditorSession: ObservableObject {
 
     private func handle(_ event: TipTapEditorEvent) {
         switch event {
-        case .tagRequest(let request): tagRequest = request
+        case .tagRequest(let request):
+            guard ownsEditorPresentation == nil || acceptsEditorPresentationRequests else { return }
+            tagRequest = request
         case .editorReady(let blockCount):
             logger.info("VELLIX-OPEN editorReady blocks=\(blockCount)")
             logger.info("⏱️ STARTUP +\(self.startupElapsedMS())ms editor ready blockCount=\(blockCount)")
             isReady = true
+            openingTrace?.event("tiptap-bridge-ready", openingReadinessState(for: openingTrace?.documentID ?? ""))
+            if isStandbyRuntime {
+                PennedDiagnostics.markStartup("editor-standby.ready")
+                return
+            }
+            openingTiming?.mark("editor-bridge-ready")
             if let context = editingContext {
                 configureDocumentContext(documentID: context.documentID, templateID: context.templateID)
             }
-            sendPageReferences()
-            setCollections(collectionPayloads)
-            send(TipTapEditorCommand("setAttachments", args: ["files": attachmentFiles.map(\.object)]))
+            if !preparesInteractivePresentation {
+                sendPageReferences()
+                sendCollections()
+            }
         selectedBlockCount = 0
         selectionMode = "off"
         #if os(iOS)
@@ -976,11 +1709,20 @@ final class TipTapEditorSession: ObservableObject {
                 setAppearance(pendingAppearance)
             }
 
-        case .documentChanged(let json), .documentSnapshot(let json):
-            logger.info("📝 TRACE EVENT documentChanged isLoading=\(self.isLoadingDocument)")
+        case .documentTextChanged(let json), .documentChanged(let json), .documentSnapshot(let json):
+            if let watched = PennedSyncTrace.documentID,
+               (loadedDocumentID ?? pendingDocument?.id ?? recoveryDocument?.id) == watched {
+                let kind: String
+                if case .documentSnapshot = event { kind = "editor.bridgeSnapshot" } else { kind = "editor.bridgeUpdate" }
+                PennedSyncTrace.record(kind,
+                    "accepted=\(isReady && !isLoadingDocument && loadedDocumentID != nil) loading=\(isLoadingDocument) editing=\(isEditing) \(PennedSyncTrace.body(json))")
+            }
             guard isReady, !isLoadingDocument, let loadedDocumentID else {
                 logger.debug("Suppressed programmatic editor change")
                 return
+            }
+            if observedInteractionEnabled, case .documentTextChanged = event {
+                openingTiming?.mark("first-text-bridge-event")
             }
             recoveryDocument = (loadedDocumentID, json)
             onEvent?(event)
@@ -1025,13 +1767,20 @@ final class TipTapEditorSession: ObservableObject {
 
         case .blockSelectionChanged(let count):
             logger.info("🔘 TRACE EVENT blockSelectionChanged count=\(count) previous=\(self.selectedBlockCount)")
-            guard selectedBlockCount != count else {
+            guard selectedBlockCount != count || (count == 0 && selectionMode != "off") else {
                 return
             }
             selectedBlockCount = count
             if count > 0 {
                 isEditing = false
                 slashMenuState = nil
+            } else if selectionMode != "off" {
+                selectionMode = "off"
+                textConversionState = TipTapTextConversionState()
+                #if os(iOS)
+                selectedCollectionBlockIDs = []
+                #endif
+                send(TipTapEditorCommand("clearBlockSelectionIfEmpty"))
             }
             onEvent?(event)
 
@@ -1077,27 +1826,36 @@ final class TipTapEditorSession: ObservableObject {
             logger.info("📊 TRACE EVENT statisticsChanged")
             onEvent?(event)
 
-        case .requestCalloutIconPicker:
-            logger.info("✨ TRACE EVENT requestCalloutIconPicker")
+        case .requestBlockConversion, .requestGridCardSettings, .requestIconCalloutSettings, .requestHeadingLabelSettings, .requestWashiTapeSettings,
+             .requestPageCardSettings, .requestBlockquoteColorPicker,
+             .requestTemplates, .requestAttachment, .requestAttachmentActions, .requestCollection,
+             .requestTemplateComponent, .requestInlinePropertyEditor, .requestNestedPage, .requestPageCard,
+             .requestBlockDeletion, .requestPlaceholderConversion, .requestListGridSettings, .requestTabsSettings,
+             .requestMinimalFieldsSettings, .requestInformationCardSettings, .requestCodeBlockEditor,
+             .requestTableCreation, .requestTableMenu, .requestTaskMenu:
+            guard acceptsEditorPresentationRequests, editingEnabled else { return }
             onEvent?(event)
 
-        case .requestBlockquoteColorPicker, .requestCalloutColorPicker:
+        case .requestPropertyURL, .requestOpenPage, .requestPageActions:
+            guard acceptsEditorPresentationRequests else { return }
             onEvent?(event)
 
-        case .attachmentClipboard, .requestAttachment, .requestAttachmentActions, .importAttachments, .requestCollection, .requestTemplateComponent, .requestInlinePropertyEditor, .requestPropertyURL, .requestNestedPage, .requestPageCard, .requestOpenPage, .requestPageActions, .requestBlockDeletion, .requestPlaceholderConversion:
+        case .requestCalloutColorPicker:
+            break
+
+        case .attachmentClipboard, .importAttachments:
             onEvent?(event)
 
         case .tableDocumentSnapshot, .taskDocumentSnapshot:
             guard isReady, !isLoadingDocument, loadedDocumentID != nil else { return }
             onEvent?(event)
 
-        case .requestTableCreation, .requestTableMenu, .tableStateChanged, .tableFormulaPreview, .tableClipboard,
-             .taskStateChanged, .requestTaskMenu, .requestTaskCompletion:
+        case .tableStateChanged, .tableFormulaPreview, .tableClipboard, .taskStateChanged, .requestTaskCompletion:
             onEvent?(event)
 
         case .slashMenuChanged(let state):
             logger.info("⌘ TRACE EVENT slashMenuChanged visible=\(state != nil) count=\(state?.items.count ?? 0)")
-            if mobileSlashMenuSuppressed, state != nil { return }
+            if state != nil, isLoadingDocument || !editingEnabled || selectionMode != "off" { return }
             slashMenuState = state
             onEvent?(event)
 
@@ -1197,6 +1955,8 @@ final class TipTapEditorSession: ObservableObject {
             "chevright",
             "chevdown",
             "chevup",
+            "indent",
+            "outdent",
             "sparkle",
             "quote",
             "checkwavy",
@@ -1267,9 +2027,13 @@ final class TipTapEditorSession: ObservableObject {
                 return
             }
 
-            if dictionary["type"] as? String == "callout" {
+            if ["callout", "gridCard", "iconCallout"].contains(dictionary["type"] as? String ?? "") {
                 let attrs = dictionary["attrs"] as? [String: Any] ?? [:]
                 icons.insert(normalizedIconName(attrs["icon"] as? String))
+            }
+            if dictionary["type"] as? String == "heading", let attrs = dictionary["attrs"] as? [String: Any],
+               let label = HeadingLabelSettings.configuration(attrs), label.enabled, label.iconEnabled {
+                icons.insert(label.icon)
             }
 
             if let content = dictionary["content"] {
@@ -1293,24 +2057,81 @@ final class TipTapEditorSession: ObservableObject {
 
     private func send(
         _ command: TipTapEditorCommand,
+        file: StaticString = #fileID, line: UInt = #line, function: StaticString = #function,
         completion: ((Result<Void, Error>) -> Void)? = nil
     ) {
+        #if DEBUG && os(iOS)
+        let trace = PennedKeyboardTrace.record("bridge.out", session: self,
+            "command=\(command.name) at=\(file):\(line) \(function)" +
+                (command.name == "setEditable" ? " editableArg=\(command.args["editable"] as? Bool == true) preserveSelection=\(command.args["preservingBlockSelection"] as? Bool == true)" : ""),
+            live: ["blur", "focus", "focusDocumentEnd", "setEditable", "setContent", "setSelectionMode"].contains(command.name))
+        #endif
+        if command.name == "insertBlock", command.args["blockType"] as? String == "tabs" {
+            print("🧩 TABS BRIDGE: sending command to WKWebView")
+        }
         logger.info("📤 TRACE TIPTAP OUT command=\(command.name, privacy: .public) args=\(self.payloadSummary(command.args), privacy: .public)")
+        let openingCommandTrace = openingLoadTrace.flatMap { command.args["openingLoadDiagnosticGeneration"] == nil ? nil : $0 }
         guard let webView else {
+            openingCommandTrace?.event("set-content-not-sent", "reason=webview-unattached")
+            #if DEBUG && os(iOS)
+            if let trace { PennedKeyboardTrace.record("bridge.out.skipped", session: self, "sent_seq=\(trace) reason=unattached") }
+            #endif
             completion?(.failure(VellixError.editorBridge("The editor web view is not attached.")))
             return
         }
 
         // tiptapCommand is async. Evaluating `void tiptapCommand(...)` acknowledges
         // scheduling, not completion, and could expose/capture an empty startup body.
-        webView.callAsyncJavaScript("await window.tiptapCommand(name, args);",
+        // Diagnose Tabs insertion without altering its transaction or document data.
+        // The ordinary bridge discards JavaScript's return value; for Tabs, capture
+        // the actual result and document state before and after the command.
+        let script: String
+        if command.name == "insertBlock", command.args["blockType"] as? String == "tabs" {
+            script = """
+            const editor = window.editor;
+            const before = editor?.state?.doc;
+            const beforeSize = before?.content?.size ?? -1;
+            const beforeBlocks = before?.childCount ?? -1;
+            const beforeJSON = before?.toJSON?.();
+            const countTabs = doc => { let n = 0; doc?.descendants?.(node => { if (node.type.name === 'tabs') n++; }); return n; };
+            const beforeTabs = countTabs(before);
+            try {
+              const accepted = await window.tiptapCommand(name, args);
+              const after = editor?.state?.doc;
+              return { accepted: accepted === true, returned: String(accepted), beforeSize, afterSize: after?.content?.size ?? -1, beforeBlocks, afterBlocks: after?.childCount ?? -1, beforeTabs, afterTabs: countTabs(after), docChanged: before !== after, documentPreserved: beforeJSON ? JSON.stringify(beforeJSON) === JSON.stringify(after?.toJSON?.()) : null };
+            } catch (error) {
+              return { thrown: String(error?.stack || error), beforeSize, beforeBlocks, beforeTabs, afterSize: editor?.state?.doc?.content?.size ?? -1 };
+            }
+            """
+        } else {
+            script = "await window.tiptapCommand(name, args);"
+        }
+        openingCommandTrace?.event("set-content-sent", "loadGeneration=\(loadGeneration)")
+        webView.callAsyncJavaScript(script,
             arguments: ["name": command.name, "args": command.args], in: nil, in: .page) { [weak self] result in
+            #if DEBUG && os(iOS)
+            if let trace {
+                let status: String
+                switch result {
+                case .success: status = "returned"
+                case .failure: status = "failed"
+                }
+                PennedKeyboardTrace.record("bridge.callback", session: self, "sent_seq=\(trace) command=\(command.name) status=\(status)")
+            }
+            #endif
             guard let self else { return }
             switch result {
             case .failure(let error):
+                if command.name == "insertBlock", command.args["blockType"] as? String == "tabs" {
+                    print("🧩 TABS BRIDGE ERROR: \(error.localizedDescription)")
+                }
                 self.logger.error("📤🚨 TRACE TIPTAP OUT failure command=\(command.name, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
                 completion?(.failure(error))
-            case .success:
+            case .success(let value):
+                if command.name == "insertBlock", command.args["blockType"] as? String == "tabs" {
+                    print("🧩 TABS DIAGNOSTIC result=\(String(describing: value))")
+                    self.logger.error("🧩 TABS DIAGNOSTIC result=\(String(describing: value), privacy: .public)")
+                }
                 self.logger.info("📤✅ TRACE TIPTAP OUT success command=\(command.name, privacy: .public)")
                 completion?(.success(()))
             }
@@ -1415,21 +2236,29 @@ final class DocumentEditorModel: ObservableObject {
     }
     @Published private(set) var pageReferenceIDs: Set<String> = []
     @Published var snapshots: [DocumentSnapshotRecord] = []
-    @Published var calloutIconRequest: CalloutIconRequest?
-    @Published var calloutColorRequest: CalloutColorRequest?
+    @Published var gridCardSettingsRequest: GridCardSettingsRequest?
+    @Published var iconCalloutSettingsRequest: IconCalloutSettingsRequest?
+    @Published var washiTapeRequest: WashiTapeRequest?
+    @Published var headingLabelSettingsRequest: HeadingLabelRequest?
     @Published var templateComponentRequest: TemplateComponentRequest?
     @Published var attachmentEditorRequest: AttachmentEditorRequest?
     @Published var attachmentActionRequest: AttachmentActionRequest?
     @Published var blockquoteColorRequest: BlockquoteColorRequest?
-    @Published var propertyEditorRequest: InlinePropertyEditorRequest?
+    let propertyEditorRequests = PassthroughSubject<InlinePropertyEditorRequest, Never>()
     @Published var collectionEditorRequest: CollectionEditorRequest?
+    @Published var templateInsertionRequest: TemplateInsertionRequest?
     @Published var propertyURLRequest: InlinePropertyURLRequest?
-    @Published var nestedPageToOpen: DocumentRecord?
     @Published var nestedPageActionTarget: DocumentRecord?
     @Published var blockDeletionRequest: BlockDeletionRequest?
+    @Published var listGridSettingsRequest: TipTapListGridSettings?
+    @Published var codeBlockEditorRequest: CodeBlockEditorRequest?
+    @Published var tabsSettingsRequest: TipTapTabsSettings?
+    @Published var minimalFieldsSettingsRequest: TipTapMinimalFieldsSettings?
+    @Published var informationCardSettingsRequest: TipTapInformationCardSettings?
     @Published var cardEditorRequest: PageCardEditorRequest?
     @Published var errorMessage: String?
     @Published var placeholderConversionToken: String?
+    @Published var blockConversionRequest: TipTapBlockConversionRequest?
     @Published var tableEditorRequest: TableEditorRequest?
     @Published private(set) var tableContext: TipTapTableContext?
     @Published private(set) var tableFormulaPreview = ""
@@ -1439,13 +2268,18 @@ final class DocumentEditorModel: ObservableObject {
     @Published var taskHistoryRequest: TaskHistorySheetRequest?
     @Published var taskFeedback: String?
     var onChildCreated: ((DocumentRecord) -> Void)?
+    var onOpenNestedPage: ((DocumentRecord) -> Void)?
     var onDocumentSaved: ((DocumentRecord) -> Void)?
     var prepareForSpaceChange: (() throws -> Void)?
 
     private var pendingSaveTask: Task<Void, Never>?
     private var pendingDocumentID: String?
+    private(set) var isReadOnlyWarmup = false
+    private var warmupNeedsReload = false
+    private let pageReferenceLifecycle = PageReferenceLifecycle()
+    private var adoptingSavedCheckpoint = false
     private var latestJSON: String? {
-        didSet { if latestJSON != oldValue { noteTemplateChange() } }
+        didSet { if !adoptingSavedCheckpoint && latestJSON != oldValue { noteTemplateChange() } }
     }
     private var lastAutomaticSnapshotRevision = 0
     private var saveSequence = 0 { didSet { saveGeneration.set(saveSequence) } }
@@ -1466,6 +2300,12 @@ final class DocumentEditorModel: ObservableObject {
         }
     }
 
+    var hasUnsavedLibraryContent: Bool {
+        if pendingDocumentID != nil || !persistentOperations.isEmpty { return true }
+        if case .failed = session.saveState { return true }
+        return false
+    }
+
     func waitForPersistentOperations() async {
         while !persistentOperations.isEmpty {
             await withCheckedContinuation { persistentOperationWaiters.append($0) }
@@ -1479,11 +2319,12 @@ final class DocumentEditorModel: ObservableObject {
     init(
         documentRepository: DocumentRepository,
         snapshotRepository: SnapshotRepository,
-        attachmentStore: AttachmentStore? = nil
+        attachmentStore: AttachmentStore? = nil,
+        runtime: TipTapEditorWebViewStore? = nil
     ) {
-        let session = TipTapEditorSession()
+        let session = runtime?.coordinator.session ?? TipTapEditorSession()
         self.session = session
-        self.webViewStore = TipTapEditorWebViewStore(session: session)
+        self.webViewStore = runtime ?? TipTapEditorWebViewStore(session: session)
         self.documentRepository = documentRepository
         self.snapshotRepository = snapshotRepository
         self.attachmentStore = attachmentStore
@@ -1558,10 +2399,21 @@ final class DocumentEditorModel: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
 
-    func prepare(document record: DocumentRecord) {
-        guard document?.id != record.id else { return }
+    func prepare(document input: DocumentRecord, readOnlyWarmup: Bool = false) {
+        let openingPrewarmedDocument = document?.id == input.id && isReadOnlyWarmup && !readOnlyWarmup
+        guard document?.id != input.id || openingPrewarmedDocument else { return }
 
         flushPendingSave()
+        let record: DocumentRecord
+        do {
+            if readOnlyWarmup { record = input }
+            else { record = try PageReferenceLifecycle.prepareForEditing(input, repository: documentRepository) }
+        }
+        catch { errorMessage = error.localizedDescription; return }
+        let reloadContent = openingPrewarmedDocument && (warmupNeedsReload || latestJSON != record.tipTapJSON)
+        warmupNeedsReload = false
+        isReadOnlyWarmup = readOnlyWarmup
+        pageReferenceLifecycle.reset()
         templateChangeVersion = 0
         confirmedTemplateChangeVersion = nil
         document = record
@@ -1571,15 +2423,16 @@ final class DocumentEditorModel: ObservableObject {
         attachmentEditorRequest = nil
         attachmentActionRequest = nil
         templateComponentRequest = nil
+        templateInsertionRequest = nil
         placeholderConversionToken = nil
         templateNeedsSave = record.templateID != nil
         session.configureDocumentContext(documentID: record.id, templateID: record.templateID)
         latestJSON = record.tipTapJSON
         pageReferenceIDs = TipTapContentAnalyzer.pageReferenceIDs(in: record.tipTapJSON)
         session.saveState = .saved(record.updatedAt)
-        session.load(documentID: record.id, canonicalJSON: record.tipTapJSON)
-        refreshLibraryContext()
+        refreshLibraryContext(currentDocument: record)
         session.setAppearance(appearance)
+        session.load(documentID: record.id, canonicalJSON: record.tipTapJSON, force: reloadContent)
     }
 
     func rename(title: String) {
@@ -1689,7 +2542,7 @@ final class DocumentEditorModel: ObservableObject {
     }
 
     func saveCurrentContent() throws {
-        guard let document else { return }
+        guard !isReadOnlyWarmup, let document else { return }
         pendingSaveTask?.cancel()
         saveSequence += 1
         let repository = documentRepository, json = latestJSON ?? document.tipTapJSON
@@ -1700,10 +2553,78 @@ final class DocumentEditorModel: ObservableObject {
         onDocumentSaved?(updated)
     }
 
-    func captureAndSave(suspendingEditing: Bool = false) async throws {
+    func captureAndSave(suspendingEditing: Bool = false, preservingBlockSelection: Bool = false) async throws {
+        guard !isReadOnlyWarmup else { return }
+        if PennedSyncTrace.documentID == document?.id {
+            PennedSyncTrace.record("editor.captureAndSave", "suspendingEditing=\(suspendingEditing) ready=\(session.isReady)")
+        }
         let operation = beginPersistentOperation()
         defer { endPersistentOperation(operation) }
-        if let json = try await session.currentJSON(suspendingEditing: suspendingEditing) { latestJSON = json }
+        if let json = try await session.currentJSON(suspendingEditing: suspendingEditing,
+                                                    preservingBlockSelection: preservingBlockSelection) { latestJSON = json }
+        try saveCurrentContent()
+    }
+
+    func saveGridCard(_ request: GridCardSettingsRequest, settings: GridCardSettings) async throws {
+        let operation = beginPersistentOperation()
+        defer { endPersistentOperation(operation) }
+        latestJSON = try await session.commitGridCard(request, settings: settings, documentID: documentID)
+        try saveCurrentContent()
+    }
+
+    func saveIconCallout(_ request: IconCalloutSettingsRequest, settings: IconCalloutSettings, text: String?, data: Data?) async throws {
+        let operation = beginPersistentOperation()
+        defer { endPersistentOperation(operation) }
+        let id = documentID
+        guard !isReadOnlyWarmup, !id.isEmpty, iconCalloutSettingsRequest?.id == request.id,
+              session.editingEnabled, session.isReady, !session.isLoadingDocument else {
+            throw VellixError.editorBridge("This document is no longer open for editing.")
+        }
+        var draft = settings
+        if let data {
+            guard let attachmentStore else { throw VellixError.attachmentImport("The icon image store is unavailable.") }
+            let repository = documentRepository.attachmentRepository(store: attachmentStore)
+            let file = try repository.importData(data, originalFileName: "Callout Icon.png", mimeType: "image/png", documentID: id)
+            draft.imagePath = file.relativePath
+            session.refreshAttachments(documentID: id, json: latestJSON ?? document?.tipTapJSON ?? "")
+        }
+        latestJSON = try await session.commitIconCallout(request, settings: draft, text: text, documentID: id)
+        try saveCurrentContent()
+    }
+
+    func saveWashiTape(_ request: WashiTapeRequest, imagePath: String?, photo: CardRemotePhoto?, data: Data?, tapeSize: WashiTapeSize) async throws {
+        let operation = beginPersistentOperation()
+        defer { endPersistentOperation(operation) }
+        let id = documentID
+        if let photo, photo.id != request.remotePhoto?.id {
+            try await CardPhotoService().trackSelection(photo)
+        }
+        guard document?.id == id, washiTapeRequest?.id == request.id, session.editingEnabled, session.isReady, !session.isLoadingDocument else {
+            throw VellixError.editorBridge("This document is no longer open for editing.")
+        }
+        var path = imagePath
+        if let data {
+            guard let attachmentStore else { throw VellixError.attachmentImport("The tape image store is unavailable.") }
+            let repository = documentRepository.attachmentRepository(store: attachmentStore)
+            let file = try repository.importData(data, originalFileName: "Washi Tape.png", mimeType: "image/png", documentID: id)
+            path = file.relativePath
+            session.refreshAttachments(documentID: id, json: latestJSON ?? document?.tipTapJSON ?? "")
+        }
+        latestJSON = try await session.commitWashiTape(request, imagePath: path, photo: photo, tapeSize: tapeSize, documentID: id)
+        try saveCurrentContent()
+    }
+
+    func saveHeadingLabel(_ request: HeadingLabelRequest, settings: HeadingLabelSettings, text: String) async throws {
+        let operation = beginPersistentOperation()
+        defer { endPersistentOperation(operation) }
+        latestJSON = try await session.commitHeadingLabel(request, settings: settings, text: text, documentID: documentID)
+        try saveCurrentContent()
+    }
+
+    func saveCodeBlock(_ request: CodeBlockEditorRequest, draft: CodeBlockConfiguration) async throws {
+        let operation = beginPersistentOperation()
+        defer { endPersistentOperation(operation) }
+        latestJSON = try await session.commitCodeBlock(request, draft: draft, documentID: documentID)
         try saveCurrentContent()
     }
 
@@ -1752,7 +2673,20 @@ final class DocumentEditorModel: ObservableObject {
     }
 
     private func handle(_ event: TipTapEditorEvent) {
+        if isReadOnlyWarmup {
+            switch event {
+            case .documentTextChanged(let json), .documentChanged(let json), .documentSnapshot(let json),
+                 .taskDocumentSnapshot(let json), .tableDocumentSnapshot(let json):
+                if json != latestJSON { warmupNeedsReload = true }
+            case .editorError(let message): errorMessage = message
+            default: break
+            }
+            return
+        }
         switch event {
+        case .requestTemplates(let token):
+            guard session.isReady, !session.isLoadingDocument, session.editingEnabled, !documentID.isEmpty else { return }
+            templateInsertionRequest = TemplateInsertionRequest(documentID: documentID, token: token)
         case .attachmentClipboard(let token, let html, let text):
             #if canImport(UIKit)
             UIPasteboard.general.items = [["public.html": Data(html.utf8), "public.utf8-plain-text": text]]
@@ -1786,7 +2720,7 @@ final class DocumentEditorModel: ObservableObject {
         case .taskStateChanged(let context): taskContext = context
         case .requestTaskMenu(let context):
             taskContext = context
-            taskEditorRequest = TaskEditorRequest(context: context)
+            openTaskScheduling()
         case .requestTaskCompletion(let context, let completed, let skipped):
             guard let task = context.metadata else { return }
             do {
@@ -1800,7 +2734,7 @@ final class DocumentEditorModel: ObservableObject {
             }
         case .tableDocumentSnapshot(let json), .taskDocumentSnapshot(let json):
             latestJSON = json
-            pageReferenceIDs = TipTapContentAnalyzer.pageReferenceIDs(in: json)
+            updatePageReferences(from: json)
             pendingDocumentID = document?.id
             do {
                 try saveCurrentContent()
@@ -1818,10 +2752,14 @@ final class DocumentEditorModel: ObservableObject {
             NSPasteboard.general.setString(text, forType: .string)
             #endif
             if cut { session.tableAction("clearContents", tableID: tableContext?.tableID) }
+        case .documentTextChanged(let json):
+            // The web editor already debounced this text-only checkpoint.
+            // Its block references and asset paths did not change.
+            if latestJSON != json { scheduleSave(json, immediate: true, reconcileReferences: false) }
         case .documentChanged(let json):
             // EditorAttachment.paths parses and walks the entire document. Skip that
             // whole-document work when the payload cannot reference an attachment.
-            if json.contains("attachment") || json.contains("clipSource"),
+            if json.contains("attachment") || json.contains("clipSource") || json.contains("\"iconCallout\""),
                !EditorAttachment.paths(in: json).isSubset(of: Set(session.attachmentFiles.map { $0.record.relativePath })) {
                 session.refreshAttachments(documentID: documentID, json: json)
             }
@@ -1836,18 +2774,58 @@ final class DocumentEditorModel: ObservableObject {
         case .requestPlaceholderConversion(let token):
             guard document?.templateID != nil, session.templateEditing, session.placeholderMode else { return }
             placeholderConversionToken = token
-        case .requestCalloutIconPicker(let blockID, let icon, let color):
-            calloutIconRequest = CalloutIconRequest(blockID: blockID, icon: icon, color: color)
-        case .requestCalloutColorPicker(let blockID, let color):
-            calloutColorRequest = CalloutColorRequest(blockID: blockID, color: color)
+        case .requestGridCardSettings(let request):
+            gridCardSettingsRequest = request
+        case .requestIconCalloutSettings(let request):
+            session.endWebEditingForSettings()
+            iconCalloutSettingsRequest = request
+        case .requestWashiTapeSettings(let request):
+            guard session.editingEnabled, session.selectionMode == "off" else { return }
+            session.endWebEditingForSettings()
+            washiTapeRequest = request
+        case .requestHeadingLabelSettings(let request):
+            session.endWebEditingForSettings()
+            headingLabelSettingsRequest = request
         case .requestBlockquoteColorPicker(let blockID, let color):
             blockquoteColorRequest = BlockquoteColorRequest(blockID: blockID, color: color)
-        case .requestInlinePropertyEditor(let blockID, let property):
-            propertyEditorRequest = InlinePropertyEditorRequest(blockID: blockID, property: property)
+        case .requestInlinePropertyEditor(let blockID, let property, let resumeEditing):
+            propertyEditorRequests.send(InlinePropertyEditorRequest(blockID: blockID, property: property, resumeEditing: resumeEditing))
         case .requestCollection(let request):
             collectionEditorRequest = request
         case .requestPropertyURL(let url):
             propertyURLRequest = InlinePropertyURLRequest(url: url)
+        case .requestBlockConversion(let request):
+            if request.target == "link" || request.target == "file" {
+                blockConversionRequest = request
+            } else if ["nestedPage", "pageCard"].contains(request.target) {
+                if !request.documentIDs.isEmpty {
+                    do {
+                        let pages = try documentRepository.setNestedPageCardPresentation(parentID: documentID,
+                            documentIDs: request.documentIDs, asCard: request.target == "pageCard")
+                        refreshRelated()
+                        for page in pages { onDocumentSaved?(page) }
+                    } catch { errorMessage = error.localizedDescription }
+                } else if let json = request.canonicalJSON, let parent = document {
+                    Task { @MainActor in
+                        let operation = beginPersistentOperation()
+                        defer { endPersistentOperation(operation) }
+                        do {
+                            let child = try await PageReferenceLifecycle.createGroupedChild(json: json, parent: parent,
+                                repository: documentRepository) { childID in
+                                if request.target == "pageCard" {
+                                    _ = try self.documentRepository.setNestedPageCardPresentation(parentID: parent.id,
+                                        documentIDs: [childID], asCard: true)
+                                }
+                                guard self.document?.id == parent.id, self.session.renderedDocumentID == parent.id else { return false }
+                                return try await self.session.attachmentCommand("finishBlockConversionPage",
+                                    args: ["token": request.token, "documentID": childID]) as? Bool == true
+                            }
+                            refreshRelated()
+                            onChildCreated?(try documentRepository.requireDocument(id: child.id))
+                        } catch { refreshRelated(); errorMessage = error.localizedDescription }
+                    }
+                }
+            }
         case .requestNestedPage(let blockID):
             guard !blockID.isEmpty else { return }
             let child = createChild()
@@ -1869,15 +2847,39 @@ final class DocumentEditorModel: ObservableObject {
             refreshRelated()
             guard let child = children.first(where: { $0.id == documentID }),
                   child.parentDocumentID == document?.id else { return }
-            nestedPageToOpen = child
+            onOpenNestedPage?(child)
         case .requestPageActions(let documentID):
             guard let child = children.first(where: { $0.id == documentID }),
                   child.parentDocumentID == document?.id else { return }
             nestedPageActionTarget = child
-        case .requestBlockDeletion(let token):
+        case .requestPageCardSettings(let documentID):
+            guard cardEditorRequest == nil, let child = children.first(where: { $0.id == documentID }),
+                  child.parentDocumentID == document?.id, !child.isTrashed else { return }
+            session.endWebEditingForSettings()
+            editPageCard(child)
+        case .requestBlockDeletion(let token, _, _):
             blockDeletionRequest = BlockDeletionRequest(documentID: documentID, token: token)
-        case .selectedBlocksForSubpage(let title, let json):
-            createChildFromSelectedBlocks(title: title, canonicalJSON: json)
+        case .requestListGridSettings(let settings):
+            guard listGridSettingsRequest == nil, session.editingEnabled, session.selectionMode == "off",
+                  session.renderedDocumentID == documentID else { return }
+            session.endWebEditingForSettings()
+            listGridSettingsRequest = settings
+        case .requestCodeBlockEditor(let request):
+            session.endWebEditingForSettings()
+            codeBlockEditorRequest = request
+        case .requestTabsSettings(let settings):
+            guard tabsSettingsRequest == nil else { return }
+            session.endWebEditingForSettings()
+            tabsSettingsRequest = settings
+        case .requestInformationCardSettings(let settings):
+            session.endWebEditingForSettings()
+            informationCardSettingsRequest = settings
+        case .requestMinimalFieldsSettings(let settings):
+            session.endWebEditingForSettings()
+            minimalFieldsSettingsRequest = settings
+        case .selectedBlocksForSubpage(let token, let json):
+            let parentID = documentID
+            Task { await createChildFromSelectedBlocks(token: token, parentID: parentID, canonicalJSON: json) }
         default:
             break
         }
@@ -1889,6 +2891,7 @@ final class DocumentEditorModel: ObservableObject {
 
     func openTaskScheduling() {
         guard let context = taskContext else { return }
+        session.endWebEditingForSettings()
         taskEditorRequest = TaskEditorRequest(context: context)
     }
 
@@ -1943,6 +2946,42 @@ final class DocumentEditorModel: ObservableObject {
         pendingCardBlockID = nil
     }
 
+    func clearEditorPresentationRequests() {
+        session.cancelBlockConversion()
+        func clear<Value>(_ keyPath: ReferenceWritableKeyPath<DocumentEditorModel, Value?>) {
+            if self[keyPath: keyPath] != nil { self[keyPath: keyPath] = nil }
+        }
+        session.tagRequest = nil
+        clear(\.gridCardSettingsRequest)
+        clear(\.iconCalloutSettingsRequest)
+        clear(\.washiTapeRequest)
+        clear(\.headingLabelSettingsRequest)
+        clear(\.blockquoteColorRequest)
+        clear(\.templateComponentRequest)
+        clear(\.templateInsertionRequest)
+        clear(\.attachmentEditorRequest)
+        clear(\.attachmentActionRequest)
+        clear(\.collectionEditorRequest)
+        clear(\.propertyURLRequest)
+        clear(\.nestedPageActionTarget)
+        if let request = blockDeletionRequest { session.dismissBlockActions(requestToken: request.token) }
+        clear(\.blockDeletionRequest)
+        clear(\.listGridSettingsRequest)
+        clear(\.codeBlockEditorRequest)
+        clear(\.tabsSettingsRequest)
+        clear(\.minimalFieldsSettingsRequest)
+        clear(\.informationCardSettingsRequest)
+        if cardEditorRequest != nil { cancelCardInsertion() }
+        clear(\.cardEditorRequest)
+        if placeholderConversionToken != nil { session.cancelPlaceholderConversion() }
+        clear(\.placeholderConversionToken)
+        clear(\.blockConversionRequest)
+        if tableEditorRequest != nil { session.tableAction("close") }
+        clear(\.tableEditorRequest)
+        clear(\.taskEditorRequest)
+        clear(\.taskHistoryRequest)
+    }
+
     func savePageCard(request: PageCardEditorRequest, style: PageCardStyle, imageData: Data?) async throws {
         let operation = beginPersistentOperation()
         defer { endPersistentOperation(operation) }
@@ -1988,44 +3027,40 @@ final class DocumentEditorModel: ObservableObject {
         }
     }
 
-    private func createChildFromSelectedBlocks(title: String, canonicalJSON: String) {
-        guard let document else {
-            return
-        }
-
+    private func createChildFromSelectedBlocks(token: String, parentID: String, canonicalJSON: String) async {
+        guard let document, document.id == parentID, session.renderedDocumentID == parentID, !session.isLoadingDocument else { return }
+        let operation = beginPersistentOperation()
+        defer { endPersistentOperation(operation) }
         do {
-            let child = try documentRepository.create(
-                DocumentDraft(
-                    title: title.trimmedNonEmpty ?? "New Sub Page",
-                    spaceID: document.spaceID,
-                    folderID: document.folderID,
-                    parentDocumentID: document.id,
-                    tipTapJSON: canonicalJSON
-                )
-            )
-            for pageID in TipTapContentAnalyzer.pageReferenceIDs(in: canonicalJSON) {
-                guard let page = try documentRepository.document(id: pageID), page.parentDocumentID == document.id else { continue }
-                _ = try documentRepository.move(id: page.id, spaceID: page.spaceID, folderID: page.folderID, parentDocumentID: child.id)
+            let child = try await PageReferenceLifecycle.createGroupedChild(json: canonicalJSON,
+                parent: document, repository: documentRepository) { childID in
+                try await self.session.placeGroupedPage(token: token, documentID: childID, parentID: document.id)
             }
-            session.deleteSelectedBlocks()
             refreshRelated()
             onChildCreated?(child)
         } catch {
+            refreshRelated()
             errorMessage = error.localizedDescription
         }
     }
 
-    private func scheduleSave(_ json: String, immediate: Bool = false) {
-        guard let document else {
-            print("💾 TRACE MODEL scheduleSave ignored no document")
-            return
-        }
+    private func updatePageReferences(from json: String) {
+        let next = TipTapContentAnalyzer.pageReferenceIDs(in: json)
+        guard next != pageReferenceIDs else { return }
+        do {
+            try pageReferenceLifecycle.reconcile(previous: pageReferenceIDs, next: next,
+                parentID: documentID, repository: documentRepository)
+        } catch { errorMessage = error.localizedDescription }
+        pageReferenceIDs = next
+        refreshRelated()
+    }
 
-        print("💾 TRACE MODEL scheduleSave id=\(document.id) bytes=\(json.count) immediate=\(immediate)")
+    private func scheduleSave(_ json: String, immediate: Bool = false, reconcileReferences: Bool = true) {
+        guard let document else { return }
         latestJSON = json
-        pageReferenceIDs = TipTapContentAnalyzer.pageReferenceIDs(in: json)
+        if reconcileReferences { updatePageReferences(from: json) }
         pendingDocumentID = document.id
-        session.saveState = .unsaved
+        if !immediate, session.saveState != .unsaved { session.saveState = .unsaved }
         pendingSaveTask?.cancel()
 
         pendingSaveTask = Task { [weak self] in
@@ -2040,11 +3075,7 @@ final class DocumentEditorModel: ObservableObject {
     }
 
     private func savePending() {
-        guard let id = pendingDocumentID, let json = latestJSON else {
-            print("💾 TRACE MODEL savePending ignored no pending")
-            return
-        }
-        print("💾 TRACE MODEL savePending id=\(id) bytes=\(json.count)")
+        guard let id = pendingDocumentID, let json = latestJSON else { return }
         persistEditorJSON(documentID: id, canonicalJSON: json)
         pendingDocumentID = nil
     }
@@ -2058,8 +3089,7 @@ final class DocumentEditorModel: ObservableObject {
         let operation = beginPersistentOperation()
         let generation = saveGeneration
 
-        session.saveState = .saving
-        print("💾 TRACE MODEL persist start id=\(documentID) sequence=\(sequence) bytes=\(canonicalJSON.count)")
+        if session.saveState != .saving { session.saveState = .saving }
 
         persistenceQueue.async { [weak self] in
             guard generation.isCurrent(sequence) else {
@@ -2091,36 +3121,40 @@ final class DocumentEditorModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 defer { self.endPersistentOperation(operation) }
-                self.finishEditorSave(result, sequence: sequence)
+                self.finishEditorSave(result, sequence: sequence, submittedJSON: canonicalJSON)
             }
         }
     }
 
     private func finishEditorSave(
         _ result: Result<EditorSaveResult, Error>,
-        sequence: Int
+        sequence: Int,
+        submittedJSON: String
     ) {
-        guard sequence == saveSequence else {
-            print("💾 TRACE MODEL finish stale sequence=\(sequence) current=\(saveSequence)")
-            return
-        }
+        guard sequence == saveSequence else { return }
 
         switch result {
         case .success(let saveResult):
-            guard document?.id == saveResult.document.id else {
-                print("💾 TRACE MODEL finish ignored different document id=\(saveResult.document.id)")
-                return
+            guard document?.id == saveResult.document.id else { return }
+            if latestJSON == submittedJSON {
+                // Do not let an older save overwrite text from a newer checkpoint.
+                adoptingSavedCheckpoint = true
+                latestJSON = saveResult.document.tipTapJSON
+                adoptingSavedCheckpoint = false
             }
-            print("💾 TRACE MODEL finish success id=\(saveResult.document.id) sequence=\(sequence)")
             if let snapshotRevision = saveResult.snapshotRevision {
                 lastAutomaticSnapshotRevision = snapshotRevision
             }
-            document = saveResult.document
-            onDocumentSaved?(saveResult.document)
-            session.saveState = .saved(saveResult.document.updatedAt)
+            if document != saveResult.document {
+                document = saveResult.document
+                onDocumentSaved?(saveResult.document)
+            }
+            session.saveState = pendingDocumentID == nil ? .saved(saveResult.document.updatedAt) : .unsaved
 
         case .failure(let error):
             print("💾🚨 TRACE MODEL finish failure sequence=\(sequence) error=\(error.localizedDescription)")
+            // A later flush may retry the latest snapshot after a transient failure.
+            if pendingDocumentID == nil, latestJSON == submittedJSON { pendingDocumentID = document?.id }
             session.saveState = .failed(error.localizedDescription)
             errorMessage = error.localizedDescription
         }
@@ -2137,10 +3171,10 @@ final class DocumentEditorModel: ObservableObject {
         return contentChanged
     }
 
-    func refreshLibraryContext() {
+    func refreshLibraryContext(currentDocument: DocumentRecord? = nil) {
         guard let document else { return }
         do {
-            let current = try documentRepository.requireDocument(id: document.id)
+            let current = try currentDocument ?? documentRepository.requireDocument(id: document.id)
             historyPageTask = try documentRepository.taskForHistoryPage(id: document.id)
             if DocumentTaskPages.isManaged(document.id), current.tipTapJSON != (latestJSON ?? document.tipTapJSON) {
                 if session.isReady && !session.isLoadingDocument { session.refreshTaskHistory(current.tipTapJSON) }
@@ -2171,6 +3205,9 @@ final class DocumentEditorModel: ObservableObject {
         guard let document else { return }
         let current = try documentRepository.requireDocument(id: document.id)
         let contentChanged = latestJSON != current.tipTapJSON
+        #if DEBUG && os(iOS)
+        PennedKeyboardTrace.record("sync.reloadAfterLibrarySync", session: session, "contentChanged=\(contentChanged)", live: true)
+        #endif
         discardPendingSave()
         self.document = current
         latestJSON = current.tipTapJSON
@@ -2222,13 +3259,6 @@ private struct TemplatePageSaveContent: Equatable {
     }
 }
 
-struct CalloutIconRequest: Identifiable, Equatable {
-    let id = UUID()
-    var blockID: String
-    var icon: String
-    var color: String
-}
-
 struct BlockDeletionRequest: Equatable {
     let documentID: String
     let token: String
@@ -2237,12 +3267,6 @@ struct BlockDeletionRequest: Equatable {
 struct BlockquoteColorRequest: Identifiable, Equatable {
     let id = UUID()
     var blockID: String
-    var color: String
-}
-
-struct CalloutColorRequest: Identifiable, Equatable {
-    let id = UUID()
-    var blockID: String?
     var color: String
 }
 

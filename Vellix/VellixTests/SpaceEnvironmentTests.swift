@@ -239,14 +239,14 @@ struct SpaceEnvironmentTests {
         let second = try app.spaces.create(title: "Empty")
         app.refresh()
         try await app.switchSpace(to: second.id)
-        #expect(app.overview.all.isEmpty && app.overview.recent.isEmpty && app.overview.favorites.isEmpty)
+        #expect(app.topLevelDocumentSummaries.isEmpty && app.overview.recent.isEmpty && app.overview.favorites.isEmpty)
         #expect(app.overview.templates.isEmpty && app.overview.folders.isEmpty && app.overview.trashed.isEmpty)
         #expect(app.overview.templateDocuments.isEmpty)
         app.selectedDestination = .templates
         app.selectedDestination = .home
         #expect(app.selectedSpaceID == second.id)
         try await app.switchSpace(to: first)
-        #expect(app.overview.all.first?.id == page.id)
+        #expect(app.topLevelDocumentSummaries.first?.id == page.id)
         #expect(app.overview.templates.count == 1 && app.overview.folders.count == 1)
         #expect(app.overview.templateDocuments.count == 1)
         #expect(app.overview.templateDocuments.values.allSatisfy { $0.spaceID == first })
@@ -308,11 +308,11 @@ struct SpaceEnvironmentTests {
         let app = try environment()
         let first = try #require(app.selectedSpaceID)
         try await app.archiveSpace(first, archived: true)
-        #expect(app.selectedSpaceID != first && app.overview.all.isEmpty)
+        #expect(app.selectedSpaceID != first && app.topLevelDocumentSummaries.isEmpty)
         try await app.archiveSpace(first, archived: false)
         try await app.switchSpace(to: first)
         try await app.deleteSpace(first)
-        #expect(app.selectedSpaceID != first && app.overview.all.isEmpty)
+        #expect(app.selectedSpaceID != first && app.topLevelDocumentSummaries.isEmpty)
         #expect(try app.spaces.space(id: first) == nil)
     }
 

@@ -51,7 +51,6 @@ struct SearchResultRow: View {
 
     var body: some View {
         HStack(spacing: VellixSpacing.md) {
-            IconTile(systemName: result.icon, size: 38, tint: result.isFavorite ? VellixSurface.gold : VellixSurface.accent)
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Text(result.title)

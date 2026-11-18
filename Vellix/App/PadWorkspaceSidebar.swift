@@ -27,9 +27,9 @@ struct PadWorkspaceSidebar: View {
                         destination(.library(.allDocuments))
                         destination(.tasks)
                         destination(.library(.calendar))
+                        destination(.library(.dailyNotes))
+                        destination(.library(.connect))
                         destination(.collections)
-                        destination(.library(.home))
-                        destination(.library(.recents))
                         destination(.library(.templates))
                     }
                     VStack(alignment: .leading, spacing: 4) {
@@ -38,12 +38,12 @@ struct PadWorkspaceSidebar: View {
                             ForEach(environment.overview.favorites.prefix(showingAllStarred ? environment.overview.favorites.count : 8)) { document in
                                 Button { open(document) } label: {
                                     HStack(spacing: 12) {
-                                        LibraryDocumentPreview(document: document, fixedAspectRatio: 0.72, showsStar: false, cornerRadius: 2).frame(width: 20)
+                                        LibraryDocumentCell(summary: document, fixedAspectRatio: 0.72, showsStar: false, cornerRadius: 2).frame(width: 20)
                                         Text(document.title).lineLimit(1)
                                         Spacer(minLength: 0)
                                     }.padding(.horizontal, 12).frame(minHeight: 44).contentShape(Rectangle())
                                 }.contextMenu {
-                                    DocumentContextMenu(document: document)
+                                    DocumentSummaryContextMenu(summary: document)
                                 }
                             }
                             if environment.overview.favorites.isEmpty { emptyLabel("No starred documents") }
@@ -100,17 +100,16 @@ struct PadWorkspaceSidebar: View {
                 HStack(spacing: 0) {
                     Button { perform { try await workspace.selectTab(tab.id) } } label: {
                         HStack(spacing: 12) {
-                            LibraryIcon(name: tab.location.documentID.flatMap { environment.editorCache.model(for: $0)?.document?.icon }
-                                ?? tab.location.destination.icon, size: 20)
+                            LibraryIcon(name: tab.location.documentID == nil ? tab.location.destination.icon : "linedpages", size: 20)
                             Text(workspace.title(for: tab)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                         }.padding(.leading, 12).frame(minHeight: 44).contentShape(Rectangle())
                     }
-                    PadIconButton("Close \(workspace.title(for: tab))", icon: "xmarkwavy") {
+                    PadIconButton("Close \(workspace.title(for: tab))", icon: "xmarkwavy", backgroundSize: 28) {
                         perform { try await workspace.closeTab(tab.id) }
                     }
                 }
                 .foregroundStyle(workspace.activeID == tab.id ? VellixSurface.violet : VellixSurface.ink)
-                .background(workspace.activeID == tab.id ? VellixSurface.activeTab : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                .background(workspace.activeID == tab.id ? VellixSurface.controlInk.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
                 .accessibilityAddTraits(workspace.activeID == tab.id ? .isSelected : [])
                 .accessibilityIdentifier("ipad-tab-\(tab.id)")
                 .contextMenu {
@@ -130,7 +129,7 @@ struct PadWorkspaceSidebar: View {
                     HStack(spacing: 12) {
                         SpaceImage(space: environment.activeSpace, size: 28)
                         Text(environment.activeSpace?.title ?? "Space").lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                        LibraryIcon(name: "chevdown", size: 12)
+                        LibraryIcon(name: "chevdown", size: 19)
                     }.frame(minHeight: 44)
                 }.accessibilityLabel("Switch Space")
                 Menu {
@@ -194,7 +193,7 @@ struct PadWorkspaceSidebar: View {
                 HStack(spacing: 10) {
                     LibraryFolderIcon(folder: folder, size: 20)
                     Text(folder.title).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                    Text(String(FolderHierarchy(folders: environment.overview.folders).itemCount(in: folder.id, documents: environment.overview.all)))
+                    Text(String(FolderHierarchy(folders: environment.overview.folders).children(of: folder.id).count + ((try? environment.documents.folderSummaryCount(folderID: folder.id)) ?? 0)))
                         .font(.caption).foregroundStyle(.secondary)
                 }.padding(.leading, 12 + CGFloat(min(depth, 6)) * 16).frame(minHeight: 44).contentShape(Rectangle())
             }
@@ -213,7 +212,18 @@ struct PadWorkspaceSidebar: View {
     }
 
     private func emptyLabel(_ text: String) -> some View { Text(text).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 8) }
-    private func open(_ document: DocumentRecord) { perform { try await workspace.openDocument(document) } }
+    private func open(_ summary: DocumentSummary) {
+        let trace = environment.traceDocumentCardTap(id: summary.id, source: "ipad-sidebar-starred", workspaceBusy: workspace.isBusy)
+        perform { try await workspace.openDocument(id: summary.id, openingTrace: trace) }
+    }
+    private func open(_ document: DocumentRecord) {
+        print("🛠️ PENNED-OPEN sidebar tap id=\(document.id) busy=\(workspace.isBusy) selected=\(environment.selectedDocumentID ?? "nil")")
+        perform {
+            print("🛠️ PENNED-OPEN sidebar task-start id=\(document.id)")
+            try await workspace.openDocument(document)
+            print("🛠️ PENNED-OPEN sidebar task-finished id=\(document.id) selected=\(environment.selectedDocumentID ?? "nil")")
+        }
+    }
     private func navigate(_ destination: PadWorkspaceDestination, folder: String? = nil) {
         perform { try await workspace.navigate(destination, folderID: folder) }
     }

@@ -578,6 +578,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = CFA16D88301AC183007825F0 /* Build configuration list for PBXNativeTarget "Vellix" */;
 			buildPhases = (
+				A10C0DE700000000FACE0001 /* Generate Icon Library */,
 				CFA16D63301AC182007825F0 /* Sources */,
 				CFA16D64301AC182007825F0 /* Frameworks */,
 				CFA16D65301AC182007825F0 /* Resources */,
@@ -793,6 +794,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A10C0DE700000000FACE0001 /* Generate Icon Library */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Generate Icon Library";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"${SRCROOT}/Scripts/generate_icon_library.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		CF8C0EA3308548190058BF74 /* Sources */ = {
@@ -1306,6 +1329,7 @@
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = YES;
 				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
 				ENABLE_RESOURCE_ACCESS_USB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Vellix/Resources/LaunchInfo.plist;
@@ -1376,6 +1400,7 @@
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = YES;
 				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
 				ENABLE_RESOURCE_ACCESS_USB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Vellix/Resources/LaunchInfo.plist;

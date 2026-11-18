@@ -57,7 +57,12 @@ struct MacDocumentEditorContainer: View {
             guard active, let document else { return }
             model.nestedPageToOpen = nil; workspace.perform { try await workspace.open(document) }
         }
-        .onDisappear { persistTitle(); model.session.pauseAttachmentPlayback(); model.flushPendingSave() }
+        .onDisappear {
+            persistTitle()
+            model.session.pauseAttachmentPlayback()
+            model.session.resetTabsNavigation()
+            model.flushPendingSave()
+        }
     }
     private var toolbar: some View {
         HStack(spacing: 8) {
@@ -126,7 +131,9 @@ private struct MacDocumentSurface: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                DocumentStyleSurface(style: appearance.editorBackground, store: environment.attachmentStore, theme: appearance.themeID)
+                if !model.appearance.followsApplicationAppearance(.backdrop) {
+                    DocumentStyleSurface(style: appearance.editorBackground, store: environment.attachmentStore, theme: appearance.themeID)
+                }
                 ScrollView {
                     if let document = model.document {
                         VStack(alignment: .leading, spacing: 18) {
@@ -144,7 +151,8 @@ private struct MacDocumentSurface: View {
                                     TaskHistoryPageHeader(task: task, appearance: appearance, title: $title,
                                         saveTitle: { model.rename(title: $0) }, titleFocused: titleFocused, titleSize: 24, locked: locked)
                                 } else {
-                                TextField("Untitled", text: $title.singleLinePageTitle(onReturn: { titleFocused.wrappedValue = false }), axis: .vertical).textFieldStyle(.plain)
+                                TextField(document.title.isEmpty ? "" : "Untitled", text: $title.singleLinePageTitle(onReturn: { titleFocused.wrappedValue = false }), axis: .vertical).textFieldStyle(.plain)
+                                    .accessibilityLabel("Page title")
                                     .font(appearance.fontStyle.font(size: 24, weight: .black))
                                     .foregroundStyle(Color(vellixHex: appearance.textColorHex)).focused(titleFocused)
                                     .lineLimit(nil).fixedSize(horizontal: false, vertical: true).layoutPriority(1)
@@ -152,22 +160,27 @@ private struct MacDocumentSurface: View {
                                     .onKeyPress(.return) { titleFocused.wrappedValue = false; model.rename(title: title); return .handled }
                                     .disabled(locked)
                                 }
-                                MacIconButton("Document Icon", icon: document.icon ?? "linedpages") { workspace.showIconPicker = true }
-                                    .foregroundStyle(Color(vellixHex: appearance.textColorHex))
                             }
                             Rectangle().fill(Color(vellixHex: appearance.textColorHex).opacity(0.1)).frame(height: 1)
                             CollectionDocumentFields(store: environment.collections, documentID: document.id, appearance: appearance, onBeginEditing: {})
+                            if environment.collections.entryContext(document.id) != nil {
+                                Rectangle().fill(Color(vellixHex: appearance.textColorHex).opacity(0.1)).frame(height: 1)
+                            }
                             editor(document)
                             let entries = environment.collections.embeddedEntryIDs(document.id)
-                            ForEach(model.children.filter { !model.pageReferenceIDs.contains($0.id) && !entries.contains($0.id) }) { child in
+                            let unplaced = model.children.filter { !model.pageReferenceIDs.contains($0.id) && !entries.contains($0.id) }
+                            PageCardFlowLayout(smallCards: unplaced.map { $0.cardStyle?.size.fillsDocumentWidth == false }) {
+                            ForEach(unplaced) { child in
                                 Button { workspace.perform { try await workspace.open(child) } } label: {
                                     if let style = child.cardStyle {
                                         PageCardView(document: child, style: style,
                                             photo: CardImageLoader.image(path: style.imagePath, store: environment.attachmentStore),
-                                            fillsDocumentWidth: true, attachmentStore: environment.attachmentStore, containingFontStyle: appearance.fontStyle)
+                                            fillsDocumentWidth: true, fillsCardSlot: !style.size.fillsDocumentWidth,
+                                            attachmentStore: environment.attachmentStore, containingFontStyle: appearance.fontStyle, previews: environment.documentPreviews)
                                     } else { NestedPageRow(document: child, appearance: appearance) {} }
                                 }.buttonStyle(.plain).contextMenu { MacDocumentMenu(document: child, workspace: workspace) }
                             }
+                            }.frame(maxWidth: .infinity, alignment: .leading)
                             Color.clear.frame(height: 28).contentShape(Rectangle()).onTapGesture { session.focusDocumentEnd() }
                         }
                         .padding(MacDocumentLayout.contentInset)

@@ -7,12 +7,14 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var environment: AppEnvironment
+    @Environment(\.pennedWorkspace) private var openingWorkspace
     @Environment(\.pennedWorkspaceTabActive) private var workspaceTabActive
     @ObservedObject private var searchModel: SearchModel
     @FocusState private var isSearchFocused: Bool
     @State private var searchScope = LibrarySearchScope.keyword
     @State private var customizeHome = false
     @State private var expandedStarred = false
+    @State private var didMarkStartup = false // TEMP startup probe
     @AppStorage("library.showPreviewStrip") private var showPreviewStrip = true
     @AppStorage("library.showStarred") private var showStarred = true
     @AppStorage("library.showFolders") private var showFolders = true
@@ -22,14 +24,15 @@ struct HomeView: View {
     }
 
     var body: some View {
-        ScrollView {
+        let _ = PennedDiagnostics.markStartupOnce("homeview-body-first") // TEMP probe
+        return ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 searchField
 
                 if searchModel.hasQuery {
                     searchResults
                 } else {
-                    if environment.overview.all.isEmpty {
+                    if environment.overview.documentCount == 0 {
                         emptyDesk
                     } else {
                         if showPreviewStrip { previewStrip }
@@ -40,13 +43,19 @@ struct HomeView: View {
                     Button("Customize Home") { customizeHome = true }
                         .font(.callout).foregroundStyle(.secondary)
                         .padding(.horizontal, 18).padding(.vertical, 12)
-                        .background(.primary.opacity(0.08), in: Capsule())
+                        .pennedPhoneDarkChrome(cornerRadius: 100)
                         .frame(maxWidth: .infinity).padding(.top, 24)
                 }
             }
             .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 100)
         }
-        .background(VellixSurface.workspace)
+        .background {
+            #if os(iOS)
+            PadWorkspacePageBackground(fallback: VellixSurface.workspace)
+            #else
+            VellixSurface.workspace
+            #endif
+        }
         .navigationTitle("")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { LibraryBrandMark() }
@@ -74,6 +83,14 @@ struct HomeView: View {
             .presentationDetents([.medium])
         }
         .onAppear {
+            if !didMarkStartup {
+                didMarkStartup = true
+                _ = PennedDiagnostics.markStartup("homeview-appeared")
+                environment.documentPreviews.dumpStartupProbe("homeview-appeared")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    environment.documentPreviews.dumpStartupProbe("homeview+3s")
+                }
+            }
             focusRequestedSearch()
         }
         .onChange(of: environment.isLibrarySearchRequested) { _, _ in
@@ -114,13 +131,18 @@ struct HomeView: View {
         } else {
             if !searchModel.results.isEmpty {
                 resultSection(title: "Pages") {
-                    ForEach(searchModel.results.filter { searchScope == .keyword || $0.title.localizedCaseInsensitiveContains(searchModel.query) }) { result in
+                    ForEach(searchModel.results.filter { result in
+                        !environment.overview.dailyNotes.contains(where: { $0.id == result.documentID }) &&
+                        (searchScope == .keyword || result.title.localizedCaseInsensitiveContains(searchModel.query))
+                    }) { result in
                         Button {
+                            let trace = environment.traceDocumentCardTap(id: result.documentID, source: "home-search", workspaceBusy: openingWorkspace?.isBusy)
                             do {
                                 let document = try environment.documents.requireDocument(id: result.documentID)
                                 isSearchFocused = false
-                                environment.select(document)
+                                environment.select(document, openingTrace: trace)
                             } catch {
+                                trace?.event("card-tap-not-opening", "reason=search-result-lookup-failed error=\(PennedDocumentOpenTrace.errorCode(error))")
                                 environment.report(error)
                             }
                         } label: {
@@ -172,12 +194,16 @@ struct HomeView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 10) {
                 ForEach(environment.overview.recent.prefix(10)) { document in
-                    Button { environment.select(document) } label: {
-                        LibraryDocumentPreview(document: document, fixedAspectRatio: 0.82)
+                    Button {
+                        let trace = environment.traceDocumentCardTap(id: document.id, source: "home-recent", workspaceBusy: openingWorkspace?.isBusy)
+                        environment.select(document, openingTrace: trace)
+                    } label: {
+                        LibraryDocumentCell(summary: document, fixedAspectRatio: 0.82)
                             .frame(width: 138)
+                            .contentShape(Rectangle())
+                            .contextMenu { DocumentSummaryContextMenu(summary: document) }
                     }
                     .buttonStyle(.plain)
-                    .contextMenu { DocumentContextMenu(document: document) }
                 }
             }
             .padding(.horizontal, 16)
@@ -189,8 +215,9 @@ struct HomeView: View {
     private var libraryLinks: some View {
         VStack(spacing: 0) {
             libraryRow("All Docs", icon: "linedpages") { open(.allDocuments) }
-            libraryRow("Spaces", icon: "spaces") { open(.spaces) }
-            libraryRow("Templates", icon: "copy") { open(.templates) }
+            libraryRow("Daily Notes", icon: "mooncal") { open(.dailyNotes) }
+            libraryRow("Templates", icon: "bentpages") { open(.templates) }
+            libraryRow("Connect", icon: "cloudie") { open(.connect) }
             libraryRow("All Tags", icon: "hashtagwavy") { open(.tags) }
             libraryRow("Trash", icon: "trash") { open(.trash) }
         }
@@ -216,16 +243,19 @@ struct HomeView: View {
             .padding(.horizontal, 8)
             VStack(spacing: 0) {
                 ForEach(environment.overview.favorites.prefix(expandedStarred ? environment.overview.favorites.count : 5)) { document in
-                    Button { environment.select(document) } label: {
+                    Button {
+                        let trace = environment.traceDocumentCardTap(id: document.id, source: "home-starred", workspaceBusy: openingWorkspace?.isBusy)
+                        environment.select(document, openingTrace: trace)
+                    } label: {
                         HStack(spacing: 12) {
-                            LibraryDocumentPreview(document: document, fixedAspectRatio: 0.72, showsStar: false, cornerRadius: 2).frame(width: 19)
+                            LibraryDocumentCell(summary: document, fixedAspectRatio: 0.72, showsStar: false, cornerRadius: 2).frame(width: 19)
                             Text(document.title).font(.system(size: 17)).lineLimit(1)
                             Spacer(minLength: 0)
                         }
                         .frame(minHeight: 48).padding(.horizontal, 10).contentShape(Rectangle())
+                        .contextMenu { DocumentSummaryContextMenu(summary: document) }
                     }
-                    .contextMenu { DocumentContextMenu(document: document) }
-                    Divider().opacity(0.15).padding(.leading, 41)
+                    Divider().opacity(0.38).padding(.leading, 41)
                 }
                 if environment.overview.favorites.isEmpty {
                     Text("No starred pages").foregroundStyle(.secondary).padding(.vertical, 14).padding(.leading, 10)
@@ -240,7 +270,8 @@ struct HomeView: View {
     }
 
     private var folderList: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let hierarchy = FolderHierarchy(folders: environment.overview.folders)
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Button { open(.folders) } label: {
                     HStack(spacing: 7) {
@@ -258,13 +289,13 @@ struct HomeView: View {
             }
             .padding(.horizontal, 8)
             VStack(spacing: 0) {
-                libraryRow("Unsorted", icon: "openedfolder", count: environment.overview.all.filter { $0.folderID == nil }.count) {
+                libraryRow("Unsorted", icon: "openedfolder", count: environment.overview.documentCountsByFolder[nil, default: 0]) {
                     environment.selectedFolderID = "__unsorted"
                     environment.selectedDestination = .allDocuments
                 }
-                ForEach(FolderHierarchy(folders: environment.overview.folders).children(of: nil)) { folder in
-                    libraryRow(folder.title, icon: VellixAssetIconLibrary.names.contains(folder.icon ?? "") ? (folder.icon ?? "linesfolderfill") : "linesfolderfill",
-                        count: FolderHierarchy(folders: environment.overview.folders).itemCount(in: folder.id, documents: environment.overview.all),
+                ForEach(hierarchy.children(of: nil)) { folder in
+                    libraryRow(folder.title, icon: VellixAssetIconLibrary.isSupported(folder.icon ?? "") ? (folder.icon ?? "linesfolderfill") : "linesfolderfill",
+                        count: hierarchy.children(of: folder.id).count + environment.overview.documentCountsByFolder[folder.id, default: 0],
                         iconColor: Color(vellixHex: folder.iconColorHex ?? "#909090")) {
                         environment.openFolder(folder.id)
                     }
@@ -288,7 +319,7 @@ struct HomeView: View {
                 .padding(.horizontal, 10).frame(minHeight: 48).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            Divider().opacity(0.15).padding(.leading, 41)
+            Divider().opacity(0.38).padding(.leading, 41)
         }
     }
 

@@ -189,6 +189,7 @@ struct InlinePropertyEditorRequest: Equatable, Identifiable {
     let id = UUID()
     var blockID: String
     var property: InlinePropertyDefinition
+    var resumeEditing = true
 }
 
 struct InlinePropertyURLRequest: Equatable, Identifiable {

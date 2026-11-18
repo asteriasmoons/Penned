@@ -45,7 +45,6 @@ struct MacDocumentBrowser: View {
             else if browser.showsList { list }
             else { gallery }
         }
-        .background(VellixSurface.workspace)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .onChange(of: environment.isLibrarySearchRequested) { _, requested in if requested && tab.id == workspace.activeID { searchFocused = true; environment.isLibrarySearchRequested = false } }
         .onChange(of: records.map(\.id)) { _, ids in browser.selectedIDs.formIntersection(Set(ids)) }
@@ -93,10 +92,11 @@ struct MacDocumentBrowser: View {
                         if browser.query.isEmpty && tab.location.destination != .trash { Button("New Document") { workspace.createDocument() } }
                     }.frame(maxWidth: .infinity, minHeight: 350)
                 } else {
+                    let grouped = documentColumns
                     HStack(alignment: .top, spacing: 14) {
-                        ForEach(0..<columns, id: \.self) { column in
+                        ForEach(grouped.indices, id: \.self) { column in
                             LazyVStack(spacing: 14) {
-                                ForEach(documentColumns[column]) { document in card(document) }
+                                ForEach(grouped[column]) { document in card(document) }
                             }.frame(maxWidth: .infinity, alignment: .top)
                         }
                     }
@@ -113,12 +113,11 @@ struct MacDocumentBrowser: View {
         .onDeleteCommand { workspace.requestTrash(browser.selectedIDs) }
     }
     private var documentColumns: [[DocumentRecord]] {
-        var result = Array(repeating: [DocumentRecord](), count: columns), heights = Array(repeating: CGFloat(0), count: columns)
-        for document in records {
-            let column = heights.enumerated().min(by: { $0.element == $1.element ? $0.offset < $1.offset : $0.element < $1.element })?.offset ?? 0
-            result[column].append(document)
-            let image = environment.documentPreviews.cachedImage(for: document)
-            heights[column] += (image.map { CGFloat($0.height) / CGFloat($0.width) } ?? 1.6) * previewHeightFraction
+        let count = columns
+        var result = Array(repeating: [DocumentRecord](), count: count)
+        // Preview arrival must not move a document to a different column mid-click.
+        for (index, document) in records.enumerated() {
+            result[index % count].append(document)
         }
         return result
     }
@@ -148,14 +147,15 @@ struct MacDocumentBrowser: View {
                     .onTapGesture(count: 2) { open(document) }
                     .contextMenu { MacDocumentMenu(document: document, workspace: workspace) }
             }
-        }.onKeyPress(.return) { openSelection(); return .handled }.onDeleteCommand { workspace.requestTrash(browser.selectedIDs) }
+        }.scrollContentBackground(.hidden)
+            .onKeyPress(.return) { openSelection(); return .handled }.onDeleteCommand { workspace.requestTrash(browser.selectedIDs) }
     }
     private var tags: some View {
         List((try? environment.tags.catalogue()) ?? []) { tag in
             Button { workspace.perform { try await workspace.navigate(.tags, tags: [tag.id]) } } label: {
                 Label { Text(tag.name) } icon: { LibraryIcon(name: "hashtagwavy", size: 16) }
             }.buttonStyle(.plain)
-        }
+        }.scrollContentBackground(.hidden)
     }
     private func open(_ document: DocumentRecord) {
         if document.isTrashed { return }

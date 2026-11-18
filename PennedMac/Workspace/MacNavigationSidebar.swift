@@ -81,7 +81,6 @@ struct MacNavigationSidebar: View {
             }.padding(.horizontal, 12).padding(.vertical, 8)
         }
         .font(.system(size: 12, weight: .semibold, design: .rounded)).buttonStyle(.plain)
-        .background(.regularMaterial)
     }
 
     private func sectionTitle(_ title: String) -> some View {

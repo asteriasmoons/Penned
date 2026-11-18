@@ -132,6 +132,31 @@ struct DocumentWordExport {
                     }
                     output += blocks(content, page: page, depth: nextDepth, list: numberID)
                 }
+            case "richLink":
+                let link = RichLinkPreviewData(node)
+                let marks = link.url.map { [["type": "link", "attrs": ["href": $0.absoluteString]]] } ?? []
+                output += paragraph(inline([["type": "text", "text": link.title, "marks": marks]]))
+            case "gridCard":
+                let card = GridCardSettings(attrs)
+                let originalColor = color
+                color = hex(card.inkColor)
+                let heading = card.title.isEmpty ? "" : paragraph(run(card.title, extra: "<w:b/>"),
+                    properties: "<w:jc w:val=\"\(card.alignment.rawValue)\"/>")
+                let details = heading + blocks(children, page: page, depth: depth)
+                output += table("<w:tr><w:tc><w:tcPr><w:shd w:fill=\"\(hex(card.backgroundColor))\"/></w:tcPr>\(details)</w:tc></w:tr>")
+                color = originalColor
+            case "iconCallout":
+                let settings = IconCalloutSettings(attrs)
+                let originalColor = color
+                color = hex(settings.inkColor)
+                let icon = settings.imagePath.map {
+                    picture(path: $0, name: "Callout icon", maximumWidth: 24, maximumHeight: 24, tint: settings.imageTint)
+                } ?? ""
+                let details = blocks(children, page: page, depth: depth)
+                let shade = "<w:shd w:fill=\"\(hex(settings.backgroundColor))\"/>"
+                let iconCell = icon.isEmpty ? "" : "<w:tc><w:tcPr><w:tcW w:w=\"600\" w:type=\"dxa\"/>\(shade)</w:tcPr>\(icon)</w:tc>"
+                output += table("<w:tr>\(iconCell)<w:tc><w:tcPr>\(shade)</w:tcPr>\(details.isEmpty ? "<w:p/>" : details)</w:tc></w:tr>")
+                color = originalColor
             case "blockquote", "callout", "plainCallout":
                 if let source = attrs["clipSource"] as? [String: Any], let href = source["url"] as? String {
                     let originalColor = color
@@ -145,6 +170,15 @@ struct DocumentWordExport {
                         : table("<w:tr><w:tc>\(preview)<w:p/></w:tc><w:tc>\(linkedTitle)</w:tc></w:tr>")
                     let details = heading + blocks(children, page: page, depth: depth)
                     output += table("<w:tr><w:tc><w:tcPr><w:shd w:fill=\"292929\"/></w:tcPr>\(details)</w:tc></w:tr>")
+                    color = originalColor
+                    continue
+                }
+                if type == "plainCallout" {
+                    let background = GridCardSettings.opaqueHex(attrs["color"], fallback: "#302d36")
+                    let originalColor = color
+                    color = hex(GridCardSettings.readableInk(on: background))
+                    let details = blocks(children, page: page, depth: depth)
+                    output += table("<w:tr><w:tc><w:tcPr><w:shd w:fill=\"\(hex(background))\"/></w:tcPr>\(details.isEmpty ? "<w:p/>" : details)</w:tc></w:tr>")
                     color = originalColor
                     continue
                 }
@@ -221,12 +255,13 @@ struct DocumentWordExport {
         relationships.append("<Relationship Id=\"\(id)\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/\(type)\" Target=\"\(x(target))\"\(external ? " TargetMode=\"External\"" : "")/>")
         return id
     }
-    private mutating func picture(path: String, name: String, maximumWidth: Double? = nil, maximumHeight: Double? = nil) -> String {
+    private mutating func picture(path: String, name: String, maximumWidth: Double? = nil, maximumHeight: Double? = nil,
+                                  tint: String? = nil) -> String {
         guard let url = snapshot.assets[path], let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return paragraph(run("Image unavailable: " + name)) }
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { return paragraph(run(name)) }
-        CGImageDestinationAddImage(destination, image, nil)
+        CGImageDestinationAddImage(destination, tint.flatMap { CustomCalloutIconImage.tinted(image, hex: $0) } ?? image, nil)
         guard CGImageDestinationFinalize(destination) else { return paragraph(run(name)) }
         drawingID += 1
         let file = "image\(drawingID).png"

@@ -19,6 +19,7 @@ struct TemplateGalleryView: View {
     let createCategory: (String) -> Void
     let renameCategory: (GalleryCategory, String) -> Void
     let removeCategory: (GalleryCategory) -> Void
+    var useTemplateTitle = "Use Template"
 
     @State private var searchText = ""
     @State private var selection: Selection?
@@ -228,10 +229,12 @@ struct TemplateGalleryView: View {
             switch selected {
             case .personal(let template, let document):
                 TemplateFullPreview(title: template.title, document: document,
+                    useTemplateTitle: useTemplateTitle,
                     useTemplate: { selection = nil; usePersonalTemplate(template) },
                     close: { selection = nil })
             case .published(let template, let document):
                 TemplateFullPreview(title: template.title, document: document,
+                    useTemplateTitle: useTemplateTitle,
                     useTemplate: { selection = nil; usePublicTemplate(template) },
                     close: { selection = nil })
             }

@@ -171,7 +171,7 @@ final class PublishingDocumentBuilder {
         }
         let projected = try PublishingProjection.content(visible, media: mediaByPath)
         let content = try PublishingJSON.decode(projected)
-        var document = PublishingDocument(title: record.title, subtitle: record.subtitle, icon: record.icon,
+        var document = PublishingDocument(title: record.title, subtitle: record.subtitle, icon: nil,
             cover: record.cover.flatMap { mediaByPath[$0] }.map { .object(["mediaID": .string($0.id)]) },
             appearance: try .decode(appearanceObject), content: content, media: mediaByPath.values.sorted { $0.id < $1.id })
         if let authorAvatarData {

@@ -6,10 +6,15 @@
 import Foundation
 import Combine
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 enum AppDestination: String, CaseIterable, Identifiable {
     case home
     case calendar
+    case dailyNotes
+    case connect
     case recents
     case favorites
     case allDocuments
@@ -24,6 +29,8 @@ enum AppDestination: String, CaseIterable, Identifiable {
     static let primaryCases: [AppDestination] = [
         .home,
         .calendar,
+        .dailyNotes,
+        .connect,
         .recents,
         .favorites,
         .allDocuments,
@@ -39,6 +46,10 @@ enum AppDestination: String, CaseIterable, Identifiable {
             return "Home"
         case .calendar:
             return "Calendar"
+        case .dailyNotes:
+            return "Daily Notes"
+        case .connect:
+            return "Connect"
         case .recents:
             return "Recents"
         case .favorites:
@@ -63,6 +74,10 @@ enum AppDestination: String, CaseIterable, Identifiable {
             return "house"
         case .calendar:
             return "calendar"
+        case .dailyNotes:
+            return "calendar"
+        case .connect:
+            return "cloudie"
         case .recents:
             return "clock"
         case .favorites:
@@ -90,7 +105,7 @@ final class AppEnvironment: ObservableObject {
     let folders: FolderRepository
     let templates: TemplateRepository
     let templateGallery: TemplateGalleryRepository
-    let templateGalleryCloud: TemplateGalleryCloudStore
+    private(set) lazy var templateGalleryCloud = TemplateGalleryCloudStore()
     let dailyNotes: DailyNoteRepository
     let tags: DocumentTagRepository
     @Published var selectedTagIDs: Set<String> = []
@@ -110,12 +125,28 @@ final class AppEnvironment: ObservableObject {
     let calendar: CalendarModel
     let collections: CollectionStore
     lazy var publishing = PublishingQueue(database: database, store: attachmentStore)
-    @Published private(set) var pendingDocumentID: String?
+    @Published private(set) var pendingDocumentID: String? {
+        didSet {
+            pendingOpeningTrace?.event("pending-document-assigned", "previous=\(oldValue ?? "-") current=\(pendingDocumentID ?? "-")")
+        }
+    }
     private var pendingDocumentPresentation: AnyCancellable?
     private var pendingDocumentTimeout: Task<Void, Never>?
-    private var pendingDocumentRequestID = UUID()
+    #if os(iOS)
+    private var pendingDocumentLookup: Task<Void, Never>?
+    #endif
+    private var pendingOpeningTrace: PennedDocumentOpenTrace?
+    private var pendingDocumentRequestID = UUID() {
+        didSet {
+            pendingOpeningTrace?.event("request-uuid-changed", "previous=\(oldValue) current=\(pendingDocumentRequestID)")
+        }
+    }
 
     @Published var overview = LibraryOverview()
+    // Bumped on every refresh so paginated surfaces can reload after any mutation
+    // (create, edit, trash, move, duplicate, star, sync import) without observing
+    // the full document list.
+    @Published var libraryGeneration = 0
     @Published var calendarDocumentReturnID: String?
     @Published var selectedDestination: AppDestination = .home {
         didSet {
@@ -125,11 +156,31 @@ final class AppEnvironment: ObservableObject {
     }
     @Published var selectedDocumentID: String? {
         didSet {
+            if oldValue != selectedDocumentID {
+                editorCache.model(for: oldValue)?.clearEditorPresentationRequests()
+            }
+            pendingOpeningTrace?.event("request-cancelled", "reason=selected-document-assigned previousSelected=\(oldValue ?? "-") \(documentOpeningTraceState)")
+            #if os(iOS)
+            pendingDocumentLookup?.cancel()
+            pendingDocumentLookup = nil
+            #endif
             pendingDocumentPresentation = nil
             pendingDocumentTimeout?.cancel()
             pendingDocumentTimeout = nil
             pendingDocumentID = nil
             pendingDocumentRequestID = UUID()
+            pendingOpeningTrace = nil
+            #if os(iOS)
+            if oldValue != selectedDocumentID {
+                editorCache.model(for: oldValue)?.session.renderRecovery.deactivate(reason: "selected-document-changed")
+                if let id = selectedDocumentID, let model = editorCache.model(for: id) {
+                    model.session.renderRecovery.activate(documentID: id,
+                        parentID: model.document?.parentDocumentID, previousID: oldValue,
+                        previousParentID: editorCache.model(for: oldValue)?.document?.parentDocumentID,
+                        scrollView: nil)
+                }
+            }
+            #endif
             if selectedDocumentID == nil { calendarDocumentReturnID = nil }
             if let id = selectedDocumentID {
                 collections.watchDocument(id)
@@ -143,6 +194,9 @@ final class AppEnvironment: ObservableObject {
     @Published private(set) var selectedSpaceID: String?
     @Published private(set) var isSwitchingSpace = false {
         didSet {
+            if oldValue != isSwitchingSpace {
+                pendingOpeningTrace?.event("switching-space-changed", "previous=\(oldValue) \(documentOpeningTraceState)")
+            }
             if !isSwitchingSpace {
                 let waiters = workspaceWaiters; workspaceWaiters = []
                 waiters.forEach { $0.resume() }
@@ -165,7 +219,53 @@ final class AppEnvironment: ObservableObject {
 
     private let createsDefaultSpace: Bool
 
-    init(database: AppDatabase, attachmentStore: AttachmentStore, preferences: UserDefaults? = nil, createsDefaultSpace: Bool = true) {
+    struct BootstrapState: Sendable {
+        let spaceID: String?
+        let allSpaces: [SpaceRecord]
+        let overview: LibraryOverview
+        let dailyNoteOnlyTemplateIDs: Set<String>
+    }
+
+    nonisolated static func loadBootstrapState(database: AppDatabase, preferredSpaceID: String?,
+                                               createsDefaultSpace: Bool) throws -> BootstrapState {
+        let spaces = SpaceRepository(database: database)
+        var spaceID = try spaces.existingFallback(preferred: preferredSpaceID)
+        if spaceID == nil && createsDefaultSpace {
+            spaceID = try spaces.fallback(preferred: preferredSpaceID)
+        }
+        let scope = spaceID ?? "$unavailable"
+        // These repositories are owned by this load, not shared with the UI's mutable Space scope.
+        let documents = DocumentRepository(database: database)
+        let folders = FolderRepository(database: database)
+        let templates = TemplateRepository(database: database)
+        documents.spaceID = scope; folders.spaceID = scope; templates.spaceID = scope
+        let allSpaces = try spaces.includingArchived()
+        let overview = try loadOverview(documents: documents, folders: folders, templates: templates, allSpaces: allSpaces)
+        return BootstrapState(spaceID: spaceID, allSpaces: allSpaces, overview: overview,
+                              dailyNoteOnlyTemplateIDs: try templates.dailyNoteOnlyTemplateIDs(among: overview.templates))
+    }
+
+    private nonisolated static func loadOverview(documents: DocumentRepository, folders: FolderRepository,
+                                                templates: TemplateRepository, allSpaces: [SpaceRecord]) throws -> LibraryOverview {
+        let counts = try documents.topLevelSummaryCountsByFolder()
+        return try LibraryOverview(
+            recent: documents.recentSummaries(),
+            favorites: documents.favoriteSummaries(),
+            dailyNotes: documents.allDailyNoteSummaries(),
+            trashed: documents.trashedSummaries(),
+            documentCount: counts.values.reduce(0, +),
+            documentCountsByFolder: counts,
+            spaces: allSpaces.filter { !$0.isArchived }.sorted {
+                $0.sortOrder == $1.sortOrder ? $0.updatedAt > $1.updatedAt : $0.sortOrder < $1.sortOrder
+            },
+            folders: folders.all(),
+            templates: templates.all(),
+            templateDocuments: templates.previewDocuments()
+        )
+    }
+
+    init(database: AppDatabase, attachmentStore: AttachmentStore, preferences: UserDefaults? = nil,
+         createsDefaultSpace: Bool = true, initialState: BootstrapState? = nil) {
         self.createsDefaultSpace = createsDefaultSpace
         self.preferences = preferences ?? .standard
         self.persistsSpaceSelection = preferences != nil || !database.isInMemory
@@ -191,7 +291,6 @@ final class AppEnvironment: ObservableObject {
         self.folders = FolderRepository(database: database)
         self.templates = templates
         self.templateGallery = TemplateGalleryRepository(database: database)
-        self.templateGalleryCloud = TemplateGalleryCloudStore()
         self.dailyNotes = dailyNotes
         self.documentStyles = DocumentStyleRepository(database: database, store: attachmentStore)
         self.snapshots = snapshots
@@ -205,13 +304,37 @@ final class AppEnvironment: ObservableObject {
             attachmentStore: attachmentStore,
             collectionPayloads: { id in
                 guard let document = try? documents.requireDocument(id: id),
-                      let content = try? collectionRepository.previewContent(for: document, documents: documents) else { return [] }
+                      let content = try? collectionRepository.previewContent(for: document, documents: documents, includeCardPreviews: false) else { return [] }
                 return content.payloads
             }
         )
+        editorCache.documentPreviews = documentPreviews
+        editorCache.ownsEditorPresentation = { [weak self] id in
+            guard let self else { return false }
+            return self.pendingDocumentID == nil && self.ownsEditorPresentation(documentID: id)
+        }
+        editorCache.openNestedPage = { [weak self] child, parentID in
+            guard let self, self.ownsEditorPresentation(documentID: parentID),
+                  self.pendingDocumentID == nil, child.parentDocumentID == parentID else { return }
+            self.refresh()
+            self.select(child)
+        }
+        documentPreviews.cardFallbackRenderer = { [weak self] document, scheme, hidesPageSurfaces in
+            guard let self else { return nil }
+            let renderer = ImageRenderer(content: ImmediateDocumentPreview(document: document, showsPageSurfaces: !hidesPageSurfaces, showsDocumentTitle: false)
+                .environmentObject(self).environment(\.colorScheme, scheme)
+                .frame(width: document.isThemed ? 376 : 360, height: 740, alignment: .topLeading))
+            renderer.scale = 2
+            renderer.isOpaque = false
+            return renderer.cgImage
+        }
+        documentPreviews.openPageFallbackRenderer = { [weak self] document, scheme in
+            guard let self else { return nil }
+            return ImmediateOpenPagePreview.snapshots(for: document, environment: self, colorScheme: scheme)
+        }
         editorCache.onDocumentSaved = { [weak self] document in
             guard let self else { return }
-            self.documentPreviews.prewarm([document])
+            self.documentPreviews.documentDidSave(document)
             let templateID = document.templateID ?? TemplateRepository.documentTemplateID(document.id)
             if document.templateID != nil || self.overview.templateDocuments[templateID] != nil {
                 if (try? self.templates.hasInteractiveComponents(id: templateID)) == true {
@@ -243,6 +366,13 @@ final class AppEnvironment: ObservableObject {
         calendar.completeTask = { [weak self] id, occurrenceID, completed, skipped in
             guard let self else { throw DocumentTaskError.missingTask }
             try await self.setTaskCompleted(id: id, completed: completed, expectedOccurrenceID: occurrenceID, skipped: skipped)
+        }
+        if let initialState {
+            applySpace(initialState.spaceID, persist: createsDefaultSpace)
+            allSpaces = initialState.allSpaces
+            overview = initialState.overview
+            dailyNoteOnlyTemplateIDs = initialState.dailyNoteOnlyTemplateIDs
+            return
         }
         let preferred = persistsSpaceSelection ? self.preferences.string(forKey: spaceSelectionKey) : nil
         do {
@@ -301,40 +431,47 @@ final class AppEnvironment: ObservableObject {
             )
         }
         refresh()
+        startDescriptorBackfill()
     }
 
-    func refresh() {
+    // Indexes any documents without a current preview descriptor (e.g. the whole
+    // library on the first launch after upgrading) in bounded batches off the main
+    // thread. Until a document is indexed the gallery falls back to the correct
+    // record path for it, so this never blocks launch or browsing.
+    private var descriptorBackfill: Task<Void, Never>?
+    func startDescriptorBackfill() {
+        guard descriptorBackfill == nil, database.isAccessible else { return }
+        // Declare the preview-cache regeneration model once per launch (lazy, on
+        // demand). Kept distinct from descriptor backfill completion so previews are
+        // never reported complete merely because the backfill finished.
+        PennedPreviewDiagnostics.announce(version: DocumentPreviewContent.previewCacheVersion)
+        let database = self.database
+        descriptorBackfill = Task.detached(priority: .utility) {
+            await DocumentPreviewDescriptorIndex.runBackfill(database)
+        }
+    }
+
+    func refresh(protectingEditorIDs protected: Set<String> = []) {
         do {
-            dailyNoteOnlyTemplateIDs = try templates.dailyNoteOnlyTemplateIDs()
             allSpaces = try spaces.includingArchived()
-            let nextOverview = LibraryOverview(
-                recent: try documents.recent(),
-                favorites: try documents.favorites(),
-                all: try documents.allDocuments(),
-                trashed: try documents.trashed(),
-                spaces: try spaces.all(),
-                folders: try folders.all(),
-                templates: try templates.all(),
-                templateDocuments: try templates.previewDocuments()
-            )
-            let existingIDs = try documents.existingDocumentIDs()
-            for model in editorCache.preparedModels where !existingIDs.contains(model.documentID) {
+            let nextOverview = try Self.loadOverview(documents: documents, folders: folders, templates: templates, allSpaces: allSpaces)
+            dailyNoteOnlyTemplateIDs = try templates.dailyNoteOnlyTemplateIDs(among: nextOverview.templates)
+            let cachedIDs = Set(editorCache.preparedModels.map(\.documentID) + [selectedDocumentID, pendingDocumentID].compactMap { $0 })
+                .subtracting(protected)
+            let current = try cachedIDs.compactMap { try documents.document(id: $0) }
+            let existingIDs = Set(current.map(\.id))
+            for model in editorCache.preparedModels where !protected.contains(model.documentID) && !existingIDs.contains(model.documentID) {
                 editorCache.remove(documentID: model.documentID)
             }
-            if let selectedDocumentID, !existingIDs.contains(selectedDocumentID) {
+            if let selectedDocumentID, !protected.contains(selectedDocumentID), !existingIDs.contains(selectedDocumentID) {
                 self.selectedDocumentID = nil
             }
-            if let pendingDocumentID, !existingIDs.contains(pendingDocumentID) { cancelDocumentOpening() }
-            let prepared = try editorCache.preparedModels.compactMap { try documents.document(id: $0.documentID) }
-            editorCache.prepare(prepared)
-            if editorCache.preparedModels.isEmpty {
-                let ids = DocumentEditorWarmupPolicy.documentIDs(recent: nextOverview.recent, selectedID: selectedDocumentID)
-                for id in ids { editorCache.prepare(try documents.requireDocument(id: id)) }
-            }
+            if let pendingDocumentID, !protected.contains(pendingDocumentID), !existingIDs.contains(pendingDocumentID) { cancelDocumentOpening() }
+            let preparedIDs = Set(editorCache.preparedModels.map(\.documentID))
+            editorCache.prepare(current.filter { preparedIDs.contains($0.id) })
             overview = nextOverview
-            let recentIDs = Set(nextOverview.recent.map(\.id))
-            documentPreviews.prewarm(nextOverview.recent + nextOverview.favorites.prefix(5).filter { !recentIDs.contains($0.id) })
-            librarySearch.refresh()
+            libraryGeneration &+= 1
+            if librarySearch.hasQuery { librarySearch.refresh() }
             calendar.refresh()
         } catch {
             report(error)
@@ -456,6 +593,28 @@ final class AppEnvironment: ObservableObject {
         return (categories, catalog)
     }
 
+    func createDocument(fromGallery template: GalleryTemplate) async throws -> DocumentRecord {
+        guard !isSwitchingSpace else { throw LibraryError.staleWorkspace }
+        try ensureSpaceForCreation()
+        guard let spaceID = selectedSpaceID else { throw LibraryError.staleWorkspace }
+        let generation = workspaceGeneration
+        let package = try await templateGalleryCloud.fetchPackage(templateID: template.id, expectedRevision: template.revision)
+        try Task.checkCancellation()
+        guard generation == workspaceGeneration, selectedSpaceID == spaceID, !isSwitchingSpace else {
+            throw LibraryError.staleWorkspace
+        }
+        try package.validateForImport(expectedID: template.id, expectedRevision: template.revision)
+        if package.nativeSnapshot?.documents.contains(where: { TemplateComponentDefinition.contains(in: $0.tipTapJSON) }) == true {
+            throw VellixError.impossibleMove("This template contains Daily Note components. Use it in Daily Notes settings.")
+        }
+        let document = try TemplateGalleryImporter(database: database, attachmentStore: attachmentStore)
+            .importPackage(package, intoSpace: spaceID)
+        editorCache.prepare(document)
+        refresh()
+        select(document)
+        return document
+    }
+
     func saveGalleryTemplate(_ template: GalleryTemplate) async throws -> TemplateRecord {
         guard !isSwitchingSpace else { throw LibraryError.staleWorkspace }
         try ensureSpaceForCreation()
@@ -521,7 +680,7 @@ final class AppEnvironment: ObservableObject {
     }
 
     func saveFolder(_ request: FolderEditorRequest, title: String, icon: String, colorHex: String) throws {
-        guard title.trimmedNonEmpty != nil, VellixAssetIconLibrary.names.contains(icon) else {
+        guard title.trimmedNonEmpty != nil, VellixAssetIconLibrary.isSupported(icon) else {
             throw VellixError.impossibleMove("Choose a folder name and an icon from your library.")
         }
         if let folder = request.folder {
@@ -600,7 +759,46 @@ final class AppEnvironment: ObservableObject {
         } catch { tagNavigationTarget = nil; report(error) }
     }
 
-    func select(_ document: DocumentRecord) {
+    // Summary convenience: loads the full record by id, then selects it. Used by the
+    // body-free library surfaces (Home strips, sidebar).
+    private var documentOpeningTraceState: String {
+        "selected=\(selectedDocumentID ?? "-") pending=\(pendingDocumentID ?? "-") currentRequest=\(pendingDocumentID == nil ? "-" : pendingDocumentRequestID.uuidString) active=\(pendingDocumentID != nil) switchingSpace=\(isSwitchingSpace) databaseAccessible=\(database.isAccessible)"
+    }
+
+    func traceDocumentCardTap(id: String, source: String, workspaceBusy: Bool? = nil) -> PennedDocumentOpenTrace? {
+        guard PennedDocumentOpenTrace.enabled else { return nil }
+        #if os(iOS)
+        let device = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        #else
+        let device = "mac"
+        #endif
+        let trace = PennedDocumentOpenTrace(documentID: id, source: source)
+        trace.event("card-tap", "interface=\(device) workspaceBusy=\(workspaceBusy.map { String($0) } ?? "-") \(documentOpeningTraceState)")
+        return trace
+    }
+
+    func traceDocumentOpeningSurfaceTap(source: String, workspaceBusy: Bool) {
+        guard PennedDocumentOpenTrace.enabled else { return }
+        let trace = PennedDocumentOpenTrace(documentID: "-", source: source)
+        trace.event("surface-tap", "workspaceBusy=\(workspaceBusy) \(documentOpeningTraceState)")
+    }
+
+    func select(_ summary: DocumentSummary, openingTrace: PennedDocumentOpenTrace? = nil) {
+        #if os(iOS)
+        requestDocumentOpening(id: summary.id, spaceID: summary.spaceID, openingTrace: openingTrace)
+        #else
+        guard let record = try? documents.document(id: summary.id) else { return }
+        select(record)
+        #endif
+    }
+
+    func select(_ document: DocumentRecord, openingTrace: PennedDocumentOpenTrace? = nil) {
+        #if os(iOS)
+        requestDocumentOpening(id: document.id, spaceID: document.spaceID, openingTrace: openingTrace)
+        #else
+        if PennedSyncTrace.documentID == document.id {
+            PennedSyncTrace.record("editor.selectRequested", "revision=\(document.revision) switchingSpace=\(isSwitchingSpace)")
+        }
         print("VELLIX-OPEN select CALLED id=\(document.id) docSpace=\(document.spaceID ?? "nil") selectedSpace=\(selectedSpaceID ?? "nil") switching=\(isSwitchingSpace)")
         if tagNavigationTarget?.documentID != document.id { tagNavigationTarget = nil }
         guard !isSwitchingSpace, document.spaceID == selectedSpaceID else {
@@ -627,8 +825,160 @@ final class AppEnvironment: ObservableObject {
             self.cancelDocumentOpening()
             self.errorMessage = "This page could not be prepared. Please try opening it again."
         }
+        #endif
     }
 
+    #if os(iOS)
+    private func requestDocumentOpening(id: String, spaceID: String?, openingTrace: PennedDocumentOpenTrace?) {
+        let intent = openingTrace ?? (PennedDocumentOpenTrace.enabled ? PennedDocumentOpenTrace(documentID: id, source: "select") : nil)
+        let started = intent?.event("request-start", documentOpeningTraceState)
+        guard !isSwitchingSpace, database.isAccessible, spaceID == selectedSpaceID else {
+            intent?.event("request-rejected", "reason=\(isSwitchingSpace ? "switching-space" : !database.isAccessible ? "database-inaccessible" : "space-mismatch") \(documentOpeningTraceState) spaceMatches=\(spaceID == selectedSpaceID)", since: started)
+            return
+        }
+        if tagNavigationTarget?.documentID != id { tagNavigationTarget = nil }
+        let replacesRequest = pendingDocumentID == nil ? nil : pendingDocumentRequestID
+        let replacesDocument = pendingDocumentID
+        cancelDocumentOpening(reason: "superseded-by-opening")
+        if selectedDocumentID == nil { calendarDocumentReturnID = nil }
+        let requestID = pendingDocumentRequestID
+        let trace = intent?.accepted(requestID: requestID)
+        pendingOpeningTrace = trace
+        trace?.event("request-uuid-assigned")
+        let timing = PennedDocumentOpeningTiming(trace: trace)
+        pendingDocumentID = id
+        trace?.event("request-accepted", "\(documentOpeningTraceState) replacesRequest=\(replacesRequest?.uuidString ?? "-") replacesDocument=\(replacesDocument ?? "-")", since: started)
+        let database = database
+        pendingDocumentLookup = Task { [weak self] in
+            let lookupStarted = trace?.event("document-lookup-start")
+            let lookup = Task.detached(priority: .userInitiated) {
+                let repository = DocumentRepository(database: database)
+                repository.spaceID = spaceID ?? "$unavailable"
+                return try repository.document(id: id)
+            }
+            do {
+                let record = try await withTaskCancellationHandler { try await lookup.value } onCancel: { lookup.cancel() }
+                trace?.event("document-lookup-completed", "found=\(record != nil) trashed=\(record?.isTrashed == true)", since: lookupStarted)
+                guard !Task.isCancelled, let self else {
+                    trace?.event("callback-discarded", "callback=lookup reason=\(Task.isCancelled ? "task-cancelled" : "environment-released")")
+                    return
+                }
+                guard self.isCurrentOpening(id, requestID: requestID, trace: trace, caller: "lookup") else { return }
+                self.pendingDocumentLookup = nil
+                guard let record, !record.isTrashed else {
+                    self.cancelDocumentOpening(reason: record == nil ? "document-missing" : "document-trashed")
+                    return
+                }
+                timing.mark("document-read")
+                let preparationStarted = trace?.event("model-preparation-start")
+                let payloads = try self.collections.openingPayloads(for: record)
+                let model = self.editorCache.prepareForOpening(record, payloads: payloads, timing: timing)
+                timing.mark("model-prepared")
+                trace?.event("model-preparation-completed", "matchesDocument=\(model.documentID == id) \(model.session.openingReadinessState(for: id))", since: preparationStarted)
+                guard model.documentID == id else {
+                    throw VellixError.editorBridge(model.errorMessage ?? "This page could not be prepared.")
+                }
+                self.awaitEditorPresentation(model, id: id, requestID: requestID, timing: timing)
+            } catch {
+                trace?.event("opening-work-failed", "error=\(PennedDocumentOpenTrace.errorCode(error))", since: lookupStarted)
+                guard !Task.isCancelled, let self else {
+                    trace?.event("callback-discarded", "callback=lookup-or-preparation-error reason=\(Task.isCancelled ? "task-cancelled" : "environment-released")")
+                    return
+                }
+                guard self.isCurrentOpening(id, requestID: requestID, trace: trace, caller: "lookup-or-preparation-error") else { return }
+                self.cancelDocumentOpening(reason: "lookup-or-preparation-failed")
+                timing.mark("failed")
+                self.report(error)
+            }
+        }
+        let timeoutStarted = trace?.event("timeout-scheduled", "delayMS=12000")
+        pendingDocumentTimeout = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(12)) } catch {
+                trace?.event("timeout-cancelled", "reason=sleep-interrupted", since: timeoutStarted)
+                return
+            }
+            trace?.event("timeout-fired", "ownsRequest=\(self?.pendingDocumentRequestID == requestID && self?.pendingDocumentID == id)", since: timeoutStarted)
+            guard let self else {
+                trace?.event("timeout-skipped-cleanup", "reason=environment-released")
+                return
+            }
+            guard self.isCurrentOpening(id, requestID: requestID, trace: trace, caller: "timeout") else {
+                trace?.event("timeout-skipped-cleanup", "reason=\(self.openingValidityFailure(id, requestID: requestID)) \(self.documentOpeningTraceState)")
+                return
+            }
+            self.cancelDocumentOpening(reason: "timeout")
+            trace?.event("timeout-cleared-pending", self.documentOpeningTraceState)
+            timing.mark("timeout")
+            self.errorMessage = "This page could not be prepared. Please try opening it again."
+        }
+    }
+
+    private func isCurrentOpening(_ id: String, requestID: UUID, trace: PennedDocumentOpenTrace?, caller: String) -> Bool {
+        let current = pendingDocumentRequestID == requestID && pendingDocumentID == id && !isSwitchingSpace && database.isAccessible
+        trace?.event(current ? "request-validated" : "callback-discarded",
+                     "callback=\(caller) reason=\(openingValidityFailure(id, requestID: requestID)) uuidMatches=\(pendingDocumentRequestID == requestID) pendingMatches=\(pendingDocumentID == id) \(documentOpeningTraceState)")
+        return current
+    }
+
+    private func openingValidityFailure(_ id: String, requestID: UUID) -> String {
+        if pendingDocumentRequestID != requestID { return "request-uuid-mismatch" }
+        if pendingDocumentID != id { return "pending-document-mismatch" }
+        if isSwitchingSpace { return "switching-space" }
+        if !database.isAccessible { return "database-inaccessible" }
+        return "none"
+    }
+
+    private func awaitEditorPresentation(_ model: DocumentEditorModel, id: String, requestID: UUID,
+                                         timing: PennedDocumentOpeningTiming) {
+        let trace = timing.trace
+        let started = trace?.event("await-presentation-start", model.session.openingReadinessState(for: id))
+        func present() {
+            guard isCurrentOpening(id, requestID: requestID, trace: trace, caller: "present"),
+                  model.session.hasLoadedDocument(id), model.session.isPresentationReady else {
+                trace?.event("navigation-rejected", "\(documentOpeningTraceState) \(model.session.openingReadinessState(for: id)) observerActive=false", since: started)
+                return
+            }
+            cancelDocumentOpening(reason: "presentation-succeeded")
+            timing.mark("workspace-selected")
+            selectedDocumentID = id
+            trace?.event("navigation-selected", documentOpeningTraceState, since: started)
+            let documents = documents, documentID = id
+            Task.detached(priority: .utility) { try? documents.markOpened(id: documentID) }
+        }
+        if model.session.isPresentationReady, model.session.hasLoadedDocument(id) {
+            timing.mark("presentation-ready", route: "retained-document")
+            trace?.event("presentation-reused", model.session.openingReadinessState(for: id))
+            present()
+            return
+        }
+        trace?.event("readiness-observer-start", "oneShot=true")
+        pendingDocumentPresentation = Publishers.CombineLatest(model.session.$isPresentationReady, model.session.$bridgeErrorMessage)
+            .filter { ready, error in
+                let passes = ready || error != nil
+                trace?.event("readiness-event", "emittedReady=\(ready) emittedErrorPresent=\(error != nil) passesFilter=\(passes)")
+                return passes
+            }.first().receive(on: DispatchQueue.main)
+            .sink { [weak self] ready, error in
+                trace?.event("readiness-observer-delivered", "emittedReady=\(ready) emittedErrorPresent=\(error != nil) observerActive=false", since: started)
+                guard let self else {
+                    trace?.event("callback-discarded", "callback=readiness-observer reason=environment-released observerActive=false")
+                    return
+                }
+                guard self.isCurrentOpening(id, requestID: requestID, trace: trace, caller: "readiness-observer") else {
+                    trace?.event("navigation-rejected", "reason=request-not-current observerActive=false")
+                    return
+                }
+                if let error {
+                    trace?.event("readiness-observer-failed", "\(model.session.openingReadinessState(for: id)) observerActive=false")
+                    self.cancelDocumentOpening(reason: "bridge-error")
+                    timing.mark("failed")
+                    self.errorMessage = error
+                } else if ready {
+                    present()
+                }
+            }
+    }
+    #else
     private func finishDocumentOpening(_ model: DocumentEditorModel, document: DocumentRecord) {
         print("VELLIX-OPEN finishDocumentOpening ENTER id=\(document.id) pending=\(pendingDocumentID ?? "nil") ready=\(model.session.isPresentationReady)")
         guard pendingDocumentID == document.id else { print("VELLIX-OPEN finishDocumentOpening BAIL pending-mismatch"); return }
@@ -664,13 +1014,20 @@ final class AppEnvironment: ObservableObject {
                 }
         }
     }
+    #endif
 
-    private func cancelDocumentOpening() {
+    private func cancelDocumentOpening(reason: String = "caller-cancelled", file: StaticString = #fileID, line: UInt = #line) {
+        pendingOpeningTrace?.event("request-cancelled", "reason=\(reason) caller=\(file):\(line) hasObserverHandle=\(pendingDocumentPresentation != nil) hasTimeoutHandle=\(pendingDocumentTimeout != nil) \(documentOpeningTraceState)")
+        #if os(iOS)
+        pendingDocumentLookup?.cancel()
+        pendingDocumentLookup = nil
+        #endif
         pendingDocumentPresentation = nil
         pendingDocumentTimeout?.cancel()
         pendingDocumentTimeout = nil
         pendingDocumentID = nil
         pendingDocumentRequestID = UUID()
+        pendingOpeningTrace = nil
     }
 
     func setTaskCompleted(id: String, completed: Bool, expectedOccurrenceID: String? = nil, skipped: Bool = false) async throws {
@@ -682,12 +1039,6 @@ final class AppEnvironment: ObservableObject {
         if let model {
             if model.session.isLoadingDocument { try model.saveCurrentContent() }
             else { try await model.captureAndSave() }
-        }
-        for id in [DocumentTaskPages.detailID(id), DocumentTaskPages.historyID(id)] {
-            if let page = editorCache.model(for: id) {
-                if page.session.isLoadingDocument { try page.saveCurrentContent() }
-                else { try await page.captureAndSave() }
-            }
         }
         guard generation == workspaceGeneration, !isSwitchingSpace else { throw VellixError.impossibleMove("The active Space changed. Reopen the task.") }
         guard let current = try tasks.all(includeTemplates: true).first(where: { $0.id == id }) else {
@@ -722,6 +1073,10 @@ final class AppEnvironment: ObservableObject {
         return document
     }
 
+    func ownsEditorPresentation(documentID: String) -> Bool {
+        selectedDocumentID == documentID && !isSwitchingSpace && !isSettingsPresented
+    }
+
     func returnFromDocument(_ document: DocumentRecord) {
         if selectedDestination == .calendar, calendarDocumentReturnID == document.id {
             selectedDocumentID = nil
@@ -729,6 +1084,11 @@ final class AppEnvironment: ObservableObject {
         } else if let parentID = document.parentDocumentID,
            let parent = editorCache.model(for: parentID)?.document ?? (try? documents.document(id: parentID)),
            !parent.isTrashed {
+            #if os(iOS)
+            editorCache.model(for: document.id)?.session.renderRecovery.record("back-target-selected",
+                ["target": parent.id, "targetParent": parent.parentDocumentID ?? "-",
+                 "targetCached": editorCache.model(for: parent.id) != nil])
+            #endif
             select(parent)
         } else {
             selectedDocumentID = nil
@@ -912,6 +1272,10 @@ final class AppEnvironment: ObservableObject {
         isSwitchingSpace = true
         defer { isSwitchingSpace = false }
         try await commitWorkspaceEdits()
+        #if os(iOS)
+        editorCache.discardStandbyRuntime()
+        #endif
+        descriptorBackfill?.cancel()
         await taskNotifications.closeLibrary()
         calendar.deactivate()
         documentPreviews.resetForSpaceChange()
@@ -921,18 +1285,64 @@ final class AppEnvironment: ObservableObject {
         database.invalidate()
     }
 
-    func importLibraryChanges(_ apply: () throws -> Set<String>) async throws {
+    @discardableResult
+    func importLibraryChanges(deferringWhileEditorOpen: Bool = false, _ apply: () throws -> Set<String>) async throws -> Bool {
+        try await withLibraryImportPreparation(deferringWhileEditorOpen: deferringWhileEditorOpen) {
+            _ = try apply()
+            try reloadAfterLibraryImport()
+        }
+    }
+
+    func librarySyncProtection(alsoProtecting visibleDocumentID: String? = nil) -> LibrarySyncProtection {
+        let visible = [selectedDocumentID, pendingDocumentID, visibleDocumentID].compactMap { $0 }
+        var protection = LibrarySyncProtection(documentIDs: Set(visible))
+        if !visible.isEmpty, let selectedSpaceID { protection.spaceIDs.insert(selectedSpaceID) }
+        for model in editorCache.preparedModels where protection.documentIDs.contains(model.documentID) || model.hasUnsavedLibraryContent {
+            protection.documentIDs.insert(model.documentID)
+            protection.documentIDs.formUnion(model.pageReferenceIDs)
+            protection.attachmentPaths.formUnion(EditorAttachment.paths(in: model.document?.tipTapJSON ?? ""))
+        }
+        return protection
+    }
+
+    func importAutomaticLibraryChanges(_ apply: LibrarySyncEngine.ApplyIncoming) async throws -> Bool {
+        try Task.checkCancellation()
+        guard database.isAccessible else { throw LibraryError.staleWorkspace }
+        // The inbox is already durable. Don't hold a CloudKit delegate call
+        // open while an editor/Space transition owns the workspace.
+        guard !isSwitchingSpace else { return false }
+        let protection = librarySyncProtection()
+        if try apply(protection) { try reloadAfterLibraryImport(protectingEditorIDs: protection.documentIDs) }
+        return true
+    }
+
+    private var hasOpenOrOpeningDocument: Bool {
+        selectedDocumentID != nil || pendingDocumentID != nil
+    }
+
+    @discardableResult
+    func withLibraryImportPreparation(deferringWhileEditorOpen: Bool = false, _ perform: () async throws -> Void) async throws -> Bool {
+        // Check again after waiting: a document can open while another operation owns the workspace.
+        if deferringWhileEditorOpen, hasOpenOrOpeningDocument { return false }
         await waitForWorkspace()
         guard database.isAccessible else { throw LibraryError.staleWorkspace }
+        if deferringWhileEditorOpen, hasOpenOrOpeningDocument { return false }
         isSwitchingSpace = true
         defer { isSwitchingSpace = false }
-        try await commitWorkspaceEdits()
         let models = editorCache.preparedModels
         let editable = models.map { $0.session.editingEnabled }
-        models.forEach { $0.session.setEditable(false) }
+        models.forEach { $0.session.setEditable(false, preservingBlockSelection: true) }
         defer { for (index, model) in models.enumerated() { model.session.setEditable(editable[index]) } }
-        _ = try apply()
-        for model in models {
+        try await commitWorkspaceEdits(preservingBlockSelection: true)
+        if deferringWhileEditorOpen, hasOpenOrOpeningDocument { return false }
+        try await perform()
+        return true
+    }
+
+    // Reload from the committed rows without saving any pre-import editor state.
+    func reloadAfterLibraryImport(protectingEditorIDs protected: Set<String> = []) throws {
+        guard database.isAccessible else { throw LibraryError.staleWorkspace }
+        for model in editorCache.preparedModels where !protected.contains(model.documentID) {
             if let current = try documents.document(id: model.documentID), !current.isTrashed, !current.isArchived {
                 try model.reloadAfterLibrarySync()
             } else {
@@ -946,10 +1356,12 @@ final class AppEnvironment: ObservableObject {
             if createsDefaultSpace { activateSpaceAfterSaving(try spaces.fallback(preferred: preferred)) }
             else { activateSpaceAfterSaving(try spaces.existingFallback(preferred: preferred)) }
         }
-        documentPreviews.resetForSpaceChange()
-        collections.resetForSpaceChange()
-        if let selectedDocumentID { collections.watchDocument(selectedDocumentID) }
-        refresh()
+        if protected.isEmpty {
+            documentPreviews.resetForSpaceChange()
+            collections.resetForSpaceChange()
+            if let selectedDocumentID { collections.watchDocument(selectedDocumentID) }
+        }
+        refresh(protectingEditorIDs: protected)
         calendar.spaceDidChange()
         taskNotifications.refresh()
     }
@@ -958,15 +1370,19 @@ final class AppEnvironment: ObservableObject {
         while isSwitchingSpace { await withCheckedContinuation { workspaceWaiters.append($0) } }
     }
 
-    private func commitWorkspaceEdits() async throws {
-        let models = editorCache.preparedModels
+    private func commitWorkspaceEdits(preservingBlockSelection: Bool = false) async throws {
+        let models = editorCache.preparedModels.filter { !$0.isReadOnlyWarmup }
         let enabled = models.map { $0.session.editingEnabled }
-        defer { for (index, model) in models.enumerated() { model.session.setEditable(enabled[index]) } }
-        models.forEach { $0.session.setEditable(false) }
+        defer { for (index, model) in models.enumerated() {
+            model.session.setEditable(enabled[index], preservingBlockSelection: preservingBlockSelection)
+        } }
+        models.forEach { $0.session.setEditable(false, preservingBlockSelection: preservingBlockSelection) }
         for model in models {
             await model.waitForPersistentOperations()
             try model.prepareForSpaceChange?()
-            if model.session.isReady && !model.session.isLoadingDocument { try await model.captureAndSave(suspendingEditing: true) }
+            if model.session.isReady && !model.session.isLoadingDocument {
+                try await model.captureAndSave(suspendingEditing: true, preservingBlockSelection: preservingBlockSelection)
+            }
             else { try model.saveCurrentContent() }
         }
     }
@@ -983,6 +1399,9 @@ final class AppEnvironment: ObservableObject {
 
     private func activateSpaceAfterSaving(_ id: String?) {
         cancelDocumentOpening()
+        #if os(iOS)
+        editorCache.discardStandbyRuntime()
+        #endif
         selectedDocumentID = nil
         // Successful commits precede cache removal, which intentionally cancels pending saves.
         for model in editorCache.preparedModels { editorCache.remove(documentID: model.documentID) }

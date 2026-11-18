@@ -13,7 +13,7 @@ struct TagBrowserView: View {
     private let accent = VellixSurface.lilac
     private var columnCount: Int {
         workspace == nil ? 2 : (availableWidth > 0
-            ? PadWorkspaceMetrics.galleryColumns(width: max(0, availableWidth - 32), preferred: preferredColumns) : preferredColumns)
+            ? PadWorkspaceMetrics.galleryColumns(width: PadWorkspaceMetrics.galleryWidth(available: availableWidth), preferred: preferredColumns) : preferredColumns)
     }
     private var cardWidth: CGFloat? {
         workspace != nil && availableWidth > 0
@@ -35,8 +35,10 @@ struct TagBrowserView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text(title).font(.system(.largeTitle, design: .rounded).weight(.black))
-                    .fixedSize(horizontal: false, vertical: true)
+                if workspace != nil {
+                    Text(title).font(.system(.headline, design: .rounded).weight(.black))
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
                 LibrarySearchField(query: $query, scope: $scope)
                     .font(.system(.body, design: .rounded).weight(.black))
                     .fontDesign(.rounded).fontWeight(.black)
@@ -81,13 +83,21 @@ struct TagBrowserView: View {
                 }
             }
             .frame(width: workspace != nil && availableWidth > 0
-                ? PadWorkspaceMetrics.galleryWidth(available: availableWidth, columns: columnCount) : nil, alignment: .leading)
-            .padding(.horizontal, 16).frame(maxWidth: .infinity, alignment: workspace == nil ? .center : .leading)
+                ? PadWorkspaceMetrics.galleryWidth(available: availableWidth) : nil, alignment: .leading)
+            .padding(.horizontal, workspace == nil ? 16 : PadWorkspaceMetrics.galleryHorizontalInset)
+            .frame(maxWidth: .infinity, alignment: workspace == nil ? .center : .leading)
             .padding(.top, 12).padding(.bottom, 110)
         }
         .scrollPosition($scrollPosition)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { availableWidth = $0 }
-        .background(VellixSurface.workspace).navigationTitle("").navigationBarBackButtonHidden()
+        .background {
+            #if os(iOS)
+            PadWorkspacePageBackground(fallback: VellixSurface.workspace)
+            #else
+            VellixSurface.workspace
+            #endif
+        }
+        .navigationTitle("").navigationBarBackButtonHidden()
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -98,6 +108,11 @@ struct TagBrowserView: View {
                     else { environment.selectedTagIDs = [] }
                 } label: { LibraryIcon(name: "chevleft", size: 18) }.accessibilityLabel("Back")
             }
+            ToolbarItem(placement: .primaryAction) {
+                Text(title).font(.system(.headline, design: .rounded).weight(.black))
+                    .lineLimit(1)
+            }
+            .sharedBackgroundVisibility(.hidden)
         }
         .task(id: requestKey) { reload() }
         .onReceive(NotificationCenter.default.publisher(for: .pennedTagsChanged)) { _ in reload() }
@@ -110,7 +125,11 @@ struct TagBrowserView: View {
 
     private func card(_ result: TaggedDocument) -> some View {
         ZStack(alignment: .topTrailing) {
-            Button { environment.tagNavigationTarget = nil; environment.select(result.document) } label: {
+            Button {
+                let trace = environment.traceDocumentCardTap(id: result.id, source: "tag-results", workspaceBusy: workspace?.isBusy)
+                environment.tagNavigationTarget = nil
+                environment.select(result.document, openingTrace: trace)
+            } label: {
                 LibraryDocumentPreview(document: result.document, showsStar: false, visibleHeightFraction: LibraryDocumentPreview.phoneGalleryHeightFraction
                     ?? (workspace == nil ? 1 : PadWorkspaceMetrics.galleryPreviewHeightFraction))
             }.buttonStyle(.plain).contextMenu { DocumentContextMenu(document: result.document) }

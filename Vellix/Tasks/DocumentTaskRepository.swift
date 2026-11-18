@@ -61,11 +61,11 @@ nonisolated enum DocumentTaskIndex {
             END;
             INSERT INTO taskDocumentChanges SELECT id FROM documents;
             """)
-        _ = try reconcile(in: db, projectsPages: false)
+        _ = try reconcile(in: db)
     }
 
     @discardableResult
-    static func reconcile(in db: Database, projectsPages: Bool = true) throws -> Bool {
+    static func reconcile(in db: Database) throws -> Bool {
         let documentIDs = try String.fetchAll(db, sql: "SELECT documentID FROM taskDocumentChanges")
         guard !documentIDs.isEmpty else { return false }
         try db.execute(sql: "DELETE FROM taskDocumentChanges")
@@ -104,16 +104,6 @@ nonisolated enum DocumentTaskIndex {
                                    arguments: [completion.id, task.id, completion.scheduledAt, completion.completedAt])
                 }
             }
-        }
-        if projectsPages {
-            var sources = Set(documentIDs)
-            for id in documentIDs {
-                if let taskID = DocumentTaskPages.taskID(for: id),
-                   let source = try String.fetchOne(db, sql: "SELECT documentID FROM documentTasks WHERE id=?", arguments: [taskID]) {
-                    sources.insert(source)
-                }
-            }
-            for id in sources { try DocumentTaskPages.reconcile(sourceID: id, in: db) }
         }
         // Even an ancestor with no tasks can change eligibility of every nested task.
         return changed || !documentIDs.isEmpty
@@ -171,8 +161,6 @@ nonisolated enum DocumentTaskIndex {
     }
 }
 
-// Stable page identities make this an idempotent projection of the source task,
-// including after undo, sync, relaunch, or moving a task to another document.
 nonisolated enum DocumentTaskPages {
     static func detailID(_ taskID: String) -> String { "vellix-task-page:" + taskID }
     static func historyID(_ taskID: String) -> String { "vellix-task-history:" + taskID }
@@ -293,31 +281,54 @@ final class DocumentTaskRepository: @unchecked Sendable {
     var spaceID: String?
     init(database: AppDatabase) { self.database = database }
 
-    func all(includeTemplates: Bool = false, includeInactive: Bool = false) throws -> [DocumentTaskRecord] {
+    func all(includeTemplates: Bool = false, includeInactive: Bool = false, includeText: Bool = true) throws -> [DocumentTaskRecord] {
         try database.read { db in
-            let documents = try DocumentRecord.fetchAll(db, sql: "SELECT d.* FROM documents d JOIN spaces s ON s.id=d.spaceID WHERE \(LibraryAccess.spaces("d.spaceID")) AND s.isArchived=0 AND (? IS NULL OR d.spaceID=?)", arguments: [spaceID, spaceID])
-            let byID = Dictionary(uniqueKeysWithValues: documents.map { ($0.id, $0) })
+            // Follow ancestry only for documents with tracked tasks. Ancestors
+            // contribute eligibility and a root id, never a rich-text body.
+            let documents = try Row.fetchAll(db, sql: """
+                WITH RECURSIVE relevant(id) AS (
+                    SELECT d.id FROM documentTasks t JOIN documents d ON d.id = t.documentID
+                    JOIN spaces s ON s.id = d.spaceID
+                    WHERE \(LibraryAccess.spaces("d.spaceID")) AND s.isArchived=0 AND (? IS NULL OR d.spaceID=?)
+                    UNION
+                    SELECT p.id FROM relevant r JOIN documents d ON d.id = r.id
+                    JOIN documents p ON p.id = d.parentDocumentID JOIN spaces s ON s.id = p.spaceID
+                    WHERE \(LibraryAccess.spaces("p.spaceID")) AND s.isArchived=0 AND (? IS NULL OR p.spaceID=?)
+                )
+                SELECT d.id, d.parentDocumentID, d.isArchived, d.isTrashed, d.templateID, d.title
+                FROM relevant r JOIN documents d ON d.id = r.id
+                """, arguments: [spaceID, spaceID, spaceID, spaceID])
+            let byID = Dictionary(uniqueKeysWithValues: documents.map { ($0["id"] as String, $0) })
             var textCache: [String: [String: String]] = [:]
-            return try Row.fetchAll(db, sql: "SELECT * FROM documentTasks ORDER BY scheduledAt IS NULL, scheduledAt, id").compactMap { row in
+            let tasks = try Row.fetchAll(db, sql: """
+                SELECT t.* FROM documentTasks t JOIN documents d ON d.id = t.documentID
+                JOIN spaces s ON s.id = d.spaceID
+                WHERE \(LibraryAccess.spaces("d.spaceID")) AND s.isArchived=0 AND (? IS NULL OR d.spaceID=?)
+                ORDER BY t.scheduledAt IS NULL, t.scheduledAt, t.id
+                """, arguments: [spaceID, spaceID])
+            return try tasks.compactMap { row in
                 let sourceID: String = row["documentID"]
                 guard let document = byID[sourceID], let json = (row["metadataJSON"] as String).data(using: .utf8) else { return nil }
                 let metadata = try JSONDecoder().decode(DocumentTaskMetadata.self, from: json)
-                var active = !document.isTrashed && !document.isArchived
-                var template = document.templateID != nil
-                var parent = document.parentDocumentID
-                var rootID = document.id
-                var seen: Set<String> = [document.id]
+                var active = !(document["isTrashed"] as Bool) && !(document["isArchived"] as Bool)
+                var template = (document["templateID"] as String?) != nil
+                var parent: String? = document["parentDocumentID"]
+                var rootID = sourceID
+                var seen: Set<String> = [sourceID]
                 while let id = parent, seen.insert(id).inserted, let ancestor = byID[id] {
-                    active = active && !ancestor.isTrashed && !ancestor.isArchived
-                    template = template || ancestor.templateID != nil
-                    rootID = ancestor.id
-                    parent = ancestor.parentDocumentID
+                    active = active && !(ancestor["isTrashed"] as Bool) && !(ancestor["isArchived"] as Bool)
+                    template = template || (ancestor["templateID"] as String?) != nil
+                    rootID = id
+                    parent = ancestor["parentDocumentID"]
                 }
                 guard (includeTemplates || !template), (includeInactive || active) else { return nil }
                 let blockID: String = row["blockID"]
-                if textCache[sourceID] == nil { textCache[sourceID] = DocumentTaskIndex.texts(in: document.tipTapJSON) }
-                return DocumentTaskRecord(documentID: sourceID, rootDocumentID: rootID, parentDocumentID: document.parentDocumentID,
-                    blockID: blockID, documentTitle: document.title,
+                if includeText, textCache[sourceID] == nil {
+                    let json = try String.fetchOne(db, sql: "SELECT tipTapJSON FROM documents WHERE id=?", arguments: [sourceID])
+                    textCache[sourceID] = json.map(DocumentTaskIndex.texts(in:)) ?? [:]
+                }
+                return DocumentTaskRecord(documentID: sourceID, rootDocumentID: rootID, parentDocumentID: document["parentDocumentID"],
+                    blockID: blockID, documentTitle: document["title"],
                     text: textCache[sourceID]?[blockID] ?? "",
                     checked: row["checked"], isTemplate: template, isActive: active, metadata: metadata)
             }

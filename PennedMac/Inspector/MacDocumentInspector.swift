@@ -21,7 +21,7 @@ struct MacDocumentInspector: View {
                 ContentUnavailableView { Label { Text("No Document Selected") } icon: { LibraryIcon(name: "linedpages", size: 32) } }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }.frame(maxHeight: .infinity, alignment: .top).background(.regularMaterial)
+        }.frame(maxHeight: .infinity, alignment: .top)
     }
 }
 

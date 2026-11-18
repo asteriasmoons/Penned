@@ -79,7 +79,7 @@ final class CollectionRepository {
 
     func collectionID(forEntry documentID: String) throws -> String? {
         try database.read { db in
-            _ = try SpaceOwnership.document(documentID, scope: documents.spaceID, in: db)
+            _ = try requireDocumentSpace(documentID, in: db)
             return try String.fetchOne(db, sql: """
             SELECT e.collectionID FROM collectionEntries e JOIN documents d ON d.id = e.documentID
             JOIN collections c ON c.id = e.collectionID JOIN documents p ON p.id = c.documentID
@@ -88,24 +88,40 @@ final class CollectionRepository {
             """, arguments: [documentID]) }
     }
 
-    func collectionIDs(forDocument documentID: String) throws -> [String] {
+    private func requireDocumentSpace(_ documentID: String, in db: Database) throws -> String {
+        guard let row = try Row.fetchOne(db, sql: "SELECT spaceID FROM documents WHERE id=?", arguments: [documentID]),
+              documents.spaceID == nil || row["spaceID"] as String? == documents.spaceID else {
+            throw VellixError.documentNotFound(documentID)
+        }
+        let spaceID: String? = row["spaceID"]
+        try LibraryAccess.requireSpace(spaceID, in: db)
+        guard let spaceID else { throw LibraryError.wrongOwner }
+        return spaceID
+    }
+
+    func collectionIDs(forDocument documentID: String, referencedCollectionIDs: Set<String>? = nil) throws -> [String] {
         try database.read { db in
-            let owner = try SpaceOwnership.document(documentID, scope: documents.spaceID, in: db)
-            let json = try String.fetchOne(db, sql: "SELECT tipTapJSON FROM documents WHERE id = ?", arguments: [documentID]) ?? "{}"
-            let referencedIDs = TipTapContentAnalyzer.collectionIDs(in: json).sorted()
+            let spaceID = try requireDocumentSpace(documentID, in: db)
+            let referencedIDs: [String]
+            if let referencedCollectionIDs {
+                referencedIDs = referencedCollectionIDs.sorted()
+            } else {
+                let json = try String.fetchOne(db, sql: "SELECT tipTapJSON FROM documents WHERE id = ?", arguments: [documentID]) ?? "{}"
+                referencedIDs = TipTapContentAnalyzer.collectionIDs(in: json).sorted()
+            }
             let references = referencedIDs.isEmpty ? "" : " OR c.id IN (\(Array(repeating: "?", count: referencedIDs.count).joined(separator: ",")))"
             return try String.fetchAll(db, sql: """
                 SELECT c.id FROM collections c JOIN documents d ON c.documentID = d.id
                 WHERE (d.id = ?\(references))
                     AND d.spaceID = ? AND d.isTrashed = 0 AND d.isArchived = 0 ORDER BY c.createdAt, c.id
-                """, arguments: StatementArguments([documentID] + referencedIDs + [owner.spaceID!]))
+                """, arguments: StatementArguments([documentID] + referencedIDs + [spaceID]))
         }
     }
 
     func snapshot(id: String) throws -> CollectionSnapshot {
         try database.read { db in
             let record = try Self.requireCollection(id, in: db)
-            _ = try SpaceOwnership.document(record.documentID, scope: documents.spaceID, in: db)
+            _ = try requireDocumentSpace(record.documentID, in: db)
             let fields = try CollectionField.fetchAll(db, sql: "SELECT * FROM collectionFields WHERE collectionID = ? ORDER BY position, id", arguments: [id])
             let views = try CollectionViewRecord.fetchAll(db, sql: "SELECT * FROM collectionViews WHERE collectionID = ? ORDER BY position, id", arguments: [id])
             // Agenda projections do not load any rich-text document bodies.

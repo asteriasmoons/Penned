@@ -10,6 +10,11 @@ enum MobileEditorInteractions {
   spacing.textContent = `
     .tiptap-editor .vellix-table-wrapper:has(+ .vellix-page-reference:not([hidden])) { margin-bottom: 26px; }
     .tiptap-editor .vellix-page-reference:not([hidden]) + .vellix-table-wrapper { margin-top: 26px; }
+    .tiptap-editor.penned-mobile-block-layout [data-vellix-divider] {
+      -webkit-user-select: none !important;
+      user-select: none !important;
+      -webkit-touch-callout: none;
+    }
     .tiptap-editor [data-vellix-divider]:is([data-divider-style="thinLine"], [data-divider-style="thickLine"]) { min-height: 20px !important; }
     .tiptap-editor [data-divider-style="thinLine"] .vellix-divider-line {
       width: calc(100% - 12px); height: 1px; border-radius: 1px;
@@ -19,12 +24,11 @@ enum MobileEditorInteractions {
       width: calc(100% - 12px); height: 2px; border-radius: 1px;
       background: currentColor; opacity: 1;
     }
+    .tiptap-editor [data-divider-style="thinLine"][data-divider-color] .vellix-divider-line { opacity: 1; }
   `;
   document.head.appendChild(spacing);
   editor.on("destroy", () => spacing.remove());
   const command = window.tiptapCommand;
-  let suppressedSlash = null;
-  let closingSlash = false;
   let historySignature = null;
 
   const editable = () => editor.isEditable &&
@@ -40,64 +44,22 @@ enum MobileEditorInteractions {
     });
   }
 
-  function slashRange() {
-    const { empty, $from } = editor.state.selection;
-    if (!empty || !$from.parent.isTextblock) return null;
-    const before = $from.parent.textBetween(0, $from.parentOffset, "\n", "\0");
-    const match = before.match(/(?:^|\s)\/([a-zA-Z0-9]*)$/);
-    return match ? { from: $from.pos - match[1].length - 1, to: $from.pos } : null;
-  }
-
-  function suppressSlash(from, force = false) {
-    if (suppressedSlash === from && !force) return;
-    suppressedSlash = from;
-    window.webkit.messageHandlers.tiptap.postMessage({
-      kind: "mobileSlashSuppression", payload: { suppressed: from !== null },
-    });
-  }
-
-  function closeSlash() {
-    // Escape closes the shared editor's private menu state without removing the slash.
-    closingSlash = true;
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-    closingSlash = false;
-  }
-
-  function dismissSlash() {
-    suppressSlash(slashRange()?.from ?? null, true);
-    closeSlash();
-    return true;
-  }
-
-  function keepSlashDismissed() {
-    if (suppressedSlash === null) return;
-    if (slashRange()?.from === suppressedSlash) closeSlash();
-    else suppressSlash(null);
-  }
-  // Release the native gate before the shared update listeners publish a new trigger.
-  editor.on("transaction", () => {
-    if (suppressedSlash !== null && slashRange()?.from !== suppressedSlash) suppressSlash(null);
-    publishHistory();
-  });
-  editor.on("update", keepSlashDismissed);
-  editor.on("selectionUpdate", keepSlashDismissed);
-  document.addEventListener("keydown", event => {
-    if (event.key === "Escape" && !closingSlash) dismissSlash();
-  }, true);
+  editor.on("transaction", () => publishHistory());
 
   function dividerStyle(value) {
     if (value === "tinyDots") return "dottedCircles";
     if (value === "fourDots") return "fourCircles";
-    return ["thinLine", "thickLine", "dottedCircles", "fourCircles"].includes(value) ? value : "thinLine";
+    return ["thinLine", "thickLine", "dottedCircles", "fourCircles", "washiTape"].includes(value) ? value : "thinLine";
   }
 
-  function insertDivider(style, range = null) {
+  function insertDivider(style, range = null, blockID = crypto.randomUUID()) {
     if (!editable()) return false;
-    const chain = editor.chain().focus();
+    const chain = editor.chain();
+    if (style !== "washiTape") chain.focus();
     if (range) chain.deleteRange(range);
     return chain.command(({ tr, state, commands }) => {
       const { empty, $from } = tr.selection;
-      const divider = state.schema.nodes.divider.create({ id: crypto.randomUUID(), style: dividerStyle(style) });
+      const divider = state.schema.nodes.divider.create({ id: blockID, style: dividerStyle(style) });
       if (!empty || $from.parent.type.name !== "paragraph" || $from.parent.content.size !== 0) {
         return commands.insertContent(divider.toJSON());
       }
@@ -128,6 +90,7 @@ enum MobileEditorInteractions {
 
     const end = $from.after();
     const TextSelection = state.selection.constructor;
+    window.PennedKeyboardTrace?.record("mobile.divider.blur", { source: "backspace-divider" }, true);
     editor.view.dom.blur();
     const handled = editor.chain().command(({ tr, commands }) => {
       tr.delete(start, end);
@@ -171,6 +134,7 @@ enum MobileEditorInteractions {
     const divider = target.closest("[data-vellix-divider]");
     let position;
     if (divider) {
+      if (divider.dataset.dividerStyle === "washiTape") return false;
       const rect = divider.getBoundingClientRect();
       if (rect.height <= 0 || event.clientY < rect.top + rect.height / 2) return false;
       position = editor.view.posAtDOM(divider, 0);
@@ -212,6 +176,15 @@ enum MobileEditorInteractions {
     }
   }, true);
 
+  // Dividers use Penned block selection, not WebKit's native atom selection.
+  // Keep the existing click-to-type behavior below the divider.
+  editor.view.dom.addEventListener("mousedown", event => {
+    if (event.button === 0 && editable() && event.target.closest?.("[data-vellix-divider]")) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
+
   editor.view.dom.addEventListener("keydown", event => {
     if (event.key !== "Backspace" || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
     if (backspacePastDivider() || backspaceIntoQuote()) {
@@ -227,10 +200,16 @@ enum MobileEditorInteractions {
     }
   }, true);
 
+  editor.storage.pennedMobileInsertDivider = insertDivider;
   window.tiptapCommand = function (name, args = {}) {
-    if (name === "mobileDismissSlashMenu") return dismissSlash();
+    if (name === "mobileSuspendInput") {
+      editor.view.dom.blur();
+      const selection = window.getSelection();
+      if (selection && (editor.view.dom.contains(selection.anchorNode) ||
+          editor.view.dom.contains(selection.focusNode))) selection.removeAllRanges();
+      return true;
+    }
     if (name === "setContent") {
-      suppressSlash(null, true);
       return Promise.resolve(command(name, args)).then(result => { publishHistory(true); return result; });
     }
     if (name === "undo" || name === "redo") {
@@ -249,15 +228,9 @@ enum MobileEditorInteractions {
         requestAnimationFrame(() => resolve(!editor.isDestroyed && editor.view.hasFocus()));
       }));
     }
-    if (name === "insertDivider") return insertDivider(args.style);
-    if (name === "insertBlock" && /^divider(?::|$)/.test(args.blockType || "")) {
+    if (name === "insertDivider" && args.style !== "washiTape") return insertDivider(args.style);
+    if (name === "insertBlock" && args.blockType !== "divider:washiTape" && /^divider(?::|$)/.test(args.blockType || "")) {
       return insertDivider(args.blockType.split(":")[1]);
-    }
-    if (name === "chooseSlashItem" && /^divider(?::|$)/.test(args.key || "")) {
-      const range = slashRange();
-      if (!range || suppressedSlash !== null) return false;
-      closeSlash();
-      return insertDivider(args.key.split(":")[1], range);
     }
     return command(name, args);
   };

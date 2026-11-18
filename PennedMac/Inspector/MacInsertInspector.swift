@@ -9,9 +9,10 @@ struct MacInsertItem: Identifiable {
         .init(id: "nestedPage", title: "Page", icon: "linedpages", category: "Nested Content"),
         .init(id: "pageCard", title: "Card", icon: "copy", category: "Nested Content"),
         .init(id: "table", title: "Table", icon: "gridboard", category: "Rich Blocks"),
+        .init(id: "listGrid", title: "List Grid", icon: "gridboard", category: "Rich Blocks"),
         .init(id: "collection", title: "Collection", icon: "gridboard", category: "Rich Blocks"),
         .init(id: "codeBlock", title: "Code Block", icon: "codewindow", category: "Rich Blocks"),
-        .init(id: "callout", title: "Callout", icon: "sparkle", category: "Rich Blocks"),
+        .init(id: "gridCard", title: "Grid Cards", icon: "gridboard", category: "Other Blocks"),
         .init(id: "quote", title: "Quote", icon: "quote", category: "Rich Blocks"),
         .init(id: "image", title: "Image", icon: "imagesign", category: "Media"),
         .init(id: "file", title: "File", icon: "openedfolder", category: "Media"),
@@ -19,10 +20,6 @@ struct MacInsertItem: Identifiable {
         .init(id: "bulletListItem", title: "Bulleted List", icon: "bulletlist", category: "Lists"),
         .init(id: "numberedListItem", title: "Numbered List", icon: "numberlist", category: "Lists"),
         .init(id: "toggleListItem", title: "Toggle List", icon: "chevright", category: "Lists"),
-        .init(id: "heading1", title: "Title", icon: "boldtext", category: "Text Styles"),
-        .init(id: "heading2", title: "Subtitle", icon: "boldtext", category: "Text Styles"),
-        .init(id: "heading3", title: "Heading", icon: "boldtext", category: "Text Styles"),
-        .init(id: "heading4", title: "Subheading", icon: "boldtext", category: "Text Styles"),
         .init(id: "paragraph", title: "Paragraph", icon: "linedpages", category: "Text Styles"),
         .init(id: "caption", title: "Caption", icon: "linedpages", category: "Text Styles")
     ]
@@ -36,7 +33,24 @@ struct MacInsertInspector: View {
     var body: some View {
         VStack(spacing: 12) {
             TextField("Search Blocks", text: $search).textFieldStyle(MacInputStyle())
-            ForEach(["Nested Content", "Rich Blocks", "Media", "Lists", "Text Styles"], id: \.self) { category in
+            let levels = (1...4).filter { search.isEmpty || DocumentTextStyleNames.heading($0).localizedCaseInsensitiveContains(search) || "Label".localizedCaseInsensitiveContains(search) }
+            if !levels.isEmpty {
+                Menu("Headings") {
+                    ForEach(levels, id: \.self) { level in
+                        Menu(DocumentTextStyleNames.heading(level)) {
+                            Button("Text") { insertHeading("heading\(level)") }
+                            Button("Label") { insertHeading("labelHeading\(level)") }
+                        }
+                    }
+                }
+            }
+            if search.isEmpty || ["Callouts", "Icon", "Plain"].contains(where: { $0.localizedCaseInsensitiveContains(search) }) {
+                Menu("Callouts") {
+                    Button("Icon") { insertHeading("iconCallout") }
+                    Button("Plain") { insertHeading("plainCallout") }
+                }
+            }
+            ForEach(["Nested Content", "Rich Blocks", "Other Blocks", "Media", "Lists", "Text Styles"], id: \.self) { category in
                 let items = MacInsertItem.all.filter { $0.category == category && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)) }
                 if !items.isEmpty {
                     MacInspectorSectionHeader(title: category)
@@ -54,7 +68,7 @@ struct MacInsertInspector: View {
                     }
                 }
             }
-            if search.isEmpty || "separator divider page break".localizedCaseInsensitiveContains(search) {
+            if search.isEmpty || "separator divider page break washi tape".localizedCaseInsensitiveContains(search) {
                 MacInspectorSectionHeader(title: "Separators")
                 LazyVGrid(columns: columns, spacing: 8) {
                     ForEach(VellixDividerStyle.allCases) { style in
@@ -84,5 +98,10 @@ struct MacInsertInspector: View {
         guard workspace.isAuthorized else { return }
         if item.id == "image" || item.id == "file" { MacEditorFiles.choose(workspace: workspace, model: model, imagesOnly: item.id == "image") }
         else { model.session.insertBlock(item.id) }
+    }
+
+    private func insertHeading(_ type: String) {
+        guard workspace.isAuthorized else { return }
+        model.session.insertBlock(type)
     }
 }

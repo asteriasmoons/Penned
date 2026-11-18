@@ -62,7 +62,9 @@ struct CollectionSnapshotPreview: View {
                     VStack(alignment: .leading, spacing: 4) {
                         if view.configuration.showsCover { cover(entry) }
                         Text(entry.title).fontWeight(.semibold).lineLimit(3).padding(.horizontal, 10).padding(.top, 6)
-                        properties(entry, view: view).padding(.horizontal, 10)
+                        properties(entry, view: view)
+                            .frame(height: 28, alignment: .topLeading).clipped()
+                            .padding(.horizontal, 10)
                         HStack { Spacer(); LibraryIcon(name: "dotswavy", size: 18) }.padding(8)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .background(Color(vellixHex: appearance.textColorHex).opacity(0.025), in: RoundedRectangle(cornerRadius: 8))

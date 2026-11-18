@@ -50,10 +50,13 @@ function color(value: unknown): string {
 }
 
 const nodes: Record<string, string[]> = {
-  doc: [], text: [], paragraph: [], caption: [], heading: ["level"], hardBreak: [],
+  doc: [], text: [], paragraph: [], caption: [], heading: ["level", "label"], hardBreak: [],
   bulletList: [], orderedList: ["start", "type"], listItem: [],
   codeBlock: ["language"], blockquote: ["color"], callout: ["icon", "color"], plainCallout: ["color", "widthPercent"], plainCalloutRow: [],
-  divider: ["style"], pageBreak: [], toggleItem: ["open"], taskList: [], taskItem: ["checked", "crossed"],
+  gridCard: ["icon", "iconColor", "backgroundColor", "title", "alignment", "width", "height"],
+  iconCallout: ["icon", "iconColor", "backgroundColor", "textColor", "imageTint"],
+  richLink: ["href", "layout", "metadata"],
+  divider: ["style", "color"], pageBreak: [], toggleItem: ["open"], taskList: [], taskItem: ["checked", "crossed"],
   templateComponent: ["definition", "response"], inlineProperty: ["property"],
   table: ["name", "leftOffset", "stripeColor", "columnless", "rowless", "rowCount", "columnCount", "headerRow"],
   tableRow: [], tableCell: ["colspan", "rowspan", "colwidth", "fillColor", "textColor", "formula", "calculated", "font", "bold", "italic", "strike", "code", "align", "format", "decimals", "currency"],
@@ -148,6 +151,7 @@ export function sanitizeDocument(input: unknown, links: ReadonlyMap<string, stri
     if (!Object.hasOwn(nodes, type)) throw new PublishingError(400, "unsupported_node_" + type);
     if (source.content != null && !Array.isArray(source.content)) throw new PublishingError(400, "invalid_node_content");
     if (source.marks != null && !Array.isArray(source.marks)) throw new PublishingError(400, "invalid_marks");
+    if (type === "richLink" && (source.attrs == null || object(source.attrs).href == null)) throw new PublishingError(400, "invalid_rich_link_url");
     const result: JSONObject = { type };
     if (type === "text") result.text = string(source.text, 200000);
     if (source.attrs != null && type !== "doc") {
@@ -155,13 +159,69 @@ export function sanitizeDocument(input: unknown, links: ReadonlyMap<string, stri
       for (const key of ["id", "textAlign", "indent", ...nodes[type]]) {
         if (attrs[key] == null) continue;
         const value = attrs[key];
+        if (type === "divider" && key === "color") color(value);
         if (["textAlign", "align"].includes(key) && !["left", "center", "right", "justify"].includes(String(value))) throw new PublishingError(400, "invalid_alignment");
         if (["fillColor", "textColor", "stripeColor"].includes(key)) color(value);
         if (key === "indent" && (!Number.isInteger(value) || Number(value) < 0 || Number(value) > 6)) throw new PublishingError(400, "invalid_indent");
         if (key === "level" && (!Number.isInteger(value) || Number(value) < 1 || Number(value) > 6)) throw new PublishingError(400, "invalid_heading_level");
+        if (type === "heading" && key === "label") {
+          const label = object(value), level = Number(attrs.level ?? 1);
+          const legacyShape = label.style === "plaque" || label.style === "banner" ? label.style : null;
+          const shape = legacyShape ?? label.shape, style = legacyShape ? "filled" : label.style;
+          if (!Number.isInteger(level) || level < 1 || level > 4 || label.presentation !== "label" ||
+              !["ribbon", "pill", "framed", "rectangular", "scalloped", "plaque", "banner"].includes(String(shape)) ||
+              !["filled", "glass", "textured", "outline"].includes(String(style)) ||
+              !["inherit", "system", "serif", "mono", "rounded", "hachiMaruPop"].includes(String(label.font)) ||
+              !["left", "center", "right"].includes(String(label.alignment)) ||
+              typeof label.iconEnabled !== "boolean" || typeof label.icon !== "string" ||
+              !/^(?:sf:)?[\w.+-]{1,120}$/.test(label.icon)) throw new PublishingError(400, "invalid_heading_label");
+          const colors: JSONObject = {};
+          for (const name of ["textColor", "backgroundColor", "borderColor", "accentColor", "iconColor"]) {
+            const value = label[name];
+            if (typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value)) throw new PublishingError(400, "invalid_color");
+            colors[name] = value;
+          }
+          const thickness = label.borderThickness;
+          if (thickness !== undefined && (typeof thickness !== "number" || !Number.isInteger(thickness) || thickness < 0 || thickness > 6)) {
+            throw new PublishingError(400, "invalid_heading_label_border_thickness");
+          }
+          approved[key] = { presentation: "label", shape: String(shape), style: String(style), font: String(label.font),
+            alignment: String(label.alignment), iconEnabled: label.iconEnabled, icon: label.icon,
+            ...(typeof thickness === "number" ? { borderThickness: thickness } : {}), ...colors };
+          continue;
+        }
         if (["colspan", "rowspan"].includes(key) && (!Number.isInteger(value) || Number(value) < 1 || Number(value) > 200)) throw new PublishingError(400, "invalid_table_span");
         if (key === "colwidth" && (!Array.isArray(value) || value.length > 200 || value.some(width => typeof width !== "number" || !Number.isFinite(width) || width < 56 || width > 3000))) throw new PublishingError(400, "invalid_column_width");
         if (key === "widthPercent" && (typeof value !== "number" || !Number.isFinite(value) || value < (type === "plainCallout" ? 1 : 10) || value > 100)) throw new PublishingError(400, "invalid_media_width");
+        if (type === "gridCard") {
+          if (["iconColor", "backgroundColor"].includes(key) && (typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value))) throw new PublishingError(400, "invalid_color");
+          if (key === "alignment" && !["left", "center", "right"].includes(String(value))) throw new PublishingError(400, "invalid_alignment");
+          if (key === "width" && value !== "full" && value !== "half") throw new PublishingError(400, "invalid_grid_card_width");
+          if (key === "height" && (!Number.isInteger(value) || Number(value) < 100 || Number(value) > 1600)) throw new PublishingError(400, "invalid_grid_card_height");
+          if (key === "icon" || key === "title") string(value, key === "icon" ? 256 : 16384);
+        }
+        if (type === "iconCallout") {
+          if (["iconColor", "backgroundColor", "textColor", "imageTint"].includes(key) && (typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value))) throw new PublishingError(400, "invalid_color");
+          if (key === "icon") string(value, 256);
+        }
+        if (type === "richLink") {
+          const webURL = (raw: unknown) => {
+            const href = safeURL(raw);
+            if (!/^https?:\/\//i.test(href)) throw new PublishingError(400, "invalid_rich_link_url");
+            return href;
+          };
+          if (key === "href") { approved[key] = webURL(value); continue; }
+          if (key === "layout" && !["small", "regular", "card"].includes(String(value))) throw new PublishingError(400, "invalid_rich_link_layout");
+          if (key === "metadata") {
+            const metadata = object(value), preview: JSONObject = {};
+            for (const [field, limit] of [["title", 320], ["description", 640], ["site", 120]] as const) {
+              if (metadata[field] != null) preview[field] = string(metadata[field], limit);
+            }
+            for (const field of ["image", "favicon"]) if (metadata[field] != null) preview[field] = webURL(metadata[field]);
+            approved[key] = preview;
+            continue;
+          }
+        }
         approved[key] = boundedValue(value);
       }
       if (type === "attachment") {
@@ -175,6 +235,21 @@ export function sanitizeDocument(input: unknown, links: ReadonlyMap<string, stri
         if (file.previewMediaID != null) {
           reference({ mediaID: file.previewMediaID });
           (approved.file as JSONObject).previewMediaID = uuid(file.previewMediaID);
+        }
+      }
+      if (type === "iconCallout" && attrs.mediaID != null) {
+        const ref = reference(attrs);
+        if (!assetMap.get(String(ref.mediaID))?.mimeType.startsWith("image/")) throw new PublishingError(400, "invalid_callout_image");
+        approved.mediaID = ref.mediaID;
+      }
+      if (type === "divider" && attrs.style === "washiTape") {
+        if (attrs.tapeSize === "thin") approved.tapeSize = "thin";
+        if (attrs.mediaID != null) {
+          const ref = reference(attrs);
+          if (!assetMap.get(String(ref.mediaID))?.mimeType.startsWith("image/")) throw new PublishingError(400, "invalid_tape_image");
+          approved.mediaID = ref.mediaID;
+        } else if (attrs.remotePhoto != null) {
+          approved.remotePhoto = photo(attrs.remotePhoto);
         }
       }
       if (type === "plainCallout" && attrs.clipSource != null) {
@@ -195,7 +270,7 @@ export function sanitizeDocument(input: unknown, links: ReadonlyMap<string, stri
     if (Array.isArray(source.content)) {
       const children = source.content.map(child => node(child, depth + 1));
       const inline = new Set(["text", "hardBreak", "inlineTag"]);
-      const childTypes: Record<string, string[]> = { paragraph: [...inline], caption: [...inline], heading: [...inline], codeBlock: ["text"],
+      const childTypes: Record<string, string[]> = { paragraph: [...inline], caption: [...inline], heading: [...inline], richLink: [...inline], codeBlock: ["text"],
         bulletList: ["listItem"], orderedList: ["listItem"], taskList: ["taskItem"], table: ["tableRow"], tableRow: ["tableCell", "tableHeader"],
         text: [], hardBreak: [], inlineTag: [], attachment: [], templateComponent: [], inlineProperty: [], divider: [], pageBreak: [] };
       for (const child of children) {

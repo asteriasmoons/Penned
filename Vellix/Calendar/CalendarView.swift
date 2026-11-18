@@ -64,7 +64,13 @@ struct CalendarView: View {
                 }
             }
         }
-        .background(VellixSurface.appBackground)
+        .background {
+            #if os(iOS)
+            PadWorkspacePageBackground(fallback: VellixSurface.appBackground)
+            #else
+            VellixSurface.appBackground
+            #endif
+        }
         .foregroundStyle(VellixSurface.ink)
         .tint(CalendarStyle.accent)
         .navigationTitle("Calendar")

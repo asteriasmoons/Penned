@@ -10,6 +10,7 @@ import UniformTypeIdentifiers
 
 struct DocumentDraft {
     var title: String
+    var allowsBlankTitle: Bool
     var subtitle: String?
     var spaceID: String?
     var folderID: String?
@@ -30,9 +31,11 @@ struct DocumentDraft {
         cover: String? = nil,
         appearanceJSON: String? = nil,
         cardStyleJSON: String? = nil,
-        tipTapJSON: String = TipTapContentAnalyzer.emptyDocumentJSON
+        tipTapJSON: String = TipTapContentAnalyzer.emptyDocumentJSON,
+        allowsBlankTitle: Bool = false
     ) {
         self.title = title
+        self.allowsBlankTitle = allowsBlankTitle
         self.subtitle = subtitle
         self.spaceID = spaceID
         self.folderID = folderID
@@ -80,7 +83,7 @@ final class DocumentRepository: @unchecked Sendable {
 
         let analysis = try TipTapContentAnalyzer.analyze(draft.tipTapJSON)
         let record = DocumentRecord(
-            title: draft.title.trimmedNonEmpty ?? "Untitled",
+            title: draft.title.trimmedNonEmpty ?? (draft.allowsBlankTitle ? "" : "Untitled"),
             subtitle: draft.subtitle?.trimmedNonEmpty,
             cover: draft.cover,
             appearanceJSON: draft.appearanceJSON,
@@ -165,6 +168,24 @@ final class DocumentRepository: @unchecked Sendable {
         } catch {
             if let importedPath { try? attachmentStore.removeFile(relativePath: importedPath) }
             throw error
+        }
+    }
+
+    func setNestedPageCardPresentation(parentID: String, documentIDs: [String], asCard: Bool) throws -> [DocumentRecord] {
+        try database.write { db in
+            let parent = try SpaceOwnership.document(parentID, scope: self.spaceID, in: db)
+            guard !parent.isTrashed, !parent.isArchived else { throw VellixError.documentNotFound(parentID) }
+            return try Set(documentIDs).map { id in
+                var page = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
+                guard page.parentDocumentID == parentID, !page.isTrashed, !page.isArchived else {
+                    throw VellixError.documentNotFound(id)
+                }
+                page.cardStyleJSON = asCard ? (page.cardStyleJSON ?? PageCardStyle().encodedJSON()) : nil
+                page.updatedAt = Date()
+                try page.update(db)
+                try Self.upsertSearchIndex(page, in: db)
+                return page
+            }
         }
     }
 
@@ -271,10 +292,252 @@ final class DocumentRepository: @unchecked Sendable {
         }
     }
 
+    // MARK: - Lightweight, database-level keyset pagination
+    //
+    // These return DocumentSummary (no document body) and paginate in the database
+    // using keyset cursors, so the library scales to very large collections without
+    // loading or scanning every document. Pass the last summary of a page as
+    // `after` to fetch the next page; a page shorter than `limit` is the final one.
+
+    private func summaryPage(where whereClause: String, arguments baseArguments: StatementArguments,
+                             sort: DocumentSummarySort, after cursor: DocumentSummary?, limit: Int) throws -> [DocumentSummary] {
+        let order: String
+        var keyset = ""
+        var keysetArguments: StatementArguments = []
+        switch sort {
+        case .updated:
+            order = "updatedAt DESC, id ASC"
+            if let cursor {
+                keyset = " AND (updatedAt < ? OR (updatedAt = ? AND id > ?))"
+                keysetArguments = [cursor.updatedAt, cursor.updatedAt, cursor.id]
+            }
+        case .created:
+            order = "createdAt DESC, id ASC"
+            if let cursor {
+                keyset = " AND (createdAt < ? OR (createdAt = ? AND id > ?))"
+                keysetArguments = [cursor.createdAt, cursor.createdAt, cursor.id]
+            }
+        case .title:
+            order = "title COLLATE LOCALIZED_STANDARD ASC, id ASC"
+            if let cursor {
+                keyset = " AND (title COLLATE LOCALIZED_STANDARD > ? OR (title = ? COLLATE LOCALIZED_STANDARD AND id > ?))"
+                keysetArguments = [cursor.title, cursor.title, cursor.id]
+            }
+        }
+        let sql = "SELECT \(DocumentSummary.columns) FROM documents WHERE \(whereClause)\(keyset) ORDER BY \(order) LIMIT ?"
+        var arguments = baseArguments
+        arguments += keysetArguments
+        arguments += [limit]
+        return try database.read { try DocumentSummary.fetchAll($0, sql: sql, arguments: arguments) }
+    }
+
+    // Appends the hybrid search filter (exact substring on title, FTS on body) to a
+    // base predicate, then runs the keyset page. `searchesBody` mirrors the keyword
+    // search scope; an empty query adds nothing.
+    private func paginate(base: String, baseArguments: StatementArguments, query: String, searchesBody: Bool,
+                          sort: DocumentSummarySort, after cursor: DocumentSummary?, limit: Int) throws -> [DocumentSummary] {
+        let (clause, matchArguments) = matchClause(query: query, searchesBody: searchesBody)
+        var arguments = baseArguments
+        arguments += matchArguments
+        return try summaryPage(where: base + clause, arguments: arguments, sort: sort, after: cursor, limit: limit)
+    }
+
+    private func matchClause(query: String, searchesBody: Bool) -> (sql: String, arguments: StatementArguments) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return ("", []) }
+        // Body content is matched through the FTS index; the title is always matched
+        // by exact, case/diacritic-insensitive substring to preserve past behavior.
+        if searchesBody, let fts = Self.ftsMatchQuery(trimmed) {
+            return (" AND (penned_contains(title, ?) OR id IN (SELECT documentID FROM documentSearch WHERE documentSearch MATCH ?))",
+                    [trimmed, fts])
+        }
+        return (" AND penned_contains(title, ?)", [trimmed])
+    }
+
+    // Turns a free-text query into an FTS5 prefix query restricted to the body
+    // `content` column, e.g. "two wor" -> content:(two* wor*). Returns nil when the
+    // query has no indexable tokens (the title substring match still applies).
+    private static func ftsMatchQuery(_ query: String) -> String? {
+        let tokens = query.split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { !$0.isEmpty }
+        guard !tokens.isEmpty else { return nil }
+        return "content:(" + tokens.map { "\($0)*" }.joined(separator: " ") + ")"
+    }
+
+    // Returns the subset of `ids` whose document matches `query` by title (exact,
+    // case/diacritic-insensitive substring) and, when `searchesBody` is set, by
+    // complete body content through the FTS index — the same hybrid rule the
+    // paginated surfaces use. The bounded sections (Recents, Starred, Trash, Daily
+    // Notes) call this so their search covers full document contents at the database
+    // level instead of filtering previewText in memory; no document bodies are
+    // loaded. An empty query matches every id.
+    func fullTextMatches(amongst ids: [String], query: String, searchesBody: Bool) throws -> Set<String> {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return Set(ids) }
+        guard !ids.isEmpty else { return [] }
+        let (clause, matchArguments) = matchClause(query: trimmed, searchesBody: searchesBody)
+        let placeholders = databaseQuestionMarks(count: ids.count)
+        let sql = "SELECT id FROM documents WHERE \(LibraryAccess.spaces()) AND id IN (\(placeholders))\(clause)"
+        var arguments = StatementArguments(ids)
+        arguments += matchArguments
+        return try database.read { db in try Set(String.fetchAll(db, sql: sql, arguments: arguments)) }
+    }
+
+    // The "All Docs" surface: top-level library pages, excluding daily notes,
+    // nested pages, templates, trashed and archived documents.
+    func topLevelSummaries(sort: DocumentSummarySort = .updated, query: String = "", searchesBody: Bool = false,
+                           after cursor: DocumentSummary? = nil, limit: Int) throws -> [DocumentSummary] {
+        try paginate(
+            base: "\(LibraryAccess.spaces()) AND parentDocumentID IS NULL AND templateID IS NULL AND isTrashed = 0 AND isArchived = 0 AND dailyNoteDate IS NULL AND (? IS NULL OR spaceID = ?)",
+            baseArguments: [spaceID, spaceID], query: query, searchesBody: searchesBody, sort: sort, after: cursor, limit: limit)
+    }
+
+    // A single folder's top-level pages. `folderID == nil` is the "Unsorted" bucket
+    // (documents with no folder), matching the gallery's existing filter.
+    func folderSummaries(folderID: String?, sort: DocumentSummarySort = .updated, query: String = "", searchesBody: Bool = false,
+                         after cursor: DocumentSummary? = nil, limit: Int) throws -> [DocumentSummary] {
+        let folderCondition = folderID == nil ? "folderID IS NULL" : "folderID = ?"
+        var baseArguments: StatementArguments = []
+        if let folderID { baseArguments += [folderID] }
+        baseArguments += [spaceID, spaceID]
+        return try paginate(
+            base: "\(LibraryAccess.spaces()) AND parentDocumentID IS NULL AND templateID IS NULL AND isTrashed = 0 AND isArchived = 0 AND dailyNoteDate IS NULL AND \(folderCondition) AND (? IS NULL OR spaceID = ?)",
+            baseArguments: baseArguments, query: query, searchesBody: searchesBody, sort: sort, after: cursor, limit: limit)
+    }
+
+    // The Daily Notes surface: top-level daily-note pages only.
+    func dailyNoteSummaries(sort: DocumentSummarySort = .updated, query: String = "", searchesBody: Bool = false,
+                            after cursor: DocumentSummary? = nil, limit: Int) throws -> [DocumentSummary] {
+        try paginate(
+            base: "\(LibraryAccess.spaces()) AND parentDocumentID IS NULL AND templateID IS NULL AND isTrashed = 0 AND isArchived = 0 AND dailyNoteDate IS NOT NULL AND (? IS NULL OR spaceID = ?)",
+            baseArguments: [spaceID, spaceID], query: query, searchesBody: searchesBody, sort: sort, after: cursor, limit: limit)
+    }
+
+    // Count of the "All Docs" surface, for library badges and section counts that
+    // previously read `overview.all.count`.
+    func topLevelSummaryCount() throws -> Int {
+        try database.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM documents WHERE \(LibraryAccess.spaces()) AND parentDocumentID IS NULL AND templateID IS NULL AND isTrashed = 0 AND isArchived = 0 AND dailyNoteDate IS NULL AND (? IS NULL OR spaceID = ?)",
+                              arguments: [spaceID, spaceID]) ?? 0
+        }
+    }
+
+    // Home needs counts for every visible folder plus Unsorted. Return them
+    // together instead of issuing a synchronous COUNT from each SwiftUI row.
+    func topLevelSummaryCountsByFolder() throws -> [String?: Int] {
+        try database.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT folderID, COUNT(*) AS count FROM documents
+                WHERE \(LibraryAccess.spaces()) AND parentDocumentID IS NULL AND templateID IS NULL
+                  AND isTrashed=0 AND isArchived=0 AND dailyNoteDate IS NULL AND (? IS NULL OR spaceID=?)
+                GROUP BY folderID
+                """, arguments: [spaceID, spaceID])
+            return Dictionary(uniqueKeysWithValues: rows.map { ($0["folderID"] as String?, $0["count"] as Int) })
+        }
+    }
+
+    // Count of documents directly inside a folder (nil == Unsorted), replacing the
+    // in-memory `FolderHierarchy.itemCount` scans over the full library.
+    func folderSummaryCount(folderID: String?) throws -> Int {
+        let folderCondition = folderID == nil ? "folderID IS NULL" : "folderID = ?"
+        var arguments: StatementArguments = []
+        if let folderID { arguments += [folderID] }
+        arguments += [spaceID, spaceID]
+        return try database.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM documents WHERE \(LibraryAccess.spaces()) AND parentDocumentID IS NULL AND templateID IS NULL AND isTrashed = 0 AND isArchived = 0 AND dailyNoteDate IS NULL AND \(folderCondition) AND (? IS NULL OR spaceID = ?)",
+                              arguments: arguments) ?? 0
+        }
+    }
+
+    // Bounded library sections, returned as summaries (no document body). These sets
+    // are naturally small, so they mirror the existing full-record queries directly
+    // rather than paginate.
+    func recentSummaries(limit: Int = 12) throws -> [DocumentSummary] {
+        try database.read { db in
+            try DocumentSummary.fetchAll(db, sql: """
+                SELECT \(DocumentSummary.columns) FROM documents
+                WHERE parentDocumentID IS NULL AND templateID IS NULL AND isTrashed = 0 AND isArchived = 0 AND dailyNoteDate IS NULL
+                  AND \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID = ?)
+                ORDER BY COALESCE(lastOpenedAt, updatedAt) DESC, updatedAt DESC, rowid DESC
+                LIMIT ?
+                """, arguments: [spaceID, spaceID, limit])
+        }
+    }
+
+    // All top-level daily notes as summaries (the Daily Notes surface groups them by
+    // month/year, so the whole set is needed; it is naturally bounded to one per day).
+    func allDailyNoteSummaries() throws -> [DocumentSummary] {
+        try database.read { db in
+            try DocumentSummary.fetchAll(db, sql: """
+                SELECT \(DocumentSummary.columns) FROM documents
+                WHERE parentDocumentID IS NULL AND templateID IS NULL AND isTrashed = 0 AND isArchived = 0 AND dailyNoteDate IS NOT NULL
+                  AND \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID = ?)
+                ORDER BY dailyNoteDate DESC
+                """, arguments: [spaceID, spaceID])
+        }
+    }
+
+    func favoriteSummaries() throws -> [DocumentSummary] {
+        try database.read { db in
+            try DocumentSummary.fetchAll(db, sql: """
+                SELECT \(DocumentSummary.columns) FROM documents
+                WHERE parentDocumentID IS NULL AND templateID IS NULL AND isFavorite = 1 AND isTrashed = 0 AND isArchived = 0 AND dailyNoteDate IS NULL
+                  AND \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID = ?)
+                ORDER BY updatedAt DESC
+                """, arguments: [spaceID, spaceID])
+        }
+    }
+
+    func trashedSummaries() throws -> [DocumentSummary] {
+        try database.read { db in
+            try DocumentSummary.fetchAll(db, sql: """
+                SELECT \(DocumentSummary.columns(alias: "d")) FROM documents d
+                WHERE d.templateID IS NULL AND d.isTrashed = 1 AND NOT EXISTS (
+                    SELECT 1 FROM documents p WHERE p.id = d.parentDocumentID AND p.isTrashed = 1
+                )
+                AND \(LibraryAccess.spaces("d.spaceID")) AND (? IS NULL OR d.spaceID = ?)
+                ORDER BY d.trashedAt DESC
+                """, arguments: [spaceID, spaceID])
+        }
+    }
+
+    // A single document's summary (no body), scoped like `document(id:)`.
+    func summary(id: String) throws -> DocumentSummary? {
+        try database.read { db in
+            try DocumentSummary.fetchOne(db, sql: "SELECT \(DocumentSummary.columns) FROM documents WHERE \(LibraryAccess.spaces()) AND id = ? AND (? IS NULL OR spaceID = ?)",
+                                         arguments: [id, spaceID, spaceID])
+        }
+    }
+
+    // Child-page summaries, mirroring `children(of:)` exactly but without document
+    // bodies — used for descriptor-based preview-key resolution.
+    func childrenSummaries(of documentID: String, includingCollectionEntries: Bool = true) throws -> [DocumentSummary] {
+        try database.read { db in
+            let owner = try SpaceOwnership.document(documentID, scope: spaceID, in: db)
+            let condition = (includingCollectionEntries ? "" : " AND id NOT IN (SELECT documentID FROM collectionEntries)")
+                + " AND id NOT LIKE 'vellix-task-page:%' AND id NOT LIKE 'vellix-task-history:%'"
+            return try DocumentSummary.fetchAll(
+                db,
+                sql: """
+                    SELECT \(DocumentSummary.columns) FROM documents
+                    WHERE parentDocumentID = ? AND isTrashed = 0 AND isArchived = 0\(condition)
+                      AND spaceID = ?
+                    ORDER BY sortOrder ASC, createdAt ASC, id ASC
+                    """,
+                arguments: [documentID, owner.spaceID]
+            )
+        }
+    }
+
+    // The stored preview descriptor for a document, if present and current.
+    func previewDescriptor(id: String) throws -> DocumentPreviewDescriptor? {
+        try database.read { try DocumentPreviewDescriptorIndex.fetch(id, in: $0) }
+    }
+
     func children(of documentID: String, includingCollectionEntries: Bool = true) throws -> [DocumentRecord] {
         try database.read { db in
             let owner = try SpaceOwnership.document(documentID, scope: spaceID, in: db)
-            let condition = includingCollectionEntries ? "" : " AND id NOT IN (SELECT documentID FROM collectionEntries)"
+            let condition = (includingCollectionEntries ? "" : " AND id NOT IN (SELECT documentID FROM collectionEntries)")
+                + " AND id NOT LIKE 'vellix-task-page:%' AND id NOT LIKE 'vellix-task-history:%'"
             return try DocumentRecord.fetchAll(
                 db,
                 sql: """
@@ -318,12 +581,12 @@ final class DocumentRepository: @unchecked Sendable {
         }
     }
 
-    func updateTitle(id: String, title: String) throws -> DocumentRecord {
+    func updateTitle(id: String, title: String, allowsBlankTitle: Bool = false) throws -> DocumentRecord {
         try database.write { db in
             var record = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
             if let day = record.dailyNoteDate.flatMap(DailyNoteDay.init(key:)) {
                 record.title = day.title(adding: day.suffix(from: title))
-            } else { record.title = title.trimmedNonEmpty ?? "Untitled" }
+            } else { record.title = title.trimmedNonEmpty ?? (allowsBlankTitle ? "" : "Untitled") }
             record.updatedAt = Date()
             try record.update(db)
             try Self.upsertSearchIndex(record, in: db)
@@ -342,22 +605,93 @@ final class DocumentRepository: @unchecked Sendable {
     }
 
     func saveEditorJSON(id: String, canonicalJSON: String) throws -> DocumentRecord {
-        try database.write { try saveEditorJSON(id: id, canonicalJSON: canonicalJSON, in: $0) }
+        // Autosave calls this on the persistence queue. Normalize the incoming
+        // document before acquiring the shared writer; merge against the actual
+        // persisted row only after entering the transaction.
+        let analysis = try TipTapContentAnalyzer.analyze(canonicalJSON)
+        return try database.write { try saveEditorJSON(id: id, canonicalJSON: canonicalJSON, analysis: analysis, in: $0) }
     }
 
     func saveEditorJSON(id: String, canonicalJSON: String, in db: Database) throws -> DocumentRecord {
+        try saveEditorJSON(id: id, canonicalJSON: canonicalJSON, analysis: nil, in: db)
+    }
+
+    private func saveEditorJSON(id: String, canonicalJSON: String, analysis prepared: TipTapAnalysis?, in db: Database) throws -> DocumentRecord {
         var record = try SpaceOwnership.document(id, scope: self.spaceID, in: db)
+        if PennedSyncTrace.documentID == id {
+            PennedSyncTrace.record("editor.saveAttempt", "currentRev=\(record.revision) current[\(PennedSyncTrace.body(record.tipTapJSON))] proposed[\(PennedSyncTrace.body(canonicalJSON))]")
+        }
         guard canonicalJSON != record.tipTapJSON else { return record }
-        let analysis = try TipTapContentAnalyzer.analyze(canonicalJSON)
+        let analysis = try prepared ?? TipTapContentAnalyzer.analyze(canonicalJSON)
 
         guard analysis.canonicalJSON != record.tipTapJSON else { return record }
 
-        record.tipTapJSON = analysis.canonicalJSON
-        record.plainText = analysis.plainText
-        record.previewText = analysis.previewText
-        record.wordCount = analysis.wordCount
-        record.characterCount = analysis.characterCount
-        record.estimatedReadingMinutes = analysis.estimatedReadingMinutes
+        // A TipTap serialization can omit attributes while retaining the same
+        // block ID. Rehydrate absent metadata from the last persisted document,
+        // but never override explicit values or recreate deleted task blocks.
+        var oldAttributes: [String: [String: Any]] = [:]
+        func collect(_ node: [String: Any]) {
+            let type = node["type"] as? String
+            let attrs = node["attrs"] as? [String: Any] ?? [:]
+            if (type == "taskItem" || type == "informationCard" || (type == "heading" && attrs["label"] is [String: Any])),
+               let id = attrs["id"] as? String {
+                oldAttributes[id] = attrs
+            }
+            for child in node["content"] as? [[String: Any]] ?? [] { collect(child) }
+        }
+        // Most documents have nothing to restore. Do not copy the new tree
+        // just to discover that every saved attribute was already present.
+        if record.tipTapJSON.contains("\"trackedTask\"") || record.tipTapJSON.contains("\"informationCard\"")
+            || record.tipTapJSON.contains("\"label\"") {
+            collect(TipTapContentAnalyzer.documentObject(from: record.tipTapJSON))
+        }
+        var restoredMetadata = false
+        func rehydrate(_ node: [String: Any]) -> [String: Any] {
+            var copy = node
+            let type = node["type"] as? String
+            var attrs = node["attrs"] as? [String: Any] ?? [:]
+            if let id = attrs["id"] as? String, let previous = oldAttributes[id] {
+                let keys: [String]
+                switch type {
+                case "taskItem": keys = ["trackedTask"]
+                case "informationCard": keys = ["collapsible", "collapsed"]
+                case "heading": keys = ["label"]
+                default: keys = []
+                }
+                for key in keys where attrs[key] == nil {
+                    if let saved = previous[key] {
+                        attrs[key] = saved
+                        restoredMetadata = true
+                    }
+                }
+                if !keys.isEmpty { copy["attrs"] = attrs }
+            }
+            if let children = node["content"] as? [[String: Any]] {
+                copy["content"] = children.map(rehydrate)
+            }
+            return copy
+        }
+        let finalJSON: String
+        if !oldAttributes.isEmpty {
+            let merged = rehydrate(TipTapContentAnalyzer.documentObject(from: analysis.canonicalJSON))
+            if restoredMetadata {
+                let bytes = try JSONSerialization.data(withJSONObject: merged, options: [.sortedKeys])
+                finalJSON = String(decoding: bytes, as: UTF8.self)
+            } else {
+                finalJSON = analysis.canonicalJSON
+            }
+        } else {
+            finalJSON = analysis.canonicalJSON
+        }
+        guard finalJSON != record.tipTapJSON else { return record }
+        let finalAnalysis = restoredMetadata ? try TipTapContentAnalyzer.analyze(finalJSON) : analysis
+
+        record.tipTapJSON = finalAnalysis.canonicalJSON
+        record.plainText = finalAnalysis.plainText
+        record.previewText = finalAnalysis.previewText
+        record.wordCount = finalAnalysis.wordCount
+        record.characterCount = finalAnalysis.characterCount
+        record.estimatedReadingMinutes = finalAnalysis.estimatedReadingMinutes
         record.revision += 1
         record.updatedAt = Date()
 
@@ -1014,9 +1348,9 @@ final class TemplateRepository: @unchecked Sendable {
         return record
     }
 
-    func dailyNoteOnlyTemplateIDs() throws -> Set<String> {
+    func dailyNoteOnlyTemplateIDs(among templates: [TemplateRecord]? = nil) throws -> Set<String> {
         try database.read { db in
-            let records = try TemplateRecord.fetchAll(db, sql: "SELECT * FROM templates WHERE \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID=?)", arguments: [spaceID, spaceID])
+            let records = try templates ?? TemplateRecord.fetchAll(db, sql: "SELECT * FROM templates WHERE \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID=?)", arguments: [spaceID, spaceID])
             return Set(try records.filter { try hasInteractiveComponents($0, in: db) }.map(\.id))
         }
     }
@@ -1029,12 +1363,21 @@ final class TemplateRepository: @unchecked Sendable {
         if template.rootDocumentID == nil && TemplateComponentDefinition.contains(in: template.tipTapJSON) { return true }
         let roots = template.rootDocumentID.map { Set([$0]) } ?? TipTapContentAnalyzer.pageReferenceIDs(in: template.tipTapJSON)
         for root in roots {
-            let json = try String.fetchAll(db, sql: """
+            let components = try Row.fetchCursor(db, sql: """
                 WITH RECURSIVE owned(id) AS (SELECT id FROM documents WHERE id=? AND spaceID IS ? AND isTrashed=0
                     UNION SELECT d.id FROM documents d JOIN owned p ON d.parentDocumentID=p.id WHERE d.isTrashed=0 AND d.spaceID IS ?)
-                SELECT tipTapJSON FROM documents WHERE id IN (SELECT id FROM owned)
-                """, arguments: [root, template.spaceID, template.spaceID])
-            if json.contains(where: TemplateComponentDefinition.contains(in:)) { return true }
+                SELECT p.features, CASE WHEN p.documentID IS NULL THEN d.tipTapJSON END AS body
+                FROM owned o JOIN documents d ON d.id=o.id
+                LEFT JOIN documentPreviewDescriptors p ON p.documentID=d.id AND p.descriptorVersion=?
+                """, arguments: [root, template.spaceID, template.spaceID, DocumentPreviewDescriptorIndex.schemaVersion])
+            while let node = try components.next() {
+                let features: Int? = node["features"]
+                if let features {
+                    if DocumentPreviewDescriptor.Features(rawValue: features).contains(.templateComponent) { return true }
+                } else if let json: String = node["body"], TemplateComponentDefinition.contains(in: json) {
+                    return true
+                }
+            }
         }
         return false
     }
@@ -1253,7 +1596,9 @@ final class SnapshotRepository: @unchecked Sendable {
             document.wordCount = analysis.wordCount
             document.characterCount = analysis.characterCount
             document.estimatedReadingMinutes = analysis.estimatedReadingMinutes
-            document.revision += 1
+            let latestSnapshotRevision = try Int.fetchOne(db, sql: "SELECT MAX(revision) FROM documentSnapshots WHERE documentID=?",
+                                                          arguments: [document.id]) ?? 0
+            document.revision = max(document.revision, latestSnapshotRevision) + 1
             document.updatedAt = Date()
             try document.update(db)
             try DocumentRepository.upsertSearchIndex(document, in: db)

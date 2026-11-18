@@ -63,6 +63,7 @@ struct DailyNotesSettingsView: View {
             }.pennedSheetRows(when: onSelected != nil)
             if let error { Section { Text(error).foregroundStyle(.red) }.pennedSheetRows(when: onSelected != nil) }
         }
+        .scrollContentBackground(.hidden)
         .dailyNoteTemplateSearch(text: $query, isSheet: onSelected != nil || isWorkspaceEmbedded)
     }
 

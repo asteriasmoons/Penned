@@ -437,10 +437,12 @@ struct DocumentTaskTests {
         let source = try documents.create(DocumentDraft(title: "Not the task name", tipTapJSON: json(task)))
         let model = DocumentEditorModel(documentRepository: documents, snapshotRepository: SnapshotRepository(database: database))
         model.prepare(document: source)
+        var openedPage: DocumentRecord?
+        model.onOpenNestedPage = { openedPage = $0 }
         let before = try documents.requireDocument(id: source.id).tipTapJSON
         model.session.onEvent?(.requestOpenPage(documentID: DocumentTaskPages.detailID(task.id)))
         #expect(model.taskHistoryRequest?.task.text == "Rich task text")
-        #expect(model.taskHistoryRequest?.id == task.id && model.nestedPageToOpen == nil)
+        #expect(model.taskHistoryRequest?.id == task.id && openedPage == nil)
         #expect(try documents.requireDocument(id: source.id).tipTapJSON == before)
         #expect(try tasks.completedOccurrences().isEmpty)
 
@@ -448,17 +450,19 @@ struct DocumentTaskTests {
         let unrelated = try documents.create(DocumentDraft(title: "Other", tipTapJSON: json(DocumentTaskMetadata())))
         let otherTask = try #require(tasks.tasks(documentID: unrelated.id).first)
         model.session.onEvent?(.requestOpenPage(documentID: DocumentTaskPages.detailID(otherTask.id)))
-        #expect(model.taskHistoryRequest == nil && model.nestedPageToOpen == nil)
+        #expect(model.taskHistoryRequest == nil && openedPage == nil)
 
         let child = try documents.create(DocumentDraft(title: "Ordinary nested page", parentDocumentID: source.id))
         model.session.onEvent?(.requestOpenPage(documentID: child.id))
-        #expect(model.nestedPageToOpen?.id == child.id && model.taskHistoryRequest == nil)
+        #expect(openedPage?.id == child.id && model.taskHistoryRequest == nil)
 
         let detail = try documents.requireDocument(id: DocumentTaskPages.detailID(task.id))
         let detailModel = DocumentEditorModel(documentRepository: documents, snapshotRepository: SnapshotRepository(database: database))
         detailModel.prepare(document: detail)
+        openedPage = nil
+        detailModel.onOpenNestedPage = { openedPage = $0 }
         detailModel.session.onEvent?(.requestOpenPage(documentID: DocumentTaskPages.historyID(task.id)))
-        #expect(detailModel.taskHistoryRequest?.id == task.id && detailModel.nestedPageToOpen == nil)
+        #expect(detailModel.taskHistoryRequest?.id == task.id && openedPage == nil)
     }
 
     @Test func sheetTimestampsKeepTheirEventZoneAndUseAMPM() throws {

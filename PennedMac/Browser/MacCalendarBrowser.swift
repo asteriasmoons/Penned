@@ -54,7 +54,6 @@ struct MacCalendarBrowser: View {
                 }.padding(24)
             }
         }
-        .background(VellixSurface.workspace)
         .onAppear { model.activate() }
         .onDisappear { model.deactivate() }
         .sheet(item: $model.selectedEvent) { CalendarEventDetailSheet(event: $0, model: model).frame(width: 520, height: 580) }
@@ -86,8 +85,8 @@ struct MacTaskBrowser: View {
                     Button(task.documentTitle) { workspace.perform { let document = try environment.documents.requireDocument(id: task.documentID); try await workspace.open(document) } }
                         .font(.caption)
                 }.padding(.vertical, 6)
-            }.id(revision)
-        }.background(VellixSurface.workspace)
+            }.scrollContentBackground(.hidden).id(revision)
+        }
             .onReceive(NotificationCenter.default.publisher(for: .vellixTasksChanged)) { _ in revision += 1 }
     }
 }

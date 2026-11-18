@@ -29,6 +29,11 @@ extension LibrarySyncStore {
         record["filePaths"] = paths.isEmpty ? nil : paths as CKRecordValue
         record["fileHashes"] = hashes.isEmpty ? nil : hashes as CKRecordValue
         record["files"] = assets.isEmpty ? nil : assets as CKRecordValue
+        if PennedSyncTrace.isWatched(id.recordName) {
+            PennedSyncTrace.record("cloud.uploadPrepared",
+                "\(PennedSyncTrace.row(wireRow)) mutation=\(PennedSyncTrace.token(item.mutationID)) queueVersion=\(item.version)"
+                + " deleted=\(item.deleted) tag=\(PennedSyncTrace.token(record.recordChangeTag)) server_us=\(PennedSyncTrace.wallUS(record.modificationDate))")
+        }
         return record
     }
 
@@ -51,17 +56,30 @@ extension LibrarySyncStore {
         }
     }
 
-    func stageIncoming(_ record: CKRecord, attachments: AttachmentStore) throws {
+    func stageIncoming(_ record: CKRecord, attachments: AttachmentStore, source: String = "fetch") throws {
         guard record.recordID.zoneID == zoneID, record.recordType == "PennedLibraryRecord",
               record["libraryID"] as? String == libraryID,
               (record["formatVersion"] as? NSNumber)?.intValue == 1,
               let asset = record["payload"] as? CKAsset, let url = asset.fileURL,
               let deleted = record["deleted"] as? NSNumber,
               let mutation = record["mutationID"] as? String else { throw LibrarySyncError.invalidRecord("Unknown record format or library.") }
-        if try database.read({ try isOlderServerRecord(record, in: $0) }) { return }
+        let watched = PennedSyncTrace.isWatched(record.recordID.recordName)
+        let isOlder = try database.read { db in
+            try requireBinding(in: db)
+            return try isOlderServerRecord(record, in: db)
+        }
+        if isOlder {
+            if watched { PennedSyncTrace.record("cloud.incomingIgnored", "source=\(source) reason=olderServerRecord") }
+            return
+        }
         let data = try Data(contentsOf: url)
         let row = try JSONDecoder().decode(SyncRow.self, from: data)
         guard row.recordName == record.recordID.recordName, LibrarySyncSchema.tables.contains(row.table) else { throw LibrarySyncError.invalidRecord("Record identity mismatch.") }
+        if watched {
+            PennedSyncTrace.record("cloud.incoming",
+                "source=\(source) \(PennedSyncTrace.row(row)) mutation=\(PennedSyncTrace.token(mutation)) deleted=\(deleted.boolValue)"
+                + " tag=\(PennedSyncTrace.token(record.recordChangeTag)) server_us=\(PennedSyncTrace.wallUS(record.modificationDate))")
+        }
         let paths = record["filePaths"] as? [String] ?? []
         let hashes = record["fileHashes"] as? [String] ?? []
         let files = record["files"] as? [CKAsset] ?? []
@@ -95,6 +113,7 @@ extension LibrarySyncStore {
 
     func stagePhysicalDeletion(_ id: CKRecord.ID) throws {
         guard id.zoneID == zoneID else { throw LibraryError.wrongOwner }
+        if PennedSyncTrace.isWatched(id.recordName) { PennedSyncTrace.record("cloud.physicalDeletion") }
         try database.writeMetadata { db in
             try requireBinding(in: db)
             guard let item = try Row.fetchOne(db, sql: "SELECT * FROM librarySyncItems WHERE libraryID=? AND recordName=?", arguments: [libraryID, id.recordName]) else { return }

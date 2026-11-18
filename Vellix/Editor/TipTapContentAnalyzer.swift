@@ -28,7 +28,11 @@ private nonisolated final class CachedTipTapDocument {
 private nonisolated final class TipTapDocumentAnalysisCache: @unchecked Sendable {
     let values = NSCache<NSString, CachedTipTapDocument>()
     init() {
-        values.countLimit = 8
+        // Shared across the whole app (previews, editor, export). At 8 entries a
+        // library grid thrashed it constantly, forcing the same documents to be
+        // reparsed. Memory stays bounded by the cost limit below; raising the
+        // count just lets more small documents stay cached.
+        values.countLimit = 64
         values.totalCostLimit = 16 * 1024 * 1024
     }
     func remember(_ entry: CachedTipTapDocument, json: String) {
@@ -117,13 +121,26 @@ enum TipTapContentAnalyzer {
         return emptyDocumentJSON
     }
 
+    nonisolated static func hasLegacyGroupedTitle(_ title: String, in json: String) -> Bool {
+        guard title.count > 80, let nodes = documentObject(from: json)["content"] as? [[String: Any]],
+              textContent(from: nodes).trimmingCharacters(in: .whitespacesAndNewlines) == title else { return false }
+        // A long custom heading alone is not evidence of the old body-copy bug.
+        var textBlocks = 0
+        func visit(_ nodes: [[String: Any]]) {
+            for node in nodes {
+                if ["paragraph", "heading", "caption", "codeBlock"].contains(node["type"] as? String ?? ""),
+                   !textContent(from: node).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { textBlocks += 1 }
+                if textBlocks >= 2 { return }
+                visit(node["content"] as? [[String: Any]] ?? [])
+            }
+        }
+        visit(nodes)
+        return textBlocks >= 2
+    }
+
     nonisolated static func pageReferenceIDs(in json: String) -> Set<String> {
         var result = Set<String>()
         func visit(_ node: [String: Any]) {
-            if node["type"] as? String == "taskItem", let attrs = node["attrs"] as? [String: Any],
-               let task = DocumentTaskMetadata.decode(attrs["trackedTask"]) {
-                result.insert(DocumentTaskPages.detailID(task.id))
-            }
             if node["type"] as? String == "pageReference",
                let attrs = node["attrs"] as? [String: Any],
                let id = attrs["documentID"] as? String, !id.isEmpty { result.insert(id) }
@@ -165,7 +182,25 @@ enum TipTapContentAnalyzer {
 
     nonisolated static func hasCallouts(in json: String) -> Bool {
         func contains(_ node: [String: Any]) -> Bool {
-            ["callout", "plainCallout"].contains(node["type"] as? String ?? "")
+            ["callout", "plainCallout", "iconCallout"].contains(node["type"] as? String ?? "")
+                || (node["content"] as? [[String: Any]] ?? []).contains(where: contains)
+        }
+        return contains(documentObject(from: json))
+    }
+
+    nonisolated static func hasGridCards(in json: String) -> Bool {
+        guard json.contains("\"gridCard\"") || json.contains("\"callout\"") else { return false }
+        func contains(_ node: [String: Any]) -> Bool {
+            ["gridCard", "callout"].contains(node["type"] as? String ?? "")
+                || (node["content"] as? [[String: Any]] ?? []).contains(where: contains)
+        }
+        return contains(documentObject(from: json))
+    }
+
+    nonisolated static func hasListGrids(in json: String) -> Bool {
+        guard json.contains("\"listGrid\"") else { return false }
+        func contains(_ node: [String: Any]) -> Bool {
+            node["type"] as? String == "listGrid"
                 || (node["content"] as? [[String: Any]] ?? []).contains(where: contains)
         }
         return contains(documentObject(from: json))
@@ -389,10 +424,25 @@ enum TipTapContentAnalyzer {
 
         var attrs = dictionary["attrs"] as? [String: Any] ?? [:]
         attrs["id"] = trimmedString(attrs["id"]) ?? UUID().uuidString
+        if type == "heading", let label = attrs["label"] as? [String: Any] {
+            attrs["label"] = HeadingLabelSettings(label).payload
+        }
 
         if type == "callout" {
             attrs["icon"] = trimmedString(attrs["icon"]) ?? "sparkle"
             attrs["color"] = trimmedString(attrs["color"]) ?? "#ffffff"
+        }
+
+        if type == "gridCard" {
+            attrs.merge(GridCardSettings(attrs).payload) { _, canonical in canonical }
+            attrs.removeValue(forKey: "color")
+        }
+        if type == "iconCallout" {
+            let settings = IconCalloutSettings(attrs)
+            attrs.merge(settings.payload) { _, canonical in canonical }
+            attrs["imagePath"] = settings.imagePath
+            attrs["textColor"] = settings.textColor
+            attrs["imageTint"] = settings.imageTint
         }
 
         if type == "plainCallout" {
@@ -405,6 +455,15 @@ enum TipTapContentAnalyzer {
 
         if type == "divider" {
             attrs["style"] = normalizedDividerStyle(attrs["style"])
+            if attrs["style"] as? String == "washiTape" || attrs["tapeSize"] != nil {
+                attrs["tapeSize"] = WashiTapeSize(attrs["tapeSize"]).rawValue
+            }
+            if let color = attrs["color"] as? String, color.range(of: "^#[0-9a-fA-F]{6}$", options: .regularExpression) == nil {
+                attrs.removeValue(forKey: "color")
+            }
+            if let path = attrs["imagePath"] as? String, !AttachmentStore.validRelativePath(path) {
+                attrs.removeValue(forKey: "imagePath")
+            }
         }
 
         if type == "taskItem" {
@@ -424,7 +483,7 @@ enum TipTapContentAnalyzer {
 
         if let content = dictionary["content"] as? [Any] {
             let normalizedContent = content.map(normalizeTipTapNode)
-            dictionary["content"] = ["callout", "plainCallout"].contains(type)
+            dictionary["content"] = ["callout", "gridCard", "iconCallout", "plainCallout"].contains(type)
                 ? normalizeCalloutContent(normalizedContent)
                 : normalizedContent
         }
@@ -587,8 +646,8 @@ enum TipTapContentAnalyzer {
             return "fourCircles"
         case "thickLine":
             return "thickLine"
-        case "thinLine":
-            return "thinLine"
+        case "washiTape":
+            return "washiTape"
         default:
             return "thinLine"
         }
@@ -642,6 +701,10 @@ enum TipTapContentAnalyzer {
             let text = textContent(from: dictionary)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
+            if nodeType == "gridCard", let title = (dictionary["attrs"] as? [String: Any])?["title"] as? String,
+               !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                fragments.append(title)
+            }
             if !text.isEmpty, isTextBearingBlock(nodeType) {
                 fragments.append(text)
                 if nodeType == "heading" {
@@ -649,7 +712,9 @@ enum TipTapContentAnalyzer {
                 }
             }
 
-            if let content = dictionary["content"] as? [Any] {
+            // List/task containers already contribute their full descendant text.
+            // Walking their children again produces misleading duplicate previews.
+            if !isTextBearingBlock(nodeType), let content = dictionary["content"] as? [Any] {
                 collectText(fromNodes: content, fragments: &fragments, headings: &headings)
             }
         }
@@ -657,7 +722,7 @@ enum TipTapContentAnalyzer {
 
     private nonisolated static func isTextBearingBlock(_ type: String?) -> Bool {
         switch type {
-        case "paragraph", "caption", "heading", "blockquote", "callout", "plainCallout", "listItem", "taskItem", "toggleItem", "inlineProperty", "templateComponent", "attachment":
+        case "paragraph", "caption", "heading", "blockquote", "callout", "plainCallout", "iconCallout", "listItem", "taskItem", "toggleItem", "inlineProperty", "templateComponent", "attachment", "richLink":
             return true
         default:
             return false
@@ -674,6 +739,13 @@ enum TipTapContentAnalyzer {
         }
 
         if let dictionary = node as? [String: Any] {
+            if dictionary["type"] as? String == "richLink" {
+                return RichLinkPreviewData(dictionary).title
+            }
+            if dictionary["type"] as? String == "gridCard" {
+                let title = (dictionary["attrs"] as? [String: Any])?["title"] as? String ?? ""
+                return [title, textContent(from: dictionary["content"])].filter { !$0.isEmpty }.joined(separator: " ")
+            }
             if dictionary["type"] as? String == "plainCallout",
                let source = (dictionary["attrs"] as? [String: Any])?["clipSource"] as? [String: Any] {
                 return [source["title"] as? String ?? "", textContent(from: dictionary["content"])].filter { !$0.isEmpty }.joined(separator: " ")

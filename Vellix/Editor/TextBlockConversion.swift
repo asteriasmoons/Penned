@@ -9,43 +9,88 @@ nonisolated struct TipTapTextConversionState: Equatable {
     }
 }
 
+nonisolated struct TipTapBlockConversionRequest: Equatable {
+    var target: String
+    var token: String
+    var documentIDs: [String]
+    var canonicalJSON: String?
+}
+
 struct EditorTextConversionMenu: View {
     @ObservedObject var session: TipTapEditorSession
     var showsTitle = false
     var blockSelection = false
     var isCompact = true
+    var selectionTarget: String?
 
     var body: some View {
         let selection = session.textConversionState
         Menu {
-            option("Paragraph", target: "paragraph", selection: selection)
-            option("Caption", target: "caption", selection: selection)
-            Menu("Headings") {
-                ForEach(1...4, id: \.self) { level in
-                    option(DocumentTextStyleNames.heading(level), target: "heading\(level)", selection: selection)
+            if session.templateEditing {
+                Menu("Template Components") {
+                    ForEach(TemplateComponentKind.allCases) { kind in
+                        option(kind.title, target: "templateComponent:\(kind.rawValue)", selection: selection)
+                    }
                 }
             }
-            Menu("Callout") {
-                option("With Icon", target: "callout", selection: selection)
-                option("Without Icon", target: "plainCallout", selection: selection)
+            Menu("Headings") {
+                ForEach(1...4, id: \.self) { level in
+                    Menu(DocumentTextStyleNames.heading(level)) {
+                        option("Text", target: "textHeading\(level)", selection: selection)
+                        option("Label", target: "labelHeading\(level)", selection: selection)
+                    }
+                }
             }
-            option("Blockquote", target: "quote", selection: selection)
-            option("Checklist", target: "checkListItem", selection: selection)
-            option("Bullet List", target: "bulletListItem", selection: selection)
-            option("Numbered List", target: "numberedListItem", selection: selection)
+            Menu("Text Blocks") {
+                option("Paragraph", target: "paragraph", selection: selection)
+                option("Caption", target: "caption", selection: selection)
+            }
+            Menu("Content Blocks") {
+                Menu("Callouts") {
+                    option("Icon", target: "iconCallout", selection: selection)
+                    option("Plain", target: "plainCallout", selection: selection)
+                }
+                option("Blockquote", target: "quote", selection: selection)
+                option("Table", target: "table", selection: selection)
+            }
+            Menu("Links & Files") {
+                option("Link", target: "link", selection: selection)
+                option("File", target: "file", selection: selection)
+            }
+            Menu("Nested Content") {
+                option("Page", target: "nestedPage", selection: selection)
+                option("Card", target: "pageCard", selection: selection)
+            }
+            option("Code Block", target: "codeBlock", selection: selection)
+            Menu("Other Blocks") {
+                option("List Grids", target: "listGrid", selection: selection)
+                option("Fields", target: "fields", selection: selection)
+                option("Tabs", target: "tabs", selection: selection)
+                option("Infocards", target: "informationCard", selection: selection)
+                option("Grid Cards", target: "gridCard", selection: selection)
+            }
+            option("Collection", target: "collection", selection: selection)
             Menu("Toggle") {
                 option("Paragraph", target: "toggleListItem", selection: selection)
                 ForEach(1...4, id: \.self) { level in
                     option(DocumentTextStyleNames.heading(level), target: "toggleHeading\(level)", selection: selection)
                 }
             }
-            option("Code Block", target: "codeBlock", selection: selection)
-            if blockSelection {
-                Menu("Divider") {
-                    ForEach(VellixDividerStyle.allCases) { style in
-                        option(style.title, target: "divider:\(style.rawValue)", selection: selection)
-                    }
-                }.disabled(!selection.targets.contains(where: { $0.hasPrefix("divider:") }))
+            Menu("Lists") {
+                option("Checklist", target: "checkListItem", selection: selection)
+                option("Bullet List", target: "bulletListItem", selection: selection)
+                option("Numbered List", target: "numberedListItem", selection: selection)
+            }
+            Menu("Properties") {
+                ForEach(InlinePropertyKind.allCases) { kind in
+                    option(kind.title, target: "property:\(kind.rawValue)", selection: selection)
+                }
+            }
+            Menu("Divider") {
+                ForEach(VellixDividerStyle.allCases) { style in
+                    option(style.title, target: "divider:\(style.rawValue)", selection: selection)
+                }
+                option("Page Break", target: "pageBreak", selection: selection)
             }
         } label: {
             if showsTitle {
@@ -78,17 +123,15 @@ struct EditorTextConversionMenu: View {
                 guard session.selectedBlockCount > 0, session.selectionMode != "off",
                       session.isReady, !session.isLoadingDocument, session.editingEnabled else { return }
                 if target.hasPrefix("toggleHeading"), let level = Int(target.dropFirst("toggleHeading".count)) {
-                    session.setSelectedBlockType("toggleListItem", level: level)
-                } else if target.hasPrefix("heading"), let level = Int(target.dropFirst("heading".count)) {
-                    session.setSelectedBlockType("heading", level: level)
+                    session.setSelectedBlockType("toggleListItem", level: level, selectionTarget: selectionTarget)
                 } else {
-                    session.setSelectedBlockType(target)
+                    session.setSelectedBlockType(target, selectionTarget: selectionTarget)
                 }
                 return
             }
             guard let token = selection.token else { return }
             session.convertSelectedText(to: target, token: token)
-        }.disabled((!blockSelection || target.hasPrefix("divider:")) && !selection.targets.contains(target))
+        }
     }
 }
 
@@ -103,6 +146,8 @@ enum TextBlockConversion {
   const Plugin = editor.state.plugins[0]?.constructor;
   if (typeof Plugin !== 'function') return;
   const originalCommand = window.tiptapCommand;
+  const pendingPages = new Map();
+  let pendingUI = null;
   let frame = 0, signature = '', serial = 0, destroyed = false;
   let availabilityDoc = null, availabilityToken = null, availabilityEditable = null, availabilityDividers = '';
   const editable = () => editor.isEditable && !editor.view.composing &&
@@ -117,11 +162,6 @@ enum TextBlockConversion {
     }
     const text = state.doc.textBetween(selection.from, selection.to, '\n', '\uFFFC');
     if (!text.length) return null;
-    let hasAtom = false;
-    state.doc.nodesBetween(selection.from, selection.to, node => {
-      if (node.isAtom && !node.isInline && !node.isTextblock) hasAtom = true;
-    });
-    if (hasAtom) return null;
     const token = previous?.from === selection.from && previous?.to === selection.to && previous.text === text
       ? previous.token : `text-convert-${++serial}-${crypto.randomUUID()}`;
     return { token, from: selection.from, to: selection.to, text, bookmark: selection.getBookmark() };
@@ -150,19 +190,182 @@ enum TextBlockConversion {
   });
 
   function supportedTargets() {
-    const nodes = editor.schema.nodes, targets = ['paragraph'];
-    if (nodes.caption) targets.push('caption');
-    const levels = editor.extensionManager.extensions.find(extension => extension.name === 'heading')?.options.levels || [];
-    if (nodes.heading) for (const level of levels) if (level >= 1 && level <= 4) targets.push('heading' + level);
-    for (const [key, type] of [['callout', 'callout'], ['plainCallout', 'plainCallout'], ['quote', 'blockquote'],
-      ['checkListItem', 'taskList'], ['bulletListItem', 'bulletList'], ['numberedListItem', 'orderedList'], ['codeBlock', 'codeBlock']]) {
-      if (nodes[type]) targets.push(key);
-    }
-    if (nodes.toggleItem) {
-      targets.push('toggleListItem');
-      for (const level of levels) if (level >= 1 && level <= 4) targets.push('toggleHeading' + level);
-    }
+    const targets = ['paragraph', 'caption', 'plainCallout', 'iconCallout', 'quote', 'table',
+      'link', 'file', 'nestedPage', 'pageCard', 'codeBlock', 'listGrid', 'fields', 'tabs',
+      'informationCard', 'gridCard', 'collection', 'toggleListItem', 'checkListItem',
+      'bulletListItem', 'numberedListItem', 'pageBreak'];
+    for (let level = 1; level <= 4; level++) targets.push('heading' + level, 'textHeading' + level,
+      'labelHeading' + level, 'toggleHeading' + level);
+    for (const kind of ['text', 'number', 'date', 'select', 'multiSelect', 'checkbox', 'url']) targets.push('property:' + kind);
+    for (const kind of ['rating', 'singleSelect', 'multiSelect', 'slider']) targets.push('templateComponent:' + kind);
+    for (const style of ['dottedCircles', 'fourCircles', 'thinLine', 'thickLine', 'washiTape']) targets.push('divider:' + style);
     return targets;
+  }
+
+  const postConversion = payload => window.webkit?.messageHandlers?.tiptap?.postMessage({ kind: 'blockConversionRequest', payload });
+  const fragment = values => editor.state.doc.content.constructor.fromArray(values);
+  function make(type, attrs = {}, children) {
+    const schemaType = editor.schema.nodes[type];
+    if (!schemaType) throw new Error('This editor does not contain the ' + type + ' block.');
+    const node = schemaType.createAndFill({ id: crypto.randomUUID(), ...attrs },
+      children == null ? null : fragment(children.map(value => editor.schema.nodeFromJSON(value))));
+    if (!node) throw new Error('The conversion could not preserve content in ' + type + '.');
+    node.check();
+    return node.toJSON();
+  }
+  const paragraph = content => make('paragraph', {}, content || []);
+  function fresh(node) {
+    return { ...node, ...(node.attrs ? { attrs: { ...node.attrs, id: crypto.randomUUID() } } : {}),
+      ...(node.content ? { content: node.content.map(fresh) } : {}) };
+  }
+  function bodies(node) {
+    const type = editor.schema.nodes[node.type];
+    if (type?.isTextblock) return [type.isInGroup('block') ? fresh(node) : paragraph(node.content)];
+    if (type?.isLeaf) return [fresh(node)];
+    const content = (node.content || []).flatMap(child => {
+      const childType = editor.schema.nodes[child.type];
+      return childType?.isInGroup('block') ? [fresh(child)] : bodies(child);
+    });
+    if (node.type === 'gridCard' && node.attrs?.title) content.unshift(paragraph([{ type: 'text', text: node.attrs.title }]));
+    return content.length ? content : [paragraph()];
+  }
+  function inline(blocks) {
+    const result = [];
+    function visit(node) {
+      if (editor.schema.nodes[node.type]?.isTextblock) {
+        if (result.length && node.content?.length) result.push({ type: 'hardBreak' });
+        result.push(...(node.content || []));
+      } else for (const child of node.content || []) visit(child);
+    }
+    blocks.forEach(visit);
+    return result;
+  }
+  function atoms(blocks) {
+    return blocks.flatMap(node => editor.schema.nodes[node.type]?.isLeaf && !editor.schema.nodes[node.type]?.isInline
+      ? [node] : atoms(node.content || []));
+  }
+  const plainText = blocks => blocks.map(value => {
+    const node = editor.schema.nodeFromJSON(value);
+    return node.textBetween(0, node.content.size, '\n', leaf => leaf.type.name === 'hardBreak' ? '\n' : '');
+  }).join('\n');
+  function conversionNodes(source, target, payload) {
+    const attrs = source.attrs || {}, blockID = attrs.id || crypto.randomUUID(), body = bodies(source), text = inline(body);
+    const common = { id: blockID, indent: attrs.indent || 0, textAlign: attrs.textAlign, blockFont: attrs.blockFont };
+    const heading = /^(?:text|label)?[Hh]eading([1-4])$/.exec(target);
+    const toggle = /^toggleHeading([1-4])$/.exec(target);
+    const targetType = { quote: 'blockquote', fields: 'minimalFields', toggleListItem: 'toggleItem',
+      checkListItem: 'taskList', bulletListItem: 'bulletList', numberedListItem: 'orderedList' }[target] || target;
+    if (source.type === targetType) return [source];
+    const retainedAtoms = atoms(body);
+    if (heading) return [make('heading', { ...common, level: Number(heading[1]),
+      label: { ...(attrs.label || {}), presentation: target.startsWith('label') ? 'label' : 'text' } }, text), ...retainedAtoms];
+    if (['paragraph', 'caption', 'codeBlock'].includes(target)) {
+      const value = plainText(body);
+      const content = target === 'codeBlock' ? (value ? [{ type: 'text', text: value }] : []) : text;
+      return [make(target, common, content), ...retainedAtoms];
+    }
+    if (target === 'plainCallout') return [make('plainCallout', { ...common, color: attrs.color || attrs.backgroundColor || '#302d36', textColor: attrs.textColor }, body)];
+    if (target === 'iconCallout') return [make('iconCallout', { ...common, ...Object.fromEntries(['icon', 'iconColor', 'imagePath', 'imageTint', 'textColor'].filter(key => attrs[key] != null).map(key => [key, attrs[key]])),
+      backgroundColor: attrs.backgroundColor || attrs.color || '#302d36' }, body)];
+    if (target === 'quote') return [make('blockquote', common, body)];
+    if (target === 'gridCard') return [make('gridCard', { ...common, width: 'half', height: 140,
+      backgroundColor: attrs.backgroundColor || attrs.color || '#c4e5de' }, body)];
+    if (target === 'informationCard') return [make('informationCard', common, [
+      make('informationCardTitle', {}, []), make('informationCardDescription', {}, []), make('informationCardBody', {}, body)])];
+    const firstText = editor.schema.nodes[body[0]?.type]?.isTextblock;
+    const firstContent = firstText ? body[0].content || [] : [];
+    const rest = firstText ? body.slice(1) : body;
+    if (target === 'toggleListItem' || toggle) return [make('toggleItem', { id: blockID, open: true }, [
+      toggle ? make('heading', { level: Number(toggle[1]) }, firstContent) : paragraph(firstContent), ...rest])];
+    if (['checkListItem', 'bulletListItem', 'numberedListItem'].includes(target)) {
+      const task = target === 'checkListItem', list = task ? 'taskList' : target === 'bulletListItem' ? 'bulletList' : 'orderedList';
+      return [make(list, { id: blockID }, [make(task ? 'taskItem' : 'listItem', task ? { checked: attrs.checked === true } : {},
+        [paragraph(firstContent), ...rest])])];
+    }
+    if (target === 'tabs') {
+      const panel = make('tabPanel', { name: 'Tab 1' }, body);
+      return [make('tabs', { ...common, activeTab: panel.attrs.id }, [panel])];
+    }
+    if (target === 'fields') return [make('minimalFields', common, [make('minimalRecord', {}, [
+      make('minimalRecordTitle', {}, []), make('minimalField', {}, [make('minimalFieldLabel', {}, []), make('minimalFieldValue', {}, body)])])])];
+    if (target === 'listGrid') return [make('listGrid', common, [make('listGridRow', {}, [
+      make('listGridLabel', {}, [paragraph()]), make('listGridValue', {}, [paragraph(text)])])]),
+      ...retainedAtoms];
+    if (target === 'table') return [make('table', { ...common, rowCount: 1, columnCount: 1, headerRow: false }, [
+      make('tableRow', {}, [make('tableCell', {}, body)])])];
+    if (target.startsWith('property:')) return [make('inlineProperty', { ...common,
+      property: { kind: target.slice(9), name: '', value: plainText(body) } }), ...retainedAtoms];
+    if (target.startsWith('divider:') || target === 'pageBreak' || target === 'collection' || target.startsWith('templateComponent:')) {
+      const type = target.startsWith('divider:') ? 'divider' : target.startsWith('templateComponent:') ? 'templateComponent' : target;
+      const extra = type === 'divider' ? { ...attrs, style: target.slice(8) } : type === 'templateComponent'
+        ? { definition: { kind: target.split(':')[1], label: '', minimum: 1, maximum: 5, step: 1, choices: [] } } : {};
+      // Leaf targets cannot own rich content. Keep it adjacent rather than deleting it.
+      return [make(type, { ...common, ...extra, id: blockID }), ...(source.type === type ? [] : body)];
+    }
+    throw new Error('Unknown conversion target: ' + target);
+  }
+  function currentRecords(records) {
+    const result = [];
+    for (const record of records) {
+      let found = null;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.attrs.id && node.attrs.id === record.node.attrs.id) { found = { node, pos }; return false; }
+      });
+      if (!found || !found.node.eq(record.node)) return null;
+      result.push(found);
+    }
+    return result.sort((a, b) => a.pos - b.pos);
+  }
+  function replaceRecords(records, replacements, apply) {
+    const tr = editor.state.tr;
+    for (let index = records.length - 1; index >= 0; index--) {
+      const block = records[index], nodes = replacements[index].map(value => editor.schema.nodeFromJSON(value));
+      nodes.forEach(node => node.check());
+      const at = tr.doc.resolve(block.pos), content = fragment(nodes);
+      if (!at.parent.canReplace(at.index(), at.index() + 1, content)) throw new Error('This conversion does not fit this container without losing surrounding content.');
+      tr.replaceWith(block.pos, block.pos + block.node.nodeSize, content);
+    }
+    tr.doc.check();
+    if (apply) {
+      editor.view.dispatch(tr.setMeta('pennedStyleConversion', true));
+      void originalCommand('setSelectionMode', { mode: 'off' });
+      void originalCommand('requestSnapshot', {});
+    }
+    return true;
+  }
+  function convertAny(records, target, apply = true, payload = {}) {
+    if (!records.length) return false;
+    if (['nestedPage', 'pageCard'].includes(target)) {
+      if (!apply) return true;
+      if (records.every(block => block.node.type.name === 'pageReference' && block.node.attrs.documentID)) {
+        postConversion({ target, token: crypto.randomUUID(), documentIDs: records.map(block => block.node.attrs.documentID) });
+        return true;
+      }
+      const token = crypto.randomUUID();
+      pendingPages.set(token, records);
+      postConversion({ target, token, document: { type: 'doc', content: records.map(block => block.node.toJSON()) } });
+      return true;
+    }
+    if (['link', 'file'].includes(target)) {
+      if (!apply) return true;
+      pendingUI = { target, records };
+      void originalCommand('setSelectionMode', { mode: 'off' });
+      editor.commands.setNodeSelection(records[0].pos);
+      postConversion({ target, token: crypto.randomUUID() });
+      return true;
+    }
+    const replacements = records.map(block => conversionNodes(block.node.toJSON(), target, payload));
+    const applied = replaceRecords(records, replacements, apply);
+    if (apply && target === 'collection') for (let index = 0; index < replacements.length; index++) {
+      if (records[index].node.type.name !== 'collection') window.webkit?.messageHandlers?.tiptap?.postMessage({ kind: 'collectionRequest',
+        payload: { action: 'create', blockID: replacements[index][0].attrs.id } });
+    }
+    if (apply && target === 'divider:washiTape') {
+      let pos = null;
+      editor.state.doc.descendants((node, at) => { if (node.attrs.id === replacements[0][0].attrs.id) { pos = at; return false; } });
+      if (pos != null) { editor.commands.setNodeSelection(pos); void originalCommand('requestBlockSettings', {}); }
+    }
+    return applied;
   }
 
   function selectedDividers() {
@@ -190,23 +393,12 @@ enum TextBlockConversion {
       availabilityDoc = editor.state.doc; availabilityToken = held?.token; availabilityEditable = enabled;
       availabilityDividers = dividerSignature;
       const payload = { token: editable() ? held?.token ?? null : null,
-        targets: dividers.length && !editor.view.composing && editor.schema.nodes.divider
-          ? ['dottedCircles', 'fourCircles', 'thinLine', 'thickLine'].map(style => 'divider:' + style)
-          : editable() && held ? supportedTargets().filter(target => {
-          try { return convert(target, held, false); } catch { return false; }
-        }) : [] };
+        targets: dividers.length || (editable() && held) ? supportedTargets() : [] };
       const next = JSON.stringify(payload);
       if (next === signature) return;
       signature = next;
       window.webkit?.messageHandlers?.tiptap?.postMessage({ kind: 'textConversionState', payload });
     });
-  }
-
-  function enclosed(type, selection) {
-    for (let depth = selection.$from.sharedDepth(selection.to); depth > 0; depth--) {
-      if (selection.$from.node(depth).type.name === type) return true;
-    }
-    return false;
   }
 
   function convert(target, held, apply = true) {
@@ -217,51 +409,9 @@ enum TextBlockConversion {
       leaf.type.name === 'inlineTag' ? '#' + (leaf.attrs.name || '') : leaf.type.name === 'hardBreak' ? '\n' : '\uFFFC');
     const nodes = [];
     editor.state.doc.nodesBetween(selection.from, selection.to, (node, pos) => {
-      if (node.isTextblock) nodes.push({ pos, id: node.attrs.id, text: blockText(node) });
+      if (node.isTextblock) nodes.push({ pos, node, id: node.attrs.id, text: blockText(node) });
     });
-    // A supplied transaction stays undispatched until the entire chain succeeds.
-    const transaction = editor.state.tr;
-    let chain = editor.commandManager.createChain(transaction).setTextSelection({ from: selection.from, to: selection.to });
-    const heading = target.match(/^heading([1-4])$/), toggleHeading = target.match(/^toggleHeading([1-4])$/);
-    if (target === 'paragraph' || target === 'caption' || target === 'codeBlock' || heading) {
-      chain = chain.setNode(heading ? 'heading' : target, heading ? { level: Number(heading[1]) } : {});
-    } else if (target === 'toggleListItem' || toggleHeading) {
-      chain = chain.setNode(toggleHeading ? 'heading' : 'paragraph', toggleHeading ? { level: Number(toggleHeading[1]) } : {});
-      if (!enclosed('toggleItem', selection)) chain = chain.wrapIn('toggleItem', { id: crypto.randomUUID(), open: true });
-    } else if (['checkListItem', 'bulletListItem', 'numberedListItem'].includes(target)) {
-      const type = { checkListItem: 'taskList', bulletListItem: 'bulletList', numberedListItem: 'orderedList' }[target];
-      if (!enclosed(type, selection)) {
-        chain = target === 'checkListItem' ? chain.toggleTaskList() : target === 'bulletListItem' ? chain.toggleBulletList() : chain.toggleOrderedList();
-      }
-    } else {
-      const type = { quote: 'blockquote', callout: 'callout', plainCallout: 'plainCallout' }[target];
-      if (!type) return false;
-      if (!enclosed(type, selection)) chain = chain.wrapIn(type, { id: crypto.randomUUID(),
-        ...(target === 'callout' ? { icon: 'sparkle', color: '#ffffff' } : target === 'plainCallout' ? { color: '#ffffff' } : {}) });
-    }
-    // Preserve existing block identities through schema-driven lifting/conversion.
-    chain = chain.command(({ tr }) => {
-      const restored = new Set();
-      for (const original of nodes) {
-        const position = tr.mapping.map(original.pos, 1);
-        let node = tr.doc.nodeAt(position), pos = position;
-        if (!node?.isTextblock) {
-          const resolved = tr.doc.resolve(Math.min(position, tr.doc.content.size));
-          for (let depth = resolved.depth; depth > 0; depth--) if (resolved.node(depth).isTextblock) {
-            node = resolved.node(depth); pos = resolved.before(depth); break;
-          }
-        }
-        if (!node?.isTextblock || restored.has(pos) || blockText(node) !== original.text) return false;
-        restored.add(pos);
-        if (original.id && node.attrs.id !== original.id) tr.setNodeMarkup(pos, undefined, { ...node.attrs, id: original.id });
-      }
-      tr.setMeta(plugin, { capture: true });
-      tr.scrollIntoView();
-      return true;
-    });
-    const applied = chain.run();
-    if (applied && apply) { editor.view.dispatch(transaction); editor.view.focus(); schedule(); }
-    return applied;
+    return convertAny(nodes, target, apply);
   }
 
   editor.registerPlugin(plugin);
@@ -269,17 +419,64 @@ enum TextBlockConversion {
   editor.on('focus', captureFocus);
   editor.on('blur', schedule);
   window.tiptapCommand = async (name, args = {}) => {
+    if (name === 'cancelBlockConversion') { pendingUI = null; pendingPages.clear(); return true; }
     if (['insertBlock', 'chooseSlashItem'].includes(name) && /^(?:heading|toggleHeading)[56]$/.test(args.blockType || args.key || '')) return false;
     if (name === 'setSelectedBlockType' && ['heading', 'toggleListItem'].includes(args.blockType) && Number(args.level) > 4) return false;
     if (name === 'setContent' || name === 'setSelectionMode' || (name === 'setEditable' && args.editable === false)) {
+      if (name === 'setContent') { pendingPages.clear(); pendingUI = null; }
       editor.view.dispatch(editor.state.tr.setMeta(plugin, { reset: true }).setMeta('addToHistory', false));
+    }
+    if (name === 'setSelectedBlockType') {
+      if (window.PennedBlockSelection?.command(name, args) === false) return false;
+      const records = window.PennedBlockSelection?.selectedRecords?.() || [];
+      if (records.length) {
+        const target = args.blockType === 'toggleListItem' && args.level ? 'toggleHeading' + args.level
+          : args.blockType === 'heading' ? 'textHeading' + (args.level || 1) : args.blockType;
+        try { return convertAny(records, target, true, args); }
+        catch (error) { window.webkit?.messageHandlers?.tiptap?.postMessage({ kind: 'error', payload: { message: error.message } }); return false; }
+      }
+    }
+    if (name === 'finishBlockConversionPage') {
+      const held = pendingPages.get(args.token), records = held && currentRecords(held);
+      if (!records || !args.documentID) return false;
+      const tr = editor.state.tr;
+      for (let index = records.length - 1; index >= 0; index--) {
+        const block = records[index];
+        if (index === 0) tr.replaceWith(block.pos, block.pos + block.node.nodeSize,
+          editor.schema.nodeFromJSON(make('pageReference', { id: block.node.attrs.id, documentID: args.documentID })));
+        else tr.delete(block.pos, block.pos + block.node.nodeSize);
+      }
+      tr.doc.check(); editor.view.dispatch(tr.setMeta('pennedStyleConversion', true));
+      pendingPages.delete(args.token);
+      await originalCommand('setSelectionMode', { mode: 'off' });
+      await originalCommand('requestSnapshot', {});
+      return true;
     }
     if (name === 'convertSelectedText') {
       const held = plugin.getState(editor.state);
       if (!editable() || !held || held.token !== args.token || !supportedTargets().includes(args.target)) return false;
       return convert(args.target, held);
     }
-    return originalCommand(name, args);
+    const result = await originalCommand(name, args);
+    if (pendingUI && ((name === 'linksApply' && pendingUI.target === 'link') ||
+        (name === 'attachmentInsert' && pendingUI.target === 'file')) && result === true) {
+      const held = pendingUI; pendingUI = null;
+      const tr = editor.state.tr, removals = [];
+      for (const original of held.records) {
+        if (!original.node.attrs.id) continue;
+        editor.state.doc.descendants((node, pos) => {
+          if (node.attrs.id === original.node.attrs.id && node.eq(original.node) && node.type.name !== 'pageReference') {
+            let hasPage = false; node.descendants(child => { if (child.type.name === 'pageReference') hasPage = true; });
+            if (!hasPage) removals.push({ pos, size: node.nodeSize });
+            return false;
+          }
+        });
+      }
+      for (const block of removals.sort((a, b) => b.pos - a.pos)) tr.delete(block.pos, block.pos + block.size);
+      if (tr.docChanged) { tr.doc.check(); editor.view.dispatch(tr); await originalCommand('requestSnapshot', {}); }
+    }
+    if (name === 'linksEnd' && pendingUI?.target === 'link') pendingUI = null;
+    return result;
   };
   editor.on('destroy', () => {
     editor.off('focus', captureFocus); editor.off('blur', schedule);
