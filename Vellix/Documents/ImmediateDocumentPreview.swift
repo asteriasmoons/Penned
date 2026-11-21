@@ -466,13 +466,13 @@ private struct ImmediatePreviewBlock: View {
         let horizontal: Alignment = card.alignment == .center ? .center : (card.alignment == .right ? .trailing : .leading)
         let text: TextAlignment = card.alignment == .center ? .center : (card.alignment == .right ? .trailing : .leading)
         var colors = appearance
-        colors.textColorHex = card.inkColor
+        colors.textColorHex = card.effectiveTextColor
         return VStack(alignment: .leading, spacing: 7) {
             VStack(alignment: horizontal.horizontal, spacing: 6) {
                 LibraryIcon(name: card.icon, size: 28).foregroundStyle(Color(vellixHex: card.iconColor))
                 if !card.title.isEmpty {
                     Text(card.title).font(appearance.fontStyle.font(size: 18, weight: .bold))
-                        .foregroundStyle(Color(vellixHex: card.inkColor)).multilineTextAlignment(text)
+                        .foregroundStyle(Color(vellixHex: card.effectiveTitleColor)).multilineTextAlignment(text)
                 }
             }.frame(maxWidth: .infinity, alignment: horizontal)
             ImmediatePreviewBlocks(nodes: nodes, appearance: colors, depth: depth + 1,

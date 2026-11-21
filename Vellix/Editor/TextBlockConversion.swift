@@ -68,6 +68,10 @@ struct EditorTextConversionMenu: View {
                 option("Tabs", target: "tabs", selection: selection)
                 option("Infocards", target: "informationCard", selection: selection)
                 option("Grid Cards", target: "gridCard", selection: selection)
+                Menu("Planner") {
+                    option("Calendar", target: "weekStrip", selection: selection)
+                    option("Event", target: "existingEvent", selection: selection)
+                }
             }
             option("Collection", target: "collection", selection: selection)
             Menu("Toggle") {
@@ -119,6 +123,10 @@ struct EditorTextConversionMenu: View {
 
     private func option(_ title: String, target: String, selection: TipTapTextConversionState) -> some View {
         Button(title) {
+            if target == "existingEvent" {
+                session.beginExistingEventConversion(blockSelection: blockSelection)
+                return
+            }
             if blockSelection {
                 guard session.selectedBlockCount > 0, session.selectionMode != "off",
                       session.isReady, !session.isLoadingDocument, session.editingEnabled else { return }
@@ -192,7 +200,7 @@ enum TextBlockConversion {
   function supportedTargets() {
     const targets = ['paragraph', 'caption', 'plainCallout', 'iconCallout', 'quote', 'table',
       'link', 'file', 'nestedPage', 'pageCard', 'codeBlock', 'listGrid', 'fields', 'tabs',
-      'informationCard', 'gridCard', 'collection', 'toggleListItem', 'checkListItem',
+      'informationCard', 'gridCard', 'weekStrip', 'existingEvent', 'collection', 'toggleListItem', 'checkListItem',
       'bulletListItem', 'numberedListItem', 'pageBreak'];
     for (let level = 1; level <= 4; level++) targets.push('heading' + level, 'textHeading' + level,
       'labelHeading' + level, 'toggleHeading' + level);
@@ -281,6 +289,15 @@ enum TextBlockConversion {
       const task = target === 'checkListItem', list = task ? 'taskList' : target === 'bulletListItem' ? 'bulletList' : 'orderedList';
       return [make(list, { id: blockID }, [make(task ? 'taskItem' : 'listItem', task ? { checked: attrs.checked === true } : {},
         [paragraph(firstContent), ...rest])])];
+    }
+    if (target === 'weekStrip') {
+      const today = new Date();
+      const dateKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      const start = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12);
+      start.setDate(start.getDate() - start.getDay());
+      const dates = Array.from({length: 7}, (_, index) => { const date = new Date(start); date.setDate(start.getDate() + index); return dateKey(date); });
+      return [make('weekStrip', { ...common, selectedDate: dateKey(today), firstDayOfWeek: 0 }, dates.map(date =>
+        make('weekDayPanel', { date }, date === dateKey(today) ? body : [paragraph()])))];
     }
     if (target === 'tabs') {
       const panel = make('tabPanel', { name: 'Tab 1' }, body);

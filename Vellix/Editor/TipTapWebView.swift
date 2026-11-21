@@ -626,11 +626,55 @@ final class Coordinator:
         if PennedKeyboardTrace.receive(message, body: body, session: session) { return }
         #endif
 
+        #if DEBUG && os(iOS)
+        if let dictionary = body as? [String: Any],
+           dictionary["kind"] as? String == "informationCardDeletionDiagnostic" {
+            if let payload = dictionary["payload"] as? [String: Any],
+               JSONSerialization.isValidJSONObject(payload),
+               let data = try? JSONSerialization.data(withJSONObject: payload, options: .sortedKeys),
+               data.count <= 20_000 {
+                logInfo("PENNED-INFOCARD-DELETE \(String(decoding: data, as: UTF8.self))")
+            }
+            return
+        }
+        #endif
+
         #if DEBUG
         if let dictionary = body as? [String: Any],
            dictionary["kind"] as? String == "tabsDiagnostic" {
             let payload = dictionary["payload"] as? [String: Any] ?? [:]
             print("🧩 TABS JS: \(payload)")
+            return
+        }
+        #endif
+
+        #if DEBUG
+        // Grid Card save diagnostics use the existing TipTap message bridge.
+        // Only block identity, validation reasons, field names, and types are
+        // logged; card titles, body text, and chosen colors are excluded.
+        if let dictionary = body as? [String: Any],
+           dictionary["kind"] as? String == "gridCardDiagnostic" {
+            let payload = dictionary["payload"] as? [String: Any] ?? [:]
+            if JSONSerialization.isValidJSONObject(payload),
+               let data = try? JSONSerialization.data(withJSONObject: payload, options: .sortedKeys),
+               data.count <= 20_000 {
+                logInfo("PENNED-GRID-CARD \(String(decoding: data, as: UTF8.self))")
+            }
+            return
+        }
+        #endif
+
+        #if DEBUG
+        // Same lightweight JS-to-Xcode route as tabsDiagnostic. The source
+        // sends date/panel metadata, not document text or event identities.
+        if let dictionary = body as? [String: Any],
+           dictionary["kind"] as? String == "calendarDiagnostic" {
+            let payload = dictionary["payload"] as? [String: Any] ?? [:]
+            if JSONSerialization.isValidJSONObject(payload),
+               let data = try? JSONSerialization.data(withJSONObject: payload, options: .sortedKeys),
+               data.count <= 20_000 {
+                logInfo("PENNED-CALENDAR \(String(decoding: data, as: UTF8.self))")
+            }
             return
         }
         #endif

@@ -76,6 +76,35 @@ enum MobileEditorInteractions {
     }).run();
   }
 
+  // iOS WebKit delivers software-keyboard deletion through beforeinput.
+  // Keep washi tape and the final editable information-card body block intact.
+  function protectedMobileDeletion(direction) {
+    if (!editable() || editor.view.composing) return false;
+    const { selection, doc } = editor.state;
+    const { $from, $to, empty } = selection;
+    if (!empty) {
+      let protectedTape = false;
+      doc.nodesBetween(selection.from, selection.to, node => {
+        if (node.type.name === "divider" && node.attrs.style === "washiTape") protectedTape = true;
+      });
+      return protectedTape;
+    }
+    if (!$from.parent.isTextblock) return false;
+    const atEdge = direction === "backward"
+      ? $from.parentOffset === 0
+      : $from.parentOffset === $from.parent.content.size;
+    if (!atEdge) return false;
+    for (let depth = $from.depth; depth > 0; depth--) {
+      if ($from.node(depth).type.name !== "informationCardBody") continue;
+      const body = $from.node(depth);
+      if (body.childCount === 1 && $from.parent.content.size === 0) return true;
+      break;
+    }
+    const boundary = doc.resolve(direction === "backward" ? $from.before() : $from.after());
+    const adjacent = direction === "backward" ? boundary.nodeBefore : boundary.nodeAfter;
+    return adjacent?.type.name === "divider" && adjacent.attrs.style === "washiTape";
+  }
+
   function backspacePastDivider() {
     if (!editable() || editor.view.composing) return false;
     const { state } = editor;
@@ -186,15 +215,22 @@ enum MobileEditorInteractions {
   }, true);
 
   editor.view.dom.addEventListener("keydown", event => {
-    if (event.key !== "Backspace" || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
-    if (backspacePastDivider() || backspaceIntoQuote()) {
+    if (!["Backspace", "Delete"].includes(event.key) || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+    const backward = event.key === "Backspace";
+    const protectedDeletion = protectedMobileDeletion(backward ? "backward" : "forward");
+    const handled = protectedDeletion || (backward && (backspacePastDivider() || backspaceIntoQuote()));
+    if (handled) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }
   }, true);
   editor.view.dom.addEventListener("beforeinput", event => {
-    if (event.inputType !== "deleteContentBackward" || event.isComposing || !event.cancelable) return;
-    if (backspacePastDivider() || backspaceIntoQuote()) {
+    if (!["deleteContentBackward", "deleteContentForward"].includes(event.inputType)) return;
+    const backward = event.inputType === "deleteContentBackward";
+    if (event.isComposing || !event.cancelable) return;
+    const protectedDeletion = protectedMobileDeletion(backward ? "backward" : "forward");
+    const handled = protectedDeletion || (backward && (backspacePastDivider() || backspaceIntoQuote()));
+    if (handled) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }

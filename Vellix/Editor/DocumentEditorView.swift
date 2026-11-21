@@ -4,6 +4,7 @@
 //
 
 import Combine
+import EventKit
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -247,6 +248,15 @@ struct DocumentEditorView: View {
         #endif
         .onChange(of: colorScheme) { _, scheme in model.session.setApplicationColorScheme(scheme) }
         .onReceive(environment.collections.$revision) { _ in updateCollectionPresentation() }
+        .onChange(of: model.session.renderedDocumentID) { _, rendered in
+            if rendered == model.documentID { model.syncLinkedCalendarEvents() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .EKEventStoreChanged).receive(on: RunLoop.main)) { _ in
+            model.syncLinkedCalendarEvents()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange).receive(on: RunLoop.main)) { _ in
+            model.syncLinkedCalendarEvents()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .vellixTasksChanged).receive(on: RunLoop.main)) { _ in model.refreshTaskHistoryPage() }
         .onChange(of: model.pageReferenceIDs) { _, _ in updateCollectionPresentation() }
         .onReceive(model.$collectionEditorRequest) { request in
@@ -611,6 +621,21 @@ struct DocumentEditorView: View {
         #endif
         .sheet(item: editorPresentation($model.listGridSettingsRequest)) { settings in
             ListGridSettingsSheet(settings: settings, documentID: model.documentID, session: model.session)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(item: editorPresentation($model.linkedCalendarEventRequest)) { request in
+            LinkedCalendarEventDetailPresentation(request: request)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(item: editorPresentation($model.existingEventPickerRequest)) { _ in
+            ExistingEventPickerSheet(session: model.session)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(item: editorPresentation($model.weekStripSettingsRequest)) { request in
+            WeekStripSettingsSheet(request: request, session: model.session)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
@@ -1721,7 +1746,7 @@ struct DocumentEditorView: View {
     #if canImport(UIKit)
     private var isBlockKeyboardSheetPresented: Bool {
         // These sheets own their keyboard; there is no web caret to reveal.
-        model.tabsSettingsRequest != nil || model.listGridSettingsRequest != nil ||
+        model.tabsSettingsRequest != nil || model.weekStripSettingsRequest != nil || model.existingEventPickerRequest != nil || model.listGridSettingsRequest != nil ||
             model.headingLabelSettingsRequest != nil || model.minimalFieldsSettingsRequest != nil ||
             model.informationCardSettingsRequest != nil ||
             model.gridCardSettingsRequest != nil || model.iconCalloutSettingsRequest != nil ||
@@ -3230,6 +3255,10 @@ private struct EditorInsertMenu: View {
                 Button("Tabs") { insertBlockAction("tabs") }
                 Button("Infocards") { insertBlockAction("informationCard") }
                 Button("Grid Cards") { insertBlockAction("gridCard") }
+                Menu("Planner") {
+                    Button("Calendar") { insertBlockAction("weekStrip") }
+                    Button("Event") { insertBlockAction("existingEvent") }
+                }
             }
             Button("Collection") { insertBlockAction("collection") }
             Menu("Toggle") {
@@ -3819,6 +3848,116 @@ struct ListGridSettingsSheet: View {
             .padding(.top, 2)
         }
         .disabled(isApplyingRowStyle)
+    }
+}
+
+// Native presentation destination for the Week Strip header gesture.
+// The appearance controls are added in Step 12.
+struct WeekStripSettingsSheet: View {
+    let request: WeekStripSettingsRequest
+    let session: TipTapEditorSession
+    @Environment(\.dismiss) private var dismiss
+    @State private var colors: [String: Color]
+    @State private var values: [String: Int]
+    @State private var selectedDateBehavior: String
+
+    private static let colorFields: [(String, String, String)] = [
+        ("Inactive Date Tab Color", "inactiveTabColor", "#303137"),
+        ("Active Date Tab Color", "activeTabColor", "#9276dc"),
+        ("Navigation Button Color", "navigationColor", "#7c8b80"),
+        ("Container Border Color", "containerBorderColor", "#34343b"),
+        ("Background Color", "backgroundColor", "#121316"),
+        ("Content Text Color", "contentTextColor", "#f7f7fa"),
+    ]
+    private static let numericDefaults: [String: Int] = [
+        "borderWidth": 1, "borderThickness": 1, "cornerRadius": 18,
+        "fontSize": 14, "fontWeight": 700, "firstDayOfWeek": 0,
+        "padding": 14, "spacing": 14,
+    ]
+
+    init(request: WeekStripSettingsRequest, session: TipTapEditorSession) {
+        self.request = request
+        self.session = session
+        _colors = State(initialValue: Dictionary(uniqueKeysWithValues: Self.colorFields.map { _, key, fallback in
+            (key, Color(vellixHex: request.settings[key] as? String ?? fallback))
+        }))
+        _values = State(initialValue: Self.numericDefaults.mapValues { $0 }.merging(
+            request.settings.compactMapValues { ($0 as? NSNumber)?.intValue }) { _, saved in saved })
+        _selectedDateBehavior = State(initialValue: request.settings["selectedDateBehavior"] as? String ?? "remember")
+    }
+
+    private func update(_ key: String, _ value: Any) {
+        session.weekStripSetAttr(blockID: request.blockID, key: key, value: value)
+    }
+
+    private func colorControl(_ title: String, key: String, fallback: String) -> some View {
+        ColorPicker(title, selection: Binding(
+            get: { colors[key] ?? Color(vellixHex: fallback) },
+            set: { color in
+                colors[key] = color
+                update(key, color.vellixHexString(fallback: fallback))
+            }), supportsOpacity: false)
+    }
+
+    private func numberControl(_ title: String, key: String, range: ClosedRange<Int>, step: Int = 1) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(values[key] ?? 0)").foregroundStyle(.secondary)
+            }
+            Slider(value: Binding(
+                get: { Double(values[key] ?? 0) },
+                set: { newValue in
+                    let rounded = Int((newValue / Double(step)).rounded()) * step
+                    values[key] = rounded
+                    update(key, rounded)
+                }), in: Double(range.lowerBound)...Double(range.upperBound), step: Double(step))
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Colors") {
+                    ForEach(Self.colorFields.indices, id: \.self) { index in
+                        let field = Self.colorFields[index]
+                        colorControl(field.0, key: field.1, fallback: field.2)
+                    }
+                }
+                Section("Border") {
+                    numberControl("Border Width", key: "borderWidth", range: 0...20)
+                    numberControl("Border Thickness", key: "borderThickness", range: 0...8)
+                }
+                Section("Corners") {
+                    numberControl("Corner Radius", key: "cornerRadius", range: 0...48)
+                }
+                Section("Typography") {
+                    numberControl("Font Size", key: "fontSize", range: 10...24)
+                    numberControl("Font Weight", key: "fontWeight", range: 400...900, step: 100)
+                }
+                Section("Calendar") {
+                    Picker("First Day of Week", selection: Binding(
+                        get: { values["firstDayOfWeek"] ?? 0 },
+                        set: { values["firstDayOfWeek"] = $0; update("firstDayOfWeek", $0) })) {
+                        ForEach(0..<7, id: \.self) { day in
+                            Text(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day]).tag(day)
+                        }
+                    }
+                    Picker("Selected Date Behavior", selection: Binding(
+                        get: { selectedDateBehavior },
+                        set: { selectedDateBehavior = $0; update("selectedDateBehavior", $0) })) {
+                        Text("Remember Last Selected Date").tag("remember")
+                        Text("Always Select Today").tag("today")
+                    }
+                }
+                Section("Layout") {
+                    numberControl("Padding", key: "padding", range: 0...32)
+                    numberControl("Spacing", key: "spacing", range: 0...32)
+                }
+            }
+            .pennedSheet(title: "Week Strip Settings", close: { dismiss() })
+        }
     }
 }
 
@@ -4940,5 +5079,157 @@ private struct InformationCardSettingsSheet: View {
             .onChange(of: value.wrappedValue) { _, newValue in
                 set(key, newValue.vellixHexString(fallback: "#FFFFFF"))
             }
+    }
+}
+
+struct ExistingEventPickerRequest: Identifiable {
+    let id = UUID()
+}
+
+struct ExistingEventPickerSheet: View {
+    let session: TipTapEditorSession
+    @Environment(\.dismiss) private var dismiss
+    @State private var events: [CalendarEvent] = []
+    @State private var isLoading = true
+    @State private var status: String?
+    @State private var pageIndex = 0
+    @State private var pageAnchor = Calendar.current.startOfDay(for: Date())
+    @State private var didSelectEvent = false
+    private let calendarService = AppleCalendarService()
+
+    private var pageRange: DateInterval {
+        let calendar = Calendar.current
+        let start = calendar.dateInterval(of: .weekOfYear, for: pageAnchor)?.start
+            ?? calendar.startOfDay(for: pageAnchor)
+        let first = calendar.date(byAdding: .weekOfYear, value: pageIndex, to: start) ?? start
+        let last = calendar.date(byAdding: .weekOfYear, value: 1, to: first)
+            ?? first.addingTimeInterval(7 * 86_400)
+        return DateInterval(start: first, end: last)
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                HStack(spacing: 12) {
+                    Button { pageIndex -= 1 } label: { Image(systemName: "chevron.left") }
+                        .accessibilityLabel("Previous week")
+                    Spacer(minLength: 0)
+                    Text("\(pageRange.start.formatted(date: .abbreviated, time: .omitted)) – \(pageRange.end.addingTimeInterval(-1).formatted(date: .abbreviated, time: .omitted))")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 0)
+                    Button { pageIndex += 1 } label: { Image(systemName: "chevron.right") }
+                        .accessibilityLabel("Next week")
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                Group {
+                    if isLoading { Spacer(); ProgressView("Loading events…"); Spacer() }
+                    else if let status {
+                        Spacer()
+                        ContentUnavailableView(status, systemImage: "calendar")
+                        Spacer()
+                    } else {
+                        List(events) { event in
+                            Button {
+                                didSelectEvent = true
+                                session.insertLinkedCalendarEvent(event)
+                                dismiss()
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(event.title)
+                                    Text(event.start.formatted(date: .abbreviated, time: .omitted))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Existing Event")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .task(id: pageIndex) { await loadPage() }
+            .onDisappear { if !didSelectEvent { session.cancelExistingEventPicker() } }
+        }
+    }
+
+    private func loadPage() async {
+        isLoading = true
+        status = nil
+        events = []
+        do {
+            let currentAccess = await calendarService.access()
+            let access = currentAccess == .notRequested
+                ? try await calendarService.requestAccess() : currentAccess
+            guard !Task.isCancelled else { return }
+            guard access == .allowed else {
+                status = "Calendar access is required to select an event."
+                isLoading = false
+                return
+            }
+            let range = pageRange
+            let pageEvents = await calendarService.events(in: range)
+                .filter { range.contains($0.start) }
+                .sorted {
+                    if $0.start != $1.start { return $0.start < $1.start }
+                    if $0.title != $1.title { return $0.title < $1.title }
+                    return $0.id < $1.id
+                }
+            guard !Task.isCancelled else { return }
+            events = pageEvents
+            if pageEvents.isEmpty { status = "No events this week." }
+        } catch {
+            guard !Task.isCancelled else { return }
+            status = "Unable to load calendar events."
+        }
+        isLoading = false
+    }
+}
+
+struct LinkedCalendarEventRequest: Identifiable {
+    let id = UUID()
+    let eventID: String
+    let identity: CalendarEventIdentity
+    let start: Date
+}
+
+struct LinkedCalendarEventDetailPresentation: View {
+    let request: LinkedCalendarEventRequest
+    @EnvironmentObject private var environment: AppEnvironment
+    @State private var event: CalendarEvent?
+    @State private var unavailable = false
+
+    var body: some View {
+        Group {
+            if let event {
+                CalendarEventDetailSheet(event: event, model: environment.calendar)
+            } else if unavailable {
+                ContentUnavailableView("Event unavailable", systemImage: "calendar")
+            } else {
+                ProgressView("Opening event…")
+            }
+        }
+        .task(id: request.id) {
+            let service = AppleCalendarService()
+            let calendar = Calendar.current
+            let start = calendar.date(byAdding: .day, value: -7, to: request.start) ?? request.start
+            let end = calendar.date(byAdding: .day, value: 8, to: request.start) ?? request.start.addingTimeInterval(8 * 86_400)
+            let matches = await service.events(in: DateInterval(start: start, end: end))
+            guard !Task.isCancelled else { return }
+            guard let found = matches.first(where: { $0.identity.key == request.eventID })
+                ?? matches.first(where: {
+                    $0.identity.calendarID == request.identity.calendarID &&
+                    $0.identity.localID == request.identity.localID &&
+                    $0.identity.occurrenceKey == request.identity.occurrenceKey
+                }) else {
+                unavailable = true
+                return
+            }
+            environment.calendar.select(found.start)
+            environment.calendar.activate()
+            await environment.calendar.refreshAndWait()
+            guard !Task.isCancelled else { return }
+            environment.calendar.selectedEvent = found
+            event = found
+        }
     }
 }

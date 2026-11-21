@@ -113,6 +113,9 @@ final class TipTapEditorSession: ObservableObject {
     private(set) var editingEnabled = true
 
     var onEvent: ((TipTapEditorEvent) -> Void)?
+    // Duplicated/pasted page cards ask the owner to clone their page into an
+    // independent copy; pairs carry {blockId, sourceDocumentID}.
+    var onClonePageReferences: (([[String: String]]) -> Void)?
     var ownsEditorPresentation: (() -> Bool)?
     var isReturningFromDocument = false
     var acceptsEditorPresentationRequests: Bool {
@@ -933,6 +936,12 @@ final class TipTapEditorSession: ObservableObject {
         send(TipTapEditorCommand("resolvePageReference", args: ["blockId": blockID, "documentId": documentID ?? ""]))
     }
 
+    func applyClonedPageReference(blockID: String, documentID: String?) {
+        // Like resolvePageReference but never auto-opens the page: used when a
+        // duplicated/pasted card is repointed at its freshly cloned copy.
+        send(TipTapEditorCommand("applyClonedPageReference", args: ["blockId": blockID, "documentId": documentID ?? ""]))
+    }
+
     func insertDivider(_ style: VellixDividerStyle) {
         send(TipTapEditorCommand.insertDivider(style))
     }
@@ -1271,6 +1280,52 @@ final class TipTapEditorSession: ObservableObject {
 
     /// Generic appearance/structure setter. `value` is a hex string, Int, Bool,
     /// or option string; the JS side sanitizes it per attribute.
+    func cancelExistingEventPicker() {
+        send(TipTapEditorCommand("cancelExistingEventPicker"))
+    }
+
+    func beginExistingEventConversion(blockSelection: Bool) {
+        send(TipTapEditorCommand("beginExistingEventConversion", args: ["blockSelection": blockSelection]))
+    }
+
+    func insertLinkedCalendarEvent(_ event: CalendarEvent) {
+        guard let identityData = try? JSONEncoder().encode(event.identity),
+              let identity = try? JSONSerialization.jsonObject(with: identityData) as? [String: Any] else { return }
+        send(TipTapEditorCommand("insertLinkedCalendarEvent", args: [
+            "eventID": event.identity.key,
+            "eventIdentity": identity,
+            "title": event.title,
+            "calendarTitle": event.calendarTitle,
+            "start": ISO8601DateFormatter().string(from: event.start),
+            "end": ISO8601DateFormatter().string(from: event.end),
+            "isAllDay": event.isAllDay,
+            "timeZoneID": event.timeZoneID ?? TimeZone.current.identifier,
+        ]))
+    }
+
+    func markLinkedCalendarEventUnavailable(eventID: String) {
+        send(TipTapEditorCommand("refreshLinkedCalendarEvent", args: [
+            "eventID": eventID, "available": false,
+        ]))
+    }
+
+    func refreshLinkedCalendarEvent(_ event: CalendarEvent, referenceID: String? = nil) {
+        send(TipTapEditorCommand("refreshLinkedCalendarEvent", args: [
+            "eventID": referenceID ?? event.identity.key,
+            "available": true,
+            "title": event.title,
+            "calendarTitle": event.calendarTitle,
+            "start": ISO8601DateFormatter().string(from: event.start),
+            "end": ISO8601DateFormatter().string(from: event.end),
+            "isAllDay": event.isAllDay,
+            "timeZoneID": event.timeZoneID ?? TimeZone.current.identifier,
+        ]))
+    }
+
+    func weekStripSetAttr(blockID: String, key: String, value: Any) {
+        send(TipTapEditorCommand("weekStripSetAttr", args: ["blockId": blockID, "key": key, "value": value]))
+    }
+
     func tabsSetAttr(blockID: String, key: String, value: Any) {
         send(TipTapEditorCommand("tabsSetAttr", args: ["blockId": blockID, "key": key, "value": value]))
     }
@@ -1543,6 +1598,38 @@ final class TipTapEditorSession: ObservableObject {
         guard webView.window?.windowScene?.activationState == .foregroundActive, Self.hasPasteboardContent else { return }
         cancelPendingPaste()
         let request = pasteRequestID
+        // Prefer Penned's lossless block format when it is present. Ordinary
+        // external clipboard content still follows the existing WebKit path.
+        let pennedBlockType = "im.lystaria.penned.blocks+json"
+        if let data = UIPasteboard.general.data(forPasteboardType: pennedBlockType),
+           let nativeJSON = String(data: data, encoding: .utf8) {
+            webView.callAsyncJavaScript(
+                "return await window.tiptapCommand('pastePennedBlocks', { nativeJSON: nativeJSON });",
+                arguments: ["nativeJSON": nativeJSON], in: nil, in: .page
+            ) { [weak self, weak webView] result in
+                guard let self, let webView, self.pasteRequestID == request,
+                      self.loadGeneration == generation, self.isReady,
+                      !self.isLoadingDocument, self.editingEnabled,
+                      self.selectionMode == "off",
+                      webView.window?.windowScene?.activationState == .foregroundActive else { return }
+                if case .success(let pasted) = result, pasted as? Bool == true { return }
+                // A stale or incompatible Penned payload must not block the
+                // interoperable HTML/plain-text representations on the board.
+                self.logger.debug("Native Penned block paste unavailable; trying standard paste.")
+                if self.performPaste(in: webView) { return }
+                webView.callAsyncJavaScript("return await window.tiptapCommand('mobilePreparePaste');",
+                    arguments: [:], in: nil, in: .page) { [weak self, weak webView] prepared in
+                    guard let self, let webView, self.pasteRequestID == request,
+                          self.loadGeneration == generation, self.isReady,
+                          !self.isLoadingDocument, self.editingEnabled,
+                          self.selectionMode == "off",
+                          webView.window?.windowScene?.activationState == .foregroundActive,
+                          case .success(let focused) = prepared, focused as? Bool == true else { return }
+                    _ = self.performPaste(in: webView)
+                }
+            }
+            return
+        }
         if performPaste(in: webView) { return }
         webView.callAsyncJavaScript("return await window.tiptapCommand('mobilePreparePaste');",
             arguments: [:], in: nil, in: .page) { [weak self, weak webView] result in
@@ -1573,6 +1660,7 @@ final class TipTapEditorSession: ObservableObject {
     static var hasPasteboardContent: Bool {
         let clipboard = UIPasteboard.general
         return clipboard.hasStrings || clipboard.hasImages || clipboard.hasURLs ||
+            clipboard.types.contains("im.lystaria.penned.blocks+json") ||
             clipboard.types.contains(UTType.html.identifier) || clipboard.types.contains(UTType.fileURL.identifier)
     }
 
@@ -1654,6 +1742,25 @@ final class TipTapEditorSession: ObservableObject {
                 return
             }
             #endif
+            if kind == "editorSmartPaste" {
+                // The editor intercepts its own paste so a lossless Penned slice on
+                // the native pasteboard survives WebKit's clipboard sanitizer. This
+                // reconstructs it when present and otherwise re-issues a normal paste.
+                paste()
+                return
+            }
+            if kind == "clonePageReferences" {
+                // A duplicated/pasted page card must own an independent page, not
+                // share the original. Hand the {blockId, sourceDocumentID} pairs to
+                // the owner, which clones each source page and repoints the card.
+                let pairs = (payload["pairs"] as? [[String: Any]])?.compactMap { pair -> [String: String]? in
+                    guard let blockID = pair["blockId"] as? String, !blockID.isEmpty,
+                          let source = pair["sourceDocumentID"] as? String, !source.isEmpty else { return nil }
+                    return ["blockId": blockID, "sourceDocumentID": source]
+                } ?? []
+                if !pairs.isEmpty { onClonePageReferences?(pairs) }
+                return
+            }
             if kind == "diag" {
                 let message = payload["message"] as? String ?? ""
                 logger.info("VELLIX-DIAG \(message, privacy: .public)")
@@ -1830,7 +1937,7 @@ final class TipTapEditorSession: ObservableObject {
              .requestPageCardSettings, .requestBlockquoteColorPicker,
              .requestTemplates, .requestAttachment, .requestAttachmentActions, .requestCollection,
              .requestTemplateComponent, .requestInlinePropertyEditor, .requestNestedPage, .requestPageCard,
-             .requestBlockDeletion, .requestPlaceholderConversion, .requestListGridSettings, .requestTabsSettings,
+             .requestBlockDeletion, .requestPlaceholderConversion, .requestListGridSettings, .requestTabsSettings, .requestWeekStripSettings, .requestExistingEventPicker, .openLinkedCalendarEvent,
              .requestMinimalFieldsSettings, .requestInformationCardSettings, .requestCodeBlockEditor,
              .requestTableCreation, .requestTableMenu, .requestTaskMenu:
             guard acceptsEditorPresentationRequests, editingEnabled else { return }
@@ -1952,6 +2059,7 @@ final class TipTapEditorSession: ObservableObject {
             "linedpages",
             "addwavy",
             "imagesign",
+            "chevleft",
             "chevright",
             "chevdown",
             "chevup",
@@ -2253,6 +2361,9 @@ final class DocumentEditorModel: ObservableObject {
     @Published var listGridSettingsRequest: TipTapListGridSettings?
     @Published var codeBlockEditorRequest: CodeBlockEditorRequest?
     @Published var tabsSettingsRequest: TipTapTabsSettings?
+    @Published var weekStripSettingsRequest: WeekStripSettingsRequest?
+    @Published var existingEventPickerRequest: ExistingEventPickerRequest?
+    @Published var linkedCalendarEventRequest: LinkedCalendarEventRequest?
     @Published var minimalFieldsSettingsRequest: TipTapMinimalFieldsSettings?
     @Published var informationCardSettingsRequest: TipTapInformationCardSettings?
     @Published var cardEditorRequest: PageCardEditorRequest?
@@ -2278,6 +2389,44 @@ final class DocumentEditorModel: ObservableObject {
     private var warmupNeedsReload = false
     private let pageReferenceLifecycle = PageReferenceLifecycle()
     private var adoptingSavedCheckpoint = false
+    private var linkedEventSyncTask: Task<Void, Never>?
+    private let linkedEventCalendarService = AppleCalendarService()
+
+    func syncLinkedCalendarEvents() {
+        guard let json = latestJSON ?? document?.tipTapJSON,
+              let data = json.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        var references: [(String, CalendarEventIdentity, Date)] = []
+        func collect(_ node: [String: Any]) {
+            if node["type"] as? String == "linkedCalendarEvent",
+               let attrs = node["attrs"] as? [String: Any],
+               let eventID = attrs["eventID"] as? String,
+               let identityJSON = attrs["eventIdentity"] as? [String: Any],
+               let identityData = try? JSONSerialization.data(withJSONObject: identityJSON),
+               let identity = try? JSONDecoder().decode(CalendarEventIdentity.self, from: identityData),
+               let startString = attrs["start"] as? String,
+               let start = ISO8601DateFormatter().date(from: startString) {
+                references.append((eventID, identity, start))
+            }
+            for child in node["content"] as? [[String: Any]] ?? [] { collect(child) }
+        }
+        collect(root)
+        linkedEventSyncTask?.cancel()
+        guard !references.isEmpty else { return }
+        let documentID = document?.id
+        let service = linkedEventCalendarService
+        linkedEventSyncTask = Task { [weak self] in
+            let access = await service.access()
+            for (eventID, identity, start) in references {
+                guard !Task.isCancelled else { return }
+                let event = access == .allowed ? await service.linkedEvent(identity: identity, lastKnownStart: start) : nil
+                guard !Task.isCancelled, let self, self.document?.id == documentID else { return }
+                if let event { self.session.refreshLinkedCalendarEvent(event, referenceID: eventID) }
+                else { self.session.markLinkedCalendarEventUnavailable(eventID: eventID) }
+            }
+        }
+    }
+
     private var latestJSON: String? {
         didSet { if !adoptingSavedCheckpoint && latestJSON != oldValue { noteTemplateChange() } }
     }
@@ -2336,10 +2485,39 @@ final class DocumentEditorModel: ObservableObject {
         session.onEvent = { [weak self] event in
             self?.handle(event)
         }
+        session.onClonePageReferences = { [weak self] pairs in
+            Task { await self?.cloneDuplicatedPageReferences(pairs) }
+        }
         session.documentForRecovery = { [weak self] in
             guard let self, let document = self.document else { return nil }
             return (document.id, self.latestJSON ?? document.tipTapJSON)
         }
+    }
+
+    // Duplicating or pasting a page card must yield a page the copy owns on its
+    // own, not a second reference to the original. For each duplicated/pasted
+    // card, clone the source page into an independent tree (cloneTree deep-copies
+    // the page, its nested sub-pages and attachments and regenerates every inner
+    // block id), re-parent the clone under this document, and repoint the card at
+    // it. If the source page can't be cloned here, drop the card.
+    func cloneDuplicatedPageReferences(_ pairs: [[String: String]]) async {
+        guard let parentID = document?.id else { return }
+        var changed = false
+        for pair in pairs {
+            guard let blockID = pair["blockId"], let source = pair["sourceDocumentID"] else { continue }
+            do {
+                var clone = try documentRepository.duplicate(id: source, attachmentStore: attachmentStore)
+                if clone.parentDocumentID != parentID {
+                    clone = try documentRepository.move(id: clone.id, spaceID: clone.spaceID,
+                        folderID: clone.folderID, parentDocumentID: parentID)
+                }
+                session.applyClonedPageReference(blockID: blockID, documentID: clone.id)
+                changed = true
+            } catch {
+                session.applyClonedPageReference(blockID: blockID, documentID: nil)
+            }
+        }
+        if changed { refreshRelated() }
     }
 
     func deleteAttachment(_ request: AttachmentActionRequest) async {
@@ -2433,6 +2611,7 @@ final class DocumentEditorModel: ObservableObject {
         refreshLibraryContext(currentDocument: record)
         session.setAppearance(appearance)
         session.load(documentID: record.id, canonicalJSON: record.tipTapJSON, force: reloadContent)
+        syncLinkedCalendarEvents()
     }
 
     func rename(title: String) {
@@ -2687,14 +2866,24 @@ final class DocumentEditorModel: ObservableObject {
         case .requestTemplates(let token):
             guard session.isReady, !session.isLoadingDocument, session.editingEnabled, !documentID.isEmpty else { return }
             templateInsertionRequest = TemplateInsertionRequest(documentID: documentID, token: token)
-        case .attachmentClipboard(let token, let html, let text):
+        case .attachmentClipboard(let token, let html, let text, let nativeJSON):
+            // A private, versioned Penned clipboard representation travels alongside
+            // interoperable HTML and plain text. Paste reconstruction is separate.
+            let pennedBlockType = "im.lystaria.penned.blocks+json"
             #if canImport(UIKit)
-            UIPasteboard.general.items = [["public.html": Data(html.utf8), "public.utf8-plain-text": text]]
+            UIPasteboard.general.items = [[
+                pennedBlockType: Data(nativeJSON.utf8),
+                "public.html": Data(html.utf8),
+                "public.utf8-plain-text": text
+            ]]
             let success = true
             #elseif canImport(AppKit)
             NSPasteboard.general.clearContents()
-            let success = NSPasteboard.general.setString(html, forType: .html)
-            if success { NSPasteboard.general.setString(text, forType: .string) }
+            let nativeWritten = NSPasteboard.general.setData(Data(nativeJSON.utf8),
+                forType: NSPasteboard.PasteboardType(pennedBlockType))
+            let htmlWritten = NSPasteboard.general.setString(html, forType: .html)
+            if htmlWritten { NSPasteboard.general.setString(text, forType: .string) }
+            let success = nativeWritten && htmlWritten
             #else
             let success = false
             #endif
@@ -2764,11 +2953,13 @@ final class DocumentEditorModel: ObservableObject {
                 session.refreshAttachments(documentID: documentID, json: json)
             }
             scheduleSave(json)
+            syncLinkedCalendarEvents()
         case .documentSnapshot(let json):
             if !EditorAttachment.paths(in: json).isSubset(of: Set(session.attachmentFiles.map { $0.record.relativePath })) {
                 session.refreshAttachments(documentID: documentID, json: json)
             }
             scheduleSave(json, immediate: true)
+            syncLinkedCalendarEvents()
         case .editorError(let message):
             errorMessage = message
         case .requestPlaceholderConversion(let token):
@@ -2867,6 +3058,17 @@ final class DocumentEditorModel: ObservableObject {
         case .requestCodeBlockEditor(let request):
             session.endWebEditingForSettings()
             codeBlockEditorRequest = request
+        case .openLinkedCalendarEvent(let eventID, let identity, let start):
+            guard linkedCalendarEventRequest == nil else { return }
+            linkedCalendarEventRequest = LinkedCalendarEventRequest(eventID: eventID, identity: identity, start: start)
+        case .requestExistingEventPicker:
+            guard existingEventPickerRequest == nil else { return }
+            session.endWebEditingForSettings()
+            existingEventPickerRequest = ExistingEventPickerRequest()
+        case .requestWeekStripSettings(let request):
+            guard weekStripSettingsRequest == nil else { return }
+            session.endWebEditingForSettings()
+            weekStripSettingsRequest = request
         case .requestTabsSettings(let settings):
             guard tabsSettingsRequest == nil else { return }
             session.endWebEditingForSettings()
@@ -2969,6 +3171,9 @@ final class DocumentEditorModel: ObservableObject {
         clear(\.listGridSettingsRequest)
         clear(\.codeBlockEditorRequest)
         clear(\.tabsSettingsRequest)
+        clear(\.weekStripSettingsRequest)
+        clear(\.existingEventPickerRequest)
+        clear(\.linkedCalendarEventRequest)
         clear(\.minimalFieldsSettingsRequest)
         clear(\.informationCardSettingsRequest)
         if cardEditorRequest != nil { cancelCardInsertion() }

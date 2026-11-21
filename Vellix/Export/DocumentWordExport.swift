@@ -139,8 +139,9 @@ struct DocumentWordExport {
             case "gridCard":
                 let card = GridCardSettings(attrs)
                 let originalColor = color
-                color = hex(card.inkColor)
-                let heading = card.title.isEmpty ? "" : paragraph(run(card.title, extra: "<w:b/>"),
+                color = hex(card.effectiveTextColor)
+                let heading = card.title.isEmpty ? "" : paragraph(run(card.title,
+                    extra: "<w:b/><w:color w:val=\"\(hex(card.effectiveTitleColor))\"/>"),
                     properties: "<w:jc w:val=\"\(card.alignment.rawValue)\"/>")
                 let details = heading + blocks(children, page: page, depth: depth)
                 output += table("<w:tr><w:tc><w:tcPr><w:shd w:fill=\"\(hex(card.backgroundColor))\"/></w:tcPr>\(details)</w:tc></w:tr>")

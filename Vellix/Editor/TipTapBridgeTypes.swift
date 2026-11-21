@@ -15,7 +15,7 @@ enum TipTapEditorEvent: Equatable {
     case requestAttachment(AttachmentEditorRequest)
     case requestAttachmentActions(AttachmentEditorRequest)
     case importAttachments(token: String, files: [AttachmentImportData])
-    case attachmentClipboard(token: String, html: String, text: String)
+    case attachmentClipboard(token: String, html: String, text: String, nativeJSON: String)
     case editorReady(blockCount: Int)
     case documentChanged(String)
     case documentTextChanged(String)
@@ -49,6 +49,9 @@ enum TipTapEditorEvent: Equatable {
     case requestListGridSettings(TipTapListGridSettings)
     case requestCodeBlockEditor(CodeBlockEditorRequest)
     case requestTabsSettings(TipTapTabsSettings)
+    case requestWeekStripSettings(WeekStripSettingsRequest)
+    case requestExistingEventPicker
+    case openLinkedCalendarEvent(eventID: String, identity: CalendarEventIdentity, start: Date)
     case requestMinimalFieldsSettings(TipTapMinimalFieldsSettings)
     case requestInformationCardSettings(TipTapInformationCardSettings)
     case slashMenuChanged(TipTapSlashMenuState?)
@@ -87,8 +90,14 @@ enum TipTapEditorEvent: Equatable {
             self = InlineTagRequest.decode(payload).map(Self.tagRequest) ?? .unknown(kind)
         case "attachmentClipboard":
             guard let token = payload["token"] as? String, let html = payload["html"] as? String,
-                  html.utf8.count <= 4 * 1024 * 1024 else { self = .editorError("The selected blocks are too large to copy together."); return }
-            self = .attachmentClipboard(token: token, html: html, text: payload["text"] as? String ?? "")
+                  let nativeJSON = payload["nativeJSON"] as? String,
+                  html.utf8.count <= 4 * 1024 * 1024,
+                  nativeJSON.utf8.count <= 4 * 1024 * 1024 else {
+                self = .editorError("The selected blocks are too large to copy together.")
+                return
+            }
+            self = .attachmentClipboard(token: token, html: html,
+                text: payload["text"] as? String ?? "", nativeJSON: nativeJSON)
         case "attachmentMenu", "attachmentActions":
             guard let id = payload["blockID"] as? String, !id.isEmpty,
                   let path = payload["relativePath"] as? String else { self = .unknown(kind); return }
@@ -320,6 +329,24 @@ enum TipTapEditorEvent: Equatable {
                 defaultLeftFraction: defaultFractionValue,
                 rows: rows))
 
+        case "linkedCalendarEventTap":
+            guard let eventID = payload["eventID"] as? String,
+                  let rawIdentity = payload["eventIdentity"] as? [String: Any],
+                  let data = try? JSONSerialization.data(withJSONObject: rawIdentity),
+                  let identity = try? JSONDecoder().decode(CalendarEventIdentity.self, from: data),
+                  let rawStart = payload["start"] as? String,
+                  let start = ISO8601DateFormatter().date(from: rawStart) else {
+                self = .unknown(kind); return
+            }
+            self = .openLinkedCalendarEvent(eventID: eventID, identity: identity, start: start)
+        case "existingEventPickerRequest":
+            self = .requestExistingEventPicker
+        case "weekStripSettings":
+            guard let blockID = payload["blockId"] as? String, !blockID.isEmpty else {
+                self = .unknown(kind)
+                return
+            }
+            self = .requestWeekStripSettings(WeekStripSettingsRequest(blockID: blockID, settings: payload["settings"] as? [String: Any] ?? [:]))
         case "tabsSettings":
             guard let blockID = payload["blockId"] as? String, !blockID.isEmpty else { self = .unknown(kind); return }
             let rawTabs = payload["tabs"] as? [[String: Any]] ?? []
@@ -524,6 +551,13 @@ struct TipTapTabInfo: Identifiable, Equatable {
     var tabID: String
     var name: String
     var id: String { tabID }
+}
+
+struct WeekStripSettingsRequest: Identifiable, Equatable {
+    let id = UUID()
+    let blockID: String
+    let settings: [String: Any]
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.blockID == rhs.blockID && lhs.id == rhs.id }
 }
 
 struct TipTapTabsSettings: Identifiable, Equatable {

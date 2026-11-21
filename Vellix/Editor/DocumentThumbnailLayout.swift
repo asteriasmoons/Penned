@@ -168,11 +168,11 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
             y += iconSize + 3
             if !card.title.isEmpty {
                 text(card.title, type: "gridCardTitle", x: x + inset, width: width - 2 * inset,
-                     thickness: 3.2, maxLines: 3, alignment: card.alignment.rawValue, color: card.inkColor)
+                     thickness: 3.2, maxLines: 3, alignment: card.alignment.rawValue, color: card.effectiveTitleColor)
             }
             for child in (node["content"] as? [[String: Any]] ?? []).prefix(16) {
                 text(inlineText(child), type: "gridCardText", x: x + inset, width: width - 2 * inset,
-                     thickness: 2.1, maxLines: 10, color: card.inkColor)
+                     thickness: 2.1, maxLines: 10, color: card.effectiveTextColor)
             }
             y = min(bottom, max(top + CGFloat(card.height) * scale, y + inset))
             marks.insert(Mark(shape: .container, rect: CGRect(x: x, y: top, width: width, height: y - top),

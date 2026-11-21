@@ -32,6 +32,33 @@ actor AppleCalendarService {
         return CalendarAgenda.uniqueEvents(store.events(matching: predicate).compactMap(snapshot))
     }
 
+    // Resolve by the original calendar and occurrence, never by title or date
+    // alone. EventKit can change local identifiers after a calendar sync, so
+    // use the external ID only within the same source/calendar.
+    func linkedEvent(identity: CalendarEventIdentity, lastKnownStart: Date) -> CalendarEvent? {
+        guard access() == .allowed else { return nil }
+        let calendar = store.calendars(for: .event).first {
+            $0.calendarIdentifier == identity.calendarID &&
+            $0.source.sourceIdentifier == identity.sourceID
+        }
+        guard let calendar else { return nil }
+        func matches(_ event: CalendarEvent) -> Bool {
+            let actual = event.identity
+            guard actual.calendarID == identity.calendarID, actual.sourceID == identity.sourceID else { return false }
+            let sameEvent = actual.localID == identity.localID ||
+                (identity.externalID != nil && actual.externalID == identity.externalID)
+            return sameEvent && actual.occurrenceKey == identity.occurrenceKey
+        }
+        if identity.occurrenceDate == nil && identity.floatingOccurrenceKey == nil,
+           let direct = store.calendarItem(withIdentifier: identity.localID) as? EKEvent,
+           let event = snapshot(direct), matches(event) { return event }
+        let anchor = identity.occurrenceDate ?? lastKnownStart
+        let range = DateInterval(start: anchor.addingTimeInterval(-366 * 86_400),
+                                 end: anchor.addingTimeInterval(366 * 86_400))
+        let predicate = store.predicateForEvents(withStart: range.start, end: range.end, calendars: [calendar])
+        return store.events(matching: predicate).compactMap(snapshot).first(where: matches)
+    }
+
     private func snapshot(_ event: EKEvent) -> CalendarEvent? {
         guard let start = event.startDate, let end = event.endDate, let calendar = event.calendar,
               event.status != .canceled else { return nil }

@@ -8,6 +8,8 @@ nonisolated struct GridCardSettings: Equatable, Sendable {
     var icon: String
     var iconColor: String
     var backgroundColor: String
+    var titleColor: String?
+    var textColor: String?
     var title: String
     var alignment: Alignment
     var width: Width
@@ -18,6 +20,16 @@ nonisolated struct GridCardSettings: Equatable, Sendable {
         iconColor = Self.opaqueHex(attrs["iconColor"] ?? attrs["color"], fallback: "#ffffff")
         let defaultBackground = attrs["color"] != nil && Self.readableInk(on: iconColor) == "#ffffff" ? "#e5e3e8" : "#302d36"
         backgroundColor = Self.opaqueHex(attrs["backgroundColor"], fallback: defaultBackground)
+        // Missing colors mean automatic contrast, not an explicit override.
+        // Preserve nil so the JS conflict check sees the same canonical attrs.
+        titleColor = (attrs["titleColor"] as? String).flatMap { value in
+            let normalized = Self.opaqueHex(value, fallback: "")
+            return normalized.isEmpty ? nil : normalized
+        }
+        textColor = (attrs["textColor"] as? String).flatMap { value in
+            let normalized = Self.opaqueHex(value, fallback: "")
+            return normalized.isEmpty ? nil : normalized
+        }
         title = attrs["title"] as? String ?? ""
         alignment = Alignment(rawValue: attrs["alignment"] as? String ?? "") ?? .left
         width = Width(rawValue: attrs["width"] as? String ?? "") ?? .full
@@ -31,6 +43,8 @@ nonisolated struct GridCardSettings: Equatable, Sendable {
     }
 
     var inkColor: String { Self.readableInk(on: backgroundColor) }
+    var effectiveTitleColor: String { titleColor ?? inkColor }
+    var effectiveTextColor: String { textColor ?? inkColor }
 
     static func readableInk(on background: String) -> String {
         let rgb = UInt32(background.dropFirst(), radix: 16) ?? 0
@@ -52,7 +66,8 @@ nonisolated struct GridCardSettings: Equatable, Sendable {
     }
 
     var payload: [String: Any] {
-        ["icon": icon, "iconColor": iconColor, "backgroundColor": backgroundColor, "title": title,
+        ["icon": icon, "iconColor": iconColor, "backgroundColor": backgroundColor,
+         "titleColor": titleColor ?? NSNull(), "textColor": textColor ?? NSNull(), "title": title,
          "alignment": alignment.rawValue, "width": width.rawValue, "height": height]
     }
 }
@@ -124,6 +139,10 @@ struct GridCardSettingsSheet: View {
                         }.padding(12).contentShape(Rectangle())
                     }.buttonStyle(.plain).pennedSheetField()
                     ColorPicker("Icon Color", selection: color(\.iconColor), supportsOpacity: false)
+                        .padding(12).pennedSheetField()
+                    ColorPicker("Title Color", selection: optionalColor(\.titleColor), supportsOpacity: false)
+                        .padding(12).pennedSheetField()
+                    ColorPicker("Text Color", selection: optionalColor(\.textColor), supportsOpacity: false)
                         .padding(12).pennedSheetField()
                     ColorPicker("Background", selection: color(\.backgroundColor), supportsOpacity: false)
                         .padding(12).pennedSheetField()
@@ -208,6 +227,14 @@ struct GridCardSettingsSheet: View {
     private func color(_ key: WritableKeyPath<GridCardSettings, String>) -> Binding<Color> {
         Binding(get: { Color(vellixHex: draft[keyPath: key]) }, set: {
             draft[keyPath: key] = $0.vellixHexString(fallback: draft[keyPath: key])
+        })
+    }
+
+    private func optionalColor(_ key: WritableKeyPath<GridCardSettings, String?>) -> Binding<Color> {
+        Binding(get: {
+            Color(vellixHex: draft[keyPath: key] ?? draft.inkColor)
+        }, set: { next in
+            draft[keyPath: key] = next.vellixHexString(fallback: draft[keyPath: key] ?? draft.inkColor)
         })
     }
 
