@@ -46,6 +46,57 @@ data are recorded. Only bounded selection-local structure and geometry are
 read; the document is not scanned. Capture is capped at 120 records per WebView
 page. Post-event geometry is coalesced into a single animation-frame read.
 
+## Nested Calendar/Callout Checklist Follow-Up
+
+The original `nearbyList` gate only recognized `orderedList`; it did not capture
+the reported checklist Return sequence. It now recognizes `taskList`,
+`bulletList`, and `orderedList`, including their actual nested selection paths.
+The prefix and existing `-PennedListDiagnostics` opt-in are unchanged. Confirm
+`"revision":"nested-list-return-v2"` in the installed record to distinguish the
+new trace from earlier captures. No shared editor-bundle build is required for
+the native-injected correction or diagnostics; the app needs its normal updated
+native build when the user next runs it. None was run by the agent.
+
+Capture one Return in the nested checklist, then one in the working top-level
+checklist. The trace records:
+
+- `key.before` / `input.before`: real key modifiers and native
+  `insertParagraph` versus `insertLineBreak` intent, composition/cancellation,
+  with correlated `returnID`, timestamp, and elapsed milliseconds.
+- `path`, `ancestors`, and `native.*.ancestors`: schema ancestry and the real
+  contentDOM wrappers, so `weekStrip > weekDayPanel > plainCallout > taskList >
+  taskItem > paragraph` can be compared with the top-level working case.
+- `calendar`: whether the caret's DOM is in chrome, an active day, a collapsed
+  calendar, and whether that day matches the visible date. Date values are not
+  logged.
+- `inline` and `inlineTail`: bounded child types/sizes and newline flags without
+  text. These distinguish a real hard break from a second paragraph or another
+  checklist item even when the paragraph has many marked inline children.
+- `nested-return.handled`: the scoped nested route ran the existing ordered
+  editor keymaps; `expectsNativeInput` says whether a native insertion is expected.
+- `nested-return.native-suppressed`: the native paragraph/line-break event for
+  that already-handled key was consumed once, not applied as a second edit.
+- `nested-return.skipped`, `nested-return.not-handled`, or
+  `nested-return.native-unhandled`: a concrete safety rejection, a keymap decline,
+  or an unusable native event. A missing `handled` record with a key/input record
+  means the scoped route did not claim the event; compare its recorded ancestry,
+  focus/composition/projection and native/model positions.
+- `return.transaction` / `return.settled`: post-command structure and bounded
+  step types/positions/slice-open-depths/top-level inserted node types. No step
+  JSON or user text is included. Observation is limited to four document-changing
+  transactions per Return and twelve step summaries, with a 350 ms settled read
+  to include ProseMirror's deferred iOS work. This timer only reads diagnostics;
+  it does not delay or perform an edit.
+- `checklist.before/after/frame` and `bullet.before/after/frame`: the same command
+  observation as the retained `number.*` events. The original command is still
+  called once, with its result/error preserved.
+
+Selection-only frame notifications no longer overwrite a queued meaningful
+Return/input record. Timer and transaction observers are removed on destruction.
+The user-supplied working trailing-line fix and the redesigned callouts are not
+replaced by these diagnostics. The separate, production nested Return routing is
+documented in [Editor Interaction Fixes](EditorInteractionFixes.md#nested-return-correction).
+
 ## Files Changed
 
 - `Vellix/Editor/MobileEditorInteractions.swift`: Debug-only diagnostic script,

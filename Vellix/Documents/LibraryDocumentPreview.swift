@@ -4,6 +4,13 @@ import Combine
 import UIKit
 #endif
 
+private struct LibraryPreviewIdentity: Equatable {
+    let documentID: String
+    let spaceID: String?
+    let colorScheme: ColorScheme
+    let cacheID: ObjectIdentifier
+}
+
 struct LibraryDocumentPreview: View {
     static var phoneGalleryHeightFraction: CGFloat? {
         #if os(iOS)
@@ -25,8 +32,9 @@ struct LibraryDocumentPreview: View {
     var showsStar = true
     var cornerRadius: CGFloat = 14
     var visibleHeightFraction: CGFloat = 1
+    var retainedSnapshot: CGImage? = nil
     @State private var loadedSnapshot: CGImage?
-    @State private var loadedSnapshotKey: String?
+    @State private var loadedSnapshotIdentity: LibraryPreviewIdentity?
     @State private var latestDocument: DocumentRecord?
     @State private var childRevision = ""
     @State private var collectionRevision = 0
@@ -37,9 +45,15 @@ struct LibraryDocumentPreview: View {
     }
     private var currentKey: String { environment.documentPreviews.presentationCacheKey(for: current, colorScheme: colorScheme) }
     private var presentationKey: String { currentKey + ":" + String(environment.documentPreviews.presentationEpoch) }
+    private var previewIdentity: LibraryPreviewIdentity {
+        LibraryPreviewIdentity(documentID: document.id, spaceID: document.spaceID, colorScheme: colorScheme,
+                               cacheID: ObjectIdentifier(environment.documentPreviews))
+    }
     private var availableSnapshot: CGImage? {
-        if loadedSnapshotKey == presentationKey { return loadedSnapshot }
-        return environment.documentPreviews.cachedPresentationImage(for: current, colorScheme: colorScheme)
+        if let image = environment.documentPreviews.cachedPresentationImage(for: current, colorScheme: colorScheme) { return image }
+        if loadedSnapshotIdentity == previewIdentity, let loadedSnapshot { return loadedSnapshot }
+        if let retainedSnapshot { return retainedSnapshot }
+        return environment.documentPreviews.retainedPresentationImage(documentID: document.id, spaceID: document.spaceID)
     }
 
     private var previewActivityKey: String {
@@ -50,6 +64,7 @@ struct LibraryDocumentPreview: View {
     private func loadVisibleSnapshot() async {
         guard workspaceTabActive, environment.selectedDocumentID == nil else { return }
         let key = presentationKey
+        let identity = previewIdentity
         let record = current
         if (record.title.localizedCaseInsensitiveContains("Code Den") || record.title == "Untitled") { print("🟡 CODE-DEN-PREVIEW [gallery] snapshot lookup START title=\(record.title) id=\(record.id.prefix(8))") }
         var image = await environment.documentPreviews.loadPresentationImage(for: record, colorScheme: colorScheme)
@@ -67,8 +82,8 @@ struct LibraryDocumentPreview: View {
             image = await environment.documentPreviews.image(for: record, colorScheme: colorScheme, ignoringActiveEditors: true)
             if (record.title.localizedCaseInsensitiveContains("Code Den") || record.title == "Untitled") { print("🟡 CODE-DEN-PREVIEW [gallery] generate result=\(image == nil ? "NIL" : "IMAGE")") }
         }
-        guard !Task.isCancelled, presentationKey == key else { return }
-        loadedSnapshotKey = key
+        guard !Task.isCancelled, presentationKey == key, previewIdentity == identity, let image else { return }
+        loadedSnapshotIdentity = identity
         loadedSnapshot = image
     }
 
@@ -77,7 +92,6 @@ struct LibraryDocumentPreview: View {
         GeometryReader { geometry in
             if let snapshot {
                 Image(decorative: snapshot, scale: 1).resizable().scaledToFill()
-                    .id(presentationKey)
                     .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             } else {
                 let record = current
@@ -145,12 +159,19 @@ struct LibraryDocumentCell: View {
 
     @State private var snapshot: CGImage?
     @State private var record: DocumentRecord?
+    @State private var resolvedIdentity: LibraryPreviewIdentity?
+
+    private var previewIdentity: LibraryPreviewIdentity {
+        LibraryPreviewIdentity(documentID: summary.id, spaceID: summary.spaceID, colorScheme: colorScheme,
+                               cacheID: ObjectIdentifier(environment.documentPreviews))
+    }
 
     private var activity: String {
         (workspaceTabActive && environment.selectedDocumentID == nil) ? "active" : "inactive"
     }
     private var resolveKey: String {
-        summary.id + "|" + String(summary.updatedAt.timeIntervalSince1970)
+        (summary.spaceID ?? "-") + "|" + summary.id + "|" + String(summary.updatedAt.timeIntervalSince1970)
+            + "|" + String(describing: ObjectIdentifier(environment.documentPreviews))
             + "|" + (colorScheme == .dark ? "d" : "l") + "|" + activity
             + "|" + String(environment.documentPreviews.contentRevision)
     }
@@ -161,16 +182,19 @@ struct LibraryDocumentCell: View {
     // card's first frame rather than after an async load. nil only when no cached
     // preview exists yet, in which case the record/live path takes over via `resolve`.
     private var resolvedPreview: CGImage? {
-        snapshot ?? environment.documentPreviews.cachedPresentationImage(for: summary, colorScheme: colorScheme)
+        if resolvedIdentity == previewIdentity, let snapshot { return snapshot }
+        return environment.documentPreviews.cachedPresentationImage(for: summary, colorScheme: colorScheme)
+            ?? environment.documentPreviews.retainedPresentationImage(documentID: summary.id, spaceID: summary.spaceID)
     }
 
     var body: some View {
-        let resolvedPreview = record == nil ? self.resolvedPreview : nil
         Group {
-            if let record {
+            if let record, resolvedIdentity == previewIdentity {
                 LibraryDocumentPreview(document: record, fixedAspectRatio: fixedAspectRatio, showsStar: showsStar,
-                                       cornerRadius: cornerRadius, visibleHeightFraction: visibleHeightFraction)
+                                       cornerRadius: cornerRadius, visibleHeightFraction: visibleHeightFraction,
+                                       retainedSnapshot: snapshot)
             } else {
+                let resolvedPreview = self.resolvedPreview
                 GeometryReader { geometry in
                     if let resolved = resolvedPreview {
                         Image(decorative: resolved, scale: 1).resizable().scaledToFill()
@@ -202,16 +226,18 @@ struct LibraryDocumentCell: View {
         let traced = summary.title == "Untitled" || summary.title.localizedCaseInsensitiveContains("Code Den")
         if traced { print("🟡 CODE-DEN-PREVIEW [summary] resolve ENTER title=\(summary.title) id=\(summary.id.prefix(8)) workspaceActive=\(workspaceTabActive) documentOpen=\(environment.selectedDocumentID != nil)") }
         guard workspaceTabActive, environment.selectedDocumentID == nil else { return }
+        let identity = previewIdentity
+        let key = resolveKey
         // Fast path: a cached preview resolved from the descriptor, no body load.
         if let image = environment.documentPreviews.cachedPresentationImage(for: summary, colorScheme: colorScheme) {
             if traced { print("🟡 CODE-DEN-PREVIEW [summary] memory/disk cache HIT") }
-            snapshot = image; record = nil; return
+            snapshot = image; resolvedIdentity = identity; record = nil; return
         }
         if traced { print("🟡 CODE-DEN-PREVIEW [summary] immediate cache MISS; trying async disk") }
         if let image = await environment.documentPreviews.loadPresentationImage(for: summary, colorScheme: colorScheme) {
             if traced { print("🟡 CODE-DEN-PREVIEW [summary] async disk HIT") }
-            guard !Task.isCancelled else { return }
-            snapshot = image; record = nil; return
+            guard !Task.isCancelled, previewIdentity == identity, resolveKey == key else { return }
+            snapshot = image; resolvedIdentity = identity; record = nil; return
         }
         if traced { print("🟡 CODE-DEN-PREVIEW [summary] async disk MISS; loading full document") }
         // No cached preview: load the full record for full-fidelity rendering + snapshot generation.
@@ -219,7 +245,9 @@ struct LibraryDocumentCell: View {
         let repository = environment.documents
         let loaded = await Task.detached(priority: .userInitiated) { try? repository.document(id: id) }.value
         if traced { print("🟡 CODE-DEN-PREVIEW [summary] record load=\(loaded == nil ? "FAILED" : "SUCCESS") cancelled=\(Task.isCancelled) loadedTitle=\(loaded?.title ?? "none")") }
-        guard !Task.isCancelled, let loaded else { return }
-        snapshot = nil; record = loaded
+        guard !Task.isCancelled, previewIdentity == identity, resolveKey == key, let loaded,
+              loaded.id == summary.id, loaded.spaceID == summary.spaceID else { return }
+        if resolvedIdentity != identity { snapshot = nil }
+        resolvedIdentity = identity; record = loaded
     }
 }

@@ -3,7 +3,7 @@ import SwiftUI
 private enum PennedSetting: String, Identifiable, Hashable {
     case templates = "Templates", published = "Published Content", stats = "Stats"
     case folders = "On-device Folders", tags = "Tags", space = "Space Settings"
-    case appearance = "Appearance & Sound", language = "Language & Spelling", security = "Security", advanced = "Advanced"
+    case appearance = "Appearance & Sound", editor = "Editor", language = "Language & Spelling", security = "Security", advanced = "Advanced"
     case account = "Account Settings", subscription = "My Subscription", spaces = "My Spaces", team = "My Team"
     case integrations = "Integrations", assistant = "Assistant", notifications = "Notifications"
     case diagnostics = "Diagnostics", about = "About", dailyNotes = "Daily Notes"
@@ -17,6 +17,7 @@ private enum PennedSetting: String, Identifiable, Hashable {
         case .tags: return "hashtagwavy"
         case .space: return "settings"
         case .appearance: return "text"
+        case .editor: return "writepen"
         case .language: return "text"
         case .security: return "lockwavy"
         case .advanced: return "settingswavy"
@@ -63,7 +64,7 @@ struct PennedSettingsView: View {
                     spaceHeader
                     settingsSection("Space Settings", items: [.templates, .published, .stats, .folders, .tags, .space])
                     settingsSection("Daily Notes", items: [.dailyNotes])
-                    settingsSection("General Settings", items: [.appearance, .language, .security, .advanced])
+                    settingsSection("General Settings", items: [.appearance, .editor, .language, .security, .advanced])
                     settingsSection("Your Account", items: [.account, .subscription, .spaces, .team, .integrations, .assistant, .notifications])
                     VStack(spacing: 0) { settingsRow(.diagnostics); settingsRow(.about, separator: false) }
                         .padding(.horizontal, 12)
@@ -164,6 +165,7 @@ struct PennedSettingsView: View {
     @ViewBuilder private func settingDestination(_ setting: PennedSetting) -> some View {
         switch setting {
         case .appearance: PennedAppearanceSettingsView()
+        case .editor: PennedEditorSettingsView()
         case .spaces: SpaceManagementView()
         case .dailyNotes: DailyNotesSettingsView()
         case .about:

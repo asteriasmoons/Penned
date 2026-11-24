@@ -153,7 +153,9 @@ struct DocumentWordExport {
                 let icon = settings.imagePath.map {
                     picture(path: $0, name: "Callout icon", maximumWidth: 24, maximumHeight: 24, tint: settings.imageTint)
                 } ?? ""
-                let details = blocks(children, page: page, depth: depth)
+                let heading = settings.hasTitle ? paragraph(run(settings.title,
+                    extra: "<w:b/><w:color w:val=\"\(hex(settings.titleInk))\"/>")) : ""
+                let details = heading + blocks(children, page: page, depth: depth)
                 let shade = "<w:shd w:fill=\"\(hex(settings.backgroundColor))\"/>"
                 let iconCell = icon.isEmpty ? "" : "<w:tc><w:tcPr><w:tcW w:w=\"600\" w:type=\"dxa\"/>\(shade)</w:tcPr>\(icon)</w:tc>"
                 output += table("<w:tr>\(iconCell)<w:tc><w:tcPr>\(shade)</w:tcPr>\(details.isEmpty ? "<w:p/>" : details)</w:tc></w:tr>")

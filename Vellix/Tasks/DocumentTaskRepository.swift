@@ -61,51 +61,202 @@ nonisolated enum DocumentTaskIndex {
             END;
             INSERT INTO taskDocumentChanges SELECT id FROM documents;
             """)
+        // The shared-reference index is installed in migration v34.
+    }
+
+    // The task table owns one reminder identity; block references are indexed separately.
+    // This index is derived from the document JSON, not independently synced.
+    static func installReferences(in db: Database) throws {
+        try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS documentTaskReferences (
+                documentID TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                blockID TEXT NOT NULL,
+                taskID TEXT NOT NULL,
+                PRIMARY KEY(documentID, blockID)
+            );
+            CREATE INDEX IF NOT EXISTS documentTaskReferences_task ON documentTaskReferences(taskID);
+            CREATE TABLE IF NOT EXISTS taskReferenceChanges(taskID TEXT PRIMARY KEY NOT NULL);
+            CREATE TRIGGER IF NOT EXISTS task_reference_delete AFTER DELETE ON documentTaskReferences BEGIN
+                INSERT OR IGNORE INTO taskReferenceChanges VALUES (OLD.taskID);
+            END;
+            CREATE TRIGGER IF NOT EXISTS task_reference_insert AFTER INSERT ON documentTaskReferences BEGIN
+                INSERT OR IGNORE INTO taskReferenceChanges VALUES (NEW.taskID);
+            END;
+            INSERT OR IGNORE INTO taskDocumentChanges SELECT id FROM documents;
+            """)
         _ = try reconcile(in: db)
     }
 
     @discardableResult
     static func reconcile(in db: Database) throws -> Bool {
+        // Older migrations can run before the reference table exists.
+        guard try db.tableExists("documentTaskReferences") else { return false }
         let documentIDs = try String.fetchAll(db, sql: "SELECT documentID FROM taskDocumentChanges")
-        guard !documentIDs.isEmpty else { return false }
+        let pendingTasks = try String.fetchAll(db, sql: "SELECT taskID FROM taskReferenceChanges")
+        guard !documentIDs.isEmpty || !pendingTasks.isEmpty else { return false }
         try db.execute(sql: "DELETE FROM taskDocumentChanges")
+        try db.execute(sql: "DELETE FROM taskReferenceChanges")
         var changed = false
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
+
+        // Capture the pre-write ownership before updating the reference index.
+        var affected = Set(pendingTasks)
+        var proposed: [(documentID: String, context: DocumentTaskContext, existingReference: Bool)] = []
         for id in documentIDs {
-            let oldIDs = try String.fetchAll(db, sql: "SELECT id FROM documentTasks WHERE documentID = ?", arguments: [id])
+            let previousRows = try Row.fetchAll(db, sql: "SELECT blockID, taskID FROM documentTaskReferences WHERE documentID=?", arguments: [id])
+            affected.formUnion(previousRows.map { $0["taskID"] as String })
+            let previous = Dictionary(uniqueKeysWithValues: previousRows.map { ($0["blockID"] as String, $0["taskID"] as String) })
             guard let document = try DocumentRecord.fetchOne(db, key: id) else {
-                // The foreign key has already removed the task and its occurrence index.
+                // Cascade already removed this document's references.
                 changed = true
                 continue
             }
-            let tasks = try contexts(in: document.tipTapJSON)
-            changed = changed || !tasks.isEmpty || !oldIDs.isEmpty
-            let current = Set(tasks.compactMap { $0.metadata?.id })
-            for old in oldIDs where !current.contains(old) {
-                try db.execute(sql: "DELETE FROM documentTasks WHERE id = ? AND documentID = ?", arguments: [old, id])
+            let contexts = try contexts(in: document.tipTapJSON)
+            let current = Dictionary(uniqueKeysWithValues: contexts.compactMap { context -> (String, String)? in
+                guard let taskID = context.metadata?.id else { return nil }
+                return (context.blockID, taskID)
+            })
+            for row in previousRows {
+                let blockID: String = row["blockID"], oldTaskID: String = row["taskID"]
+                guard current[blockID] != oldTaskID else { continue }
+                try db.execute(sql: "DELETE FROM documentTaskReferences WHERE documentID=? AND blockID=?",
+                               arguments: [id, blockID])
             }
-            for context in tasks {
+            for context in contexts {
                 guard let task = context.metadata else { continue }
-                let json = String(decoding: try encoder.encode(task), as: UTF8.self)
-                if let old = try Row.fetchOne(db, sql: "SELECT * FROM documentTasks WHERE id = ?", arguments: [task.id]),
-                   old["documentID"] as String == id, old["blockID"] as String == context.blockID,
-                   old["metadataJSON"] as String == json, old["checked"] as Bool == context.checked { continue }
+                affected.insert(task.id)
+                proposed.append((id, context, previous[context.blockID] == task.id))
                 try db.execute(sql: """
-                    INSERT INTO documentTasks(id, documentID, blockID, metadataJSON, checked, scheduledAt, recurring)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET documentID = excluded.documentID, blockID = excluded.blockID,
-                        metadataJSON = excluded.metadataJSON, checked = excluded.checked,
-                        scheduledAt = excluded.scheduledAt, recurring = excluded.recurring
-                    """, arguments: [task.id, id, context.blockID, json, context.checked, task.scheduledAt, task.recurrence != nil])
-                try db.execute(sql: "DELETE FROM taskCompletions WHERE taskID = ?", arguments: [task.id])
-                for completion in task.history {
-                    try db.execute(sql: "INSERT OR IGNORE INTO taskCompletions VALUES (?, ?, ?, ?)",
-                                   arguments: [completion.id, task.id, completion.scheduledAt, completion.completedAt])
-                }
+                    INSERT INTO documentTaskReferences(documentID,blockID,taskID) VALUES (?,?,?)
+                    ON CONFLICT(documentID,blockID) DO UPDATE SET taskID=excluded.taskID
+                    WHERE documentTaskReferences.taskID != excluded.taskID
+                    """, arguments: [id, context.blockID, task.id])
             }
         }
-        // Even an ancestor with no tasks can change eligibility of every nested task.
+        // Preserve a previously established canonical task when pasting a reference.
+        // For a genuine configuration/completion edit, the changed document is authoritative.
+        var winner: [String: (documentID: String, context: DocumentTaskContext, existingReference: Bool)] = [:]
+        for entry in proposed {
+            guard let task = entry.context.metadata else { continue }
+            if let stored = try Row.fetchOne(db, sql: "SELECT metadataJSON,checked,documentID,blockID FROM documentTasks WHERE id=?", arguments: [task.id]),
+               let old = try? JSONDecoder().decode(DocumentTaskMetadata.self, from: Data((stored["metadataJSON"] as String).utf8)) {
+                let oldChecked: Bool = stored["checked"]
+                let isSame = old == task && oldChecked == entry.context.checked
+                // An edited reference may be anywhere, including a copied callout.
+                // A pasted clone has the same metadata as its source and is not a change.
+                if !isSame && entry.existingReference && winner[task.id] == nil {
+                    winner[task.id] = entry
+                }
+            } else if winner[task.id] == nil { winner[task.id] = entry }
+        }
+        // All references share the canonical metadata and completion state.
+        // Two copies may have been touched in the same transaction; favor the
+        // authored block that already owned this reminder over a just-pasted view.
+        for id in affected.sorted() {
+            let references = try Row.fetchAll(db, sql: """
+                SELECT documentID,blockID FROM documentTaskReferences WHERE taskID=?
+                ORDER BY documentID,blockID
+                """, arguments: [id])
+            if references.isEmpty {
+                try db.execute(sql: "DELETE FROM documentTasks WHERE id=?", arguments: [id])
+                changed = true
+                continue
+            }
+            let existing = try Row.fetchOne(db, sql: "SELECT * FROM documentTasks WHERE id=?", arguments: [id])
+            let source = winner[id]
+            let selectedMetadata: DocumentTaskMetadata
+            let selectedChecked: Bool
+            if let source, let task = source.context.metadata {
+                selectedMetadata = task
+                selectedChecked = source.context.checked
+            } else if let existing,
+                      let task = try? JSONDecoder().decode(DocumentTaskMetadata.self, from: Data((existing["metadataJSON"] as String).utf8)) {
+                selectedMetadata = task
+                selectedChecked = existing["checked"]
+            } else {
+                guard let first = references.first,
+                      let document = try DocumentRecord.fetchOne(db, key: first["documentID"] as String),
+                      let context = try contexts(in: document.tipTapJSON).first(where: { $0.blockID == (first["blockID"] as String) }),
+                      let task = context.metadata else { continue }
+                selectedMetadata = task
+                selectedChecked = context.checked
+            }
+
+            func eligible(_ documentID: String) throws -> Bool {
+                var next: String? = documentID
+                var seen = Set<String>()
+                while let id = next, seen.insert(id).inserted {
+                    guard let document = try DocumentRecord.fetchOne(db, key: id),
+                          !document.isTrashed && !document.isArchived && document.templateID == nil else { return false }
+                    if let spaceID = document.spaceID,
+                       try Bool.fetchOne(db, sql: "SELECT isArchived FROM spaces WHERE id=?", arguments: [spaceID]) == true {
+                        return false
+                    }
+                    next = document.parentDocumentID
+                }
+                return true
+            }
+            let previousOwner = references.first(where: {
+                ($0["documentID"] as String) == (existing?["documentID"] as String? ?? "") &&
+                ($0["blockID"] as String) == (existing?["blockID"] as String? ?? "")
+            })
+            var owner = previousOwner ?? references[0]
+            if try !eligible(owner["documentID"] as String) {
+                for candidate in references {
+                    if try eligible(candidate["documentID"] as String) { owner = candidate; break }
+                }
+            }
+            let ownerDocument: String = owner["documentID"]
+            let ownerBlock: String = owner["blockID"]
+            let metadataJSON = String(decoding: try encoder.encode(selectedMetadata), as: UTF8.self)
+            if existing == nil ||
+                (existing?["documentID"] as String? != ownerDocument) ||
+                (existing?["blockID"] as String? != ownerBlock) ||
+                (existing?["metadataJSON"] as String? != metadataJSON) ||
+                (existing?["checked"] as Bool? != selectedChecked) {
+                try db.execute(sql: """
+                    INSERT INTO documentTasks(id,documentID,blockID,metadataJSON,checked,scheduledAt,recurring)
+                    VALUES (?,?,?,?,?,?,?)
+                    ON CONFLICT(id) DO UPDATE SET documentID=excluded.documentID,blockID=excluded.blockID,
+                        metadataJSON=excluded.metadataJSON,checked=excluded.checked,
+                        scheduledAt=excluded.scheduledAt,recurring=excluded.recurring
+                    """, arguments: [id, ownerDocument, ownerBlock, metadataJSON, selectedChecked,
+                                     selectedMetadata.scheduledAt, selectedMetadata.recurrence != nil])
+                if existing == nil || (existing?["metadataJSON"] as String? != metadataJSON) {
+                    try db.execute(sql: "DELETE FROM taskCompletions WHERE taskID=?", arguments: [id])
+                }
+                for completion in selectedMetadata.history {
+                    try db.execute(sql: "INSERT OR IGNORE INTO taskCompletions VALUES (?,?,?,?)",
+                                   arguments: [completion.id, id, completion.scheduledAt, completion.completedAt])
+                }
+                changed = true
+            }
+            // Normalize each affected document once, regardless of how many copies
+            // of this reminder it contains (e.g. a year's worth of routine panels).
+            let documentIDs = Set(references.map { $0["documentID"] as String })
+            for documentID in documentIDs {
+                guard var document = try DocumentRecord.fetchOne(db, key: documentID),
+                      let json = try updatingReferences(document.tipTapJSON, taskID: id,
+                                                        metadata: selectedMetadata, checked: selectedChecked)
+                else { continue }
+                let analysis = try TipTapContentAnalyzer.analyze(json)
+                document.tipTapJSON = analysis.canonicalJSON
+                document.plainText = analysis.plainText
+                document.previewText = analysis.previewText
+                document.wordCount = analysis.wordCount
+                document.characterCount = analysis.characterCount
+                document.estimatedReadingMinutes = analysis.estimatedReadingMinutes
+                document.updatedAt = Date()
+                document.revision += 1
+                try document.update(db)
+                try DocumentRepository.upsertSearchIndex(document, in: db)
+                changed = true
+            }
+        }
+        // Reference rewrites are fully processed in this transaction.
+        try db.execute(sql: "DELETE FROM taskReferenceChanges")
+        try db.execute(sql: "DELETE FROM taskDocumentChanges")
         return changed || !documentIDs.isEmpty
     }
 
@@ -138,6 +289,36 @@ nonisolated enum DocumentTaskIndex {
         }
         walk(TipTapContentAnalyzer.documentObject(from: json))
         return result
+    }
+
+    // Applies one reminder state to every visual reference within a document.
+    // Returns nil when no reference needs rewriting.
+    static func updatingReferences(_ json: String, taskID: String,
+                                   metadata: DocumentTaskMetadata, checked: Bool) throws -> String? {
+        var changed = false
+        func walk(_ node: [String: Any]) -> [String: Any] {
+            var copy = node
+            if node["type"] as? String == "taskItem",
+               var attrs = node["attrs"] as? [String: Any],
+               DocumentTaskMetadata.decode(attrs["trackedTask"])?.id == taskID {
+                let previous = DocumentTaskMetadata.decode(attrs["trackedTask"])
+                if previous != metadata || (attrs["checked"] as? Bool ?? false) != checked {
+                    attrs["trackedTask"] = metadata.object
+                    attrs["checked"] = checked
+                    attrs["crossed"] = false
+                    copy["attrs"] = attrs
+                    changed = true
+                }
+            }
+            if let content = node["content"] as? [[String: Any]] {
+                copy["content"] = content.map(walk)
+            }
+            return copy
+        }
+        let object = walk(TipTapContentAnalyzer.documentObject(from: json))
+        guard changed else { return nil }
+        let bytes = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return String(decoding: bytes, as: UTF8.self)
     }
 
     static func updating(_ json: String, blockID: String, metadata: DocumentTaskMetadata, checked: Bool) throws -> String {
@@ -335,6 +516,23 @@ final class DocumentTaskRepository: @unchecked Sendable {
         }
     }
 
+    func metadata(taskID: String) throws -> DocumentTaskMetadata? {
+        try database.read { db in
+            guard let json = try String.fetchOne(db, sql: "SELECT metadataJSON FROM documentTasks WHERE id=?",
+                                                 arguments: [taskID]) else { return nil }
+            return try JSONDecoder().decode(DocumentTaskMetadata.self, from: Data(json.utf8))
+        }
+    }
+
+    func references(taskID: String) throws -> [(documentID: String, blockID: String)] {
+        try database.read { db in
+            try Row.fetchAll(db, sql: "SELECT documentID,blockID FROM documentTaskReferences WHERE taskID=?",
+                             arguments: [taskID]).map { row in
+                (documentID: row["documentID"], blockID: row["blockID"])
+            }
+        }
+    }
+
     func tasks(documentID: String, includingNestedPages: Bool = false) throws -> [DocumentTaskRecord] {
         _ = try database.read { try SpaceOwnership.document(documentID, scope: spaceID, in: $0) }
         var ids: Set<String> = [documentID]
@@ -382,19 +580,35 @@ final class DocumentTaskRepository: @unchecked Sendable {
     @discardableResult
     func setCompleted(taskID: String, occurrenceID: String, completed: Bool, skipped: Bool = false) throws -> DocumentRecord {
         try database.write { db in
-            guard let row = try Row.fetchOne(db, sql: "SELECT * FROM documentTasks WHERE id = ?", arguments: [taskID]),
-                  var document = try DocumentRecord.fetchOne(db, key: row["documentID"] as String) else { throw DocumentTaskError.missingTask }
-            _ = try SpaceOwnership.document(document.id, scope: spaceID, in: db)
+            guard let row = try Row.fetchOne(db, sql: "SELECT * FROM documentTasks WHERE id=?", arguments: [taskID]) else {
+                throw DocumentTaskError.missingTask
+            }
             let metadata = try JSONDecoder().decode(DocumentTaskMetadata.self, from: Data((row["metadataJSON"] as String).utf8))
             guard metadata.occurrenceID == occurrenceID || !(row["checked"] as Bool) else { throw DocumentTaskError.staleOccurrence }
+            let sourceID: String = row["documentID"]
+            let sourceBlock: String = row["blockID"]
+            let source = try SpaceOwnership.document(sourceID, scope: spaceID, in: db)
             let result = try metadata.completingOccurrence(occurrenceID, completed: completed, skipped: skipped,
-                text: DocumentTaskIndex.texts(in: document.tipTapJSON)[row["blockID"] as String])
-            document.tipTapJSON = try DocumentTaskIndex.updating(document.tipTapJSON, blockID: row["blockID"], metadata: result.metadata, checked: result.checked)
-            document.updatedAt = Date()
-            document.revision += 1
-            try document.update(db)
-            try DocumentRepository.upsertSearchIndex(document, in: db)
-            return document
+                text: DocumentTaskIndex.texts(in: source.tipTapJSON)[sourceBlock])
+            let references = try Row.fetchAll(db, sql: "SELECT documentID,blockID FROM documentTaskReferences WHERE taskID=?",
+                                              arguments: [taskID])
+            for id in Set(references.map({ $0["documentID"] as String })) {
+                guard var document = try DocumentRecord.fetchOne(db, key: id),
+                      let json = try DocumentTaskIndex.updatingReferences(document.tipTapJSON,
+                        taskID: taskID, metadata: result.metadata, checked: result.checked) else { continue }
+                let analysis = try TipTapContentAnalyzer.analyze(json)
+                document.tipTapJSON = analysis.canonicalJSON
+                document.plainText = analysis.plainText
+                document.previewText = analysis.previewText
+                document.wordCount = analysis.wordCount
+                document.characterCount = analysis.characterCount
+                document.estimatedReadingMinutes = analysis.estimatedReadingMinutes
+                document.updatedAt = Date()
+                document.revision += 1
+                try document.update(db)
+                try DocumentRepository.upsertSearchIndex(document, in: db)
+            }
+            return try DocumentRecord.fetchOne(db, key: sourceID) ?? source
         }
     }
 }

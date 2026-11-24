@@ -3,7 +3,7 @@ import SwiftUI
 enum PadSetting: String, CaseIterable, Identifiable {
     case space = "Space Settings", templates = "Templates", folders = "Folders", tags = "Tags"
     case dailyNotes = "Daily Notes", spaces = "My Spaces", account = "Account Settings", library = "Library & Sync", about = "About"
-    case appearance = "Appearance"
+    case appearance = "Appearance", editor = "Editor"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -17,6 +17,7 @@ enum PadSetting: String, CaseIterable, Identifiable {
         case .library: return "cloudie"
         case .about: return "infowavy"
         case .appearance: return "text"
+        case .editor: return "writepen"
         }
     }
 }
@@ -72,7 +73,7 @@ struct PadSettingsView: View {
                 }.frame(maxWidth: .infinity).padding(.vertical, 24)
                 section("Space Settings", items: [.templates, .folders, .tags, .space, .dailyNotes, .spaces])
                 section("Your Account", items: [.account, .library])
-                section("General Settings", items: [.appearance])
+                section("General Settings", items: [.appearance, .editor])
                 section("Penned", items: [.about])
             }.padding(14).padding(.bottom, 20)
         }
@@ -99,6 +100,7 @@ struct PadSettingsView: View {
     @ViewBuilder private var page: some View {
         switch selected {
         case .appearance: PennedAppearanceSettingsView()
+        case .editor: PennedEditorSettingsView()
         case .space: PadSpaceSettingsPage()
         case .account: AccountSettingsView(embeddedInWorkspace: true)
         case .library:

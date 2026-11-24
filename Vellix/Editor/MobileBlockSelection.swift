@@ -25,7 +25,7 @@ enum MobileBlockSelection {
   // Tabs and Minimal Fields are a unit AND recurse: the whole block is selectable
   // from its chrome, while the editable text inside each panel/field stays its own
   // unit so it can be selected and edited like any other text.
-  const descendUnit = node => (isCalloutUnit(node) && !isWholeCallout(node)) || ["tabs", "minimalFields", "informationCard"].includes(node.type.name);
+  const descendUnit = node => isCalloutUnit(node) || ["tabs", "minimalFields", "informationCard"].includes(node.type.name);
   const scrollableContent = node => {
     if (isCalloutUnit(node)) return false;
     if (scrollableCache.has(node)) return scrollableCache.get(node);
@@ -61,7 +61,7 @@ enum MobileBlockSelection {
       const path = [...parentPath, index];
       // Containers keep their hierarchy; their editable children are independent units.
       // Tables and List Grids remain one unit so block actions never detach a cell from its row.
-      // Callout text is part of the block unit. Clipped pages keep their own interior controls.
+      // Callout chrome and its independently selectable children are separate units.
       const unit = selectableUnit(node);
       if (unit) {
         result.push({ node, pos, index: result.length, path, key: `path:${path.join(".")}`,
@@ -76,6 +76,12 @@ enum MobileBlockSelection {
     recordIndexes.set(doc, { byPosition: new Map(result.map(block => [block.pos, block])),
       byKey: null, byID: null });
     return result;
+  };
+  const describeTaskTarget = (doc, pos) => {
+    if (!Number.isInteger(pos) || pos < 0 || pos >= doc.content.size) return "-";
+    const node = doc.nodeAt(pos), at = doc.resolve(pos);
+    return JSON.stringify({pos, type: node?.type.name, id: node?.attrs.id, children: node?.childCount,
+      ancestors: Array.from({length: at.depth + 1}, (_, i) => ({type: at.node(i).type.name, id: at.node(i).attrs.id, children: at.node(i).childCount}))});
   };
   const recordAt = (doc, position) => { records(doc); return recordIndexes.get(doc).byPosition.get(position); };
   const selectedPositions = selected => {
@@ -190,6 +196,7 @@ enum MobileBlockSelection {
     // every movement during an active drag.
     for (let index = Math.min(origin, end); index <= Math.max(origin, end); index++) {
       const block = blocks[index];
+      if (isCalloutUnit(block.node) && block.pos < range.anchor.pos && range.anchor.pos < block.pos + block.node.nodeSize) continue;
       if (visible(block)) byPosition.set(block.pos, ref(block));
     }
     return collapseNested([...byPosition.values()].sort((a, b) => a.pos - b.pos));
@@ -388,16 +395,46 @@ enum MobileBlockSelection {
       }
       return null;
     };
+    const seenTaskStarts = new WeakSet(), seenTaskClicks = new WeakSet();
+    const taskRowTarget = event => {
+      const row = event.target.closest?.('[data-type="taskItem"]');
+      if (!row || event.target.closest('button, input, label, a, textarea, select')) return null;
+      const content = row.querySelector('[data-vellix-task-content]');
+      const paragraph = content?.firstElementChild;
+      return paragraph && bindings.has(paragraph) && bindingPosition(paragraph) !== null ? paragraph : null;
+    };
+    const isNestedCalloutTarget = (event, element) => {
+      const pos = bindingPosition(element);
+      if (pos === null || !isCalloutUnit(view.state.doc.nodeAt(pos))) return false;
+      for (let target = event.target; target && target !== element; target = target.parentElement) {
+        if (bindings.has(target) && bindingPosition(target) !== null) return true;
+      }
+      return false;
+    };
     const attachBinding = element => {
       if (bindings.has(element)) return;
       const binding = { generation: bindingGeneration };
       const handlers = {
-        touchstart: event => start(event, element),
+        touchstart: event => {
+          const rowTarget = taskRowTarget(event);
+          if (rowTarget) {
+            if (seenTaskStarts.has(event)) return;
+            seenTaskStarts.add(event);
+            start(event, rowTarget);
+          } else if (!isNestedCalloutTarget(event, element)) start(event, element);
+        },
         touchmove: event => move(event, element),
         touchend: end,
         touchcancel: cancel,
         contextmenu: cancel,
-        click: event => click(event, element),
+        click: event => {
+          const rowTarget = taskRowTarget(event);
+          if (rowTarget) {
+            if (seenTaskClicks.has(event)) return;
+            seenTaskClicks.add(event);
+            click(event, rowTarget);
+          } else if (!isNestedCalloutTarget(event, element)) click(event, element);
+        },
       };
       for (const [name, handler] of Object.entries(handlers)) element.addEventListener(name, handler,
         { capture: true, passive: name === "touchstart" || name === "touchcancel" || name === "contextmenu" });
@@ -604,6 +641,10 @@ enum MobileBlockSelection {
       const position = bindingPosition(element);
       if (position === null) return;
       const touch = event.touches[0], block = { pos: position, node: view.state.doc.nodeAt(position) };
+      if (event.target.closest?.('[data-type="taskList"], [data-type="taskItem"]')) {
+        post("reminderTaskDiagnostic", {event: "selection-contact", target: describeTaskTarget(view.state.doc, position),
+          dom: event.target.tagName, row: event.target.closest('[data-type="taskItem"]')?.dataset.vellixBlockId || "-"});
+      }
       releaseTarget?.();
       contactElement = element;
       // WebKit keeps the initial touch target even if a mark's inline DOM is
@@ -665,6 +706,10 @@ enum MobileBlockSelection {
         if (extending && directed) target = targetAt(touch.clientY, range, Math.sign(travel));
         if (target) {
           if (!gesture.committed || target.pos !== range.head.pos) selected = rangeSelection(range, target, visible);
+          if (!gesture.committed && contactElement?.closest?.('[data-type="taskList"], [data-type="taskItem"]')) {
+            post("reminderTaskDiagnostic", {event: "selection-commit", target: describeTaskTarget(view.state.doc, target.pos),
+              selected: JSON.stringify(selected.map(item => JSON.parse(describeTaskTarget(view.state.doc, item.pos))))});
+          }
           range = { ...range, head: ref(target) };
         }
       }
@@ -714,28 +759,12 @@ enum MobileBlockSelection {
       event.preventDefault(); event.stopImmediatePropagation();
       const next = state.mode === "single" ? [] : state.selected.filter(item => item.pos !== position);
       if (!state.selected.some(item => item.pos === position)) next.push(ref(block));
-      update({ mode: next.length ? state.mode : "off", selected: next.sort((a, b) => a.pos - b.pos),
+      update({ mode: next.length ? state.mode : "off", selected: collapseNested(next).sort((a, b) => a.pos - b.pos),
         range: null, gesture: null, click: null }, true);
     }
     const selectionDocument = view.dom.ownerDocument;
-    function selectCalloutInsteadOfText() {
-      const state = value();
-      if (!state || state.mode !== "off" || state.gesture?.phase === "active" || !canSelect()) return;
-      const native = selectionDocument.getSelection();
-      if (!native || native.isCollapsed || !view.dom.contains(native.anchorNode) || !view.dom.contains(native.focusNode)) return;
-      const surface = ".vellix-plain-callout:not(.penned-clip-source), .vellix-callout:not(.penned-grid-card)";
-      const owner = node => (node instanceof Element ? node : node?.parentElement)?.closest(surface);
-      const callout = owner(native.anchorNode);
-      if (!callout || owner(native.focusNode) !== callout) return;
-      const pos = bindingPosition(callout);
-      const block = pos === null ? null : recordAt(view.state.doc, pos);
-      if (!block || !isWholeCallout(block.node)) return;
-      cancelPending();
-      update({ mode: "multi", selected: [ref(block)], range: null, gesture: null,
-        click: state.gesture ? { pos, until: now() + 450 } : null }, true);
-      view.dom.blur();
-      native.removeAllRanges();
-    }
+    // A native text range must never silently become a selected block.
+    // Callouts remain selectable by the same explicit selection gesture.
     function dismissOnBlankClick(event) {
       if (!value()?.selected.length || event.defaultPrevented || event.button !== 0) return;
       const target = event.target;
@@ -744,7 +773,6 @@ enum MobileBlockSelection {
       event.preventDefault();
       setMode("off");
     }
-    selectionDocument.addEventListener("selectionchange", selectCalloutInsteadOfText);
     selectionDocument.addEventListener("click", dismissOnBlankClick);
     function refresh() {
       const state = key.getState(view.state);
@@ -877,7 +905,7 @@ enum MobileBlockSelection {
       removedBindingElements.clear();
     });
     observer.observe(view.dom, { childList: true, subtree: true });
-    controller = { refresh, cancelPending, scroll: continueDragScroll, skipInlineRebind(tr) {
+    controller = { refresh, cancelPending, cancel, scroll: continueDragScroll, skipInlineRebind(tr) {
       if (bindingsDirty || bindingsDoc !== tr.before || pendingContact || contactElement) return false;
       bindingsDoc = tr.doc;
       return true;
@@ -910,7 +938,6 @@ enum MobileBlockSelection {
     } };
     return { update: refresh, destroy() {
       destroyed = true; stopScrolling(); cancelPending(); releaseTarget?.(); observer.disconnect();
-      selectionDocument.removeEventListener("selectionchange", selectCalloutInsteadOfText);
       selectionDocument.removeEventListener("click", dismissOnBlankClick);
       selectionPaint.destroy();
       for (const binding of bindings.values()) binding.remove();
@@ -923,6 +950,15 @@ enum MobileBlockSelection {
     selectedRecords() {
       return (value()?.selected || []).map(item => recordAt(editor.state.doc, item.pos)).filter(Boolean);
     },
+    // The optional reorder feature reads selection without authorizing, delaying,
+    // or changing the existing selection engine.
+    inputNames: { start: "touchstart", move: "touchmove", end: "touchend", cancel: "touchcancel" },
+    contactEvent: event => event,
+    clearContactInput() {},
+    describeTaskTarget(position) { return describeTaskTarget(editor.state.doc, position); },
+    recordAtPosition(position) { return recordAt(editor.state.doc, position); },
+    get hasActiveGesture() { return value()?.gesture?.phase === "active"; },
+    cancelGestureForReorder() { controller?.cancel(); },
     continueDragScroll: payload => controller?.scroll(payload) ?? false,
     transformSelectedNested(transform, includeTopLevel = false) {
       const state = value();
@@ -1083,7 +1119,8 @@ enum MobileBlockSelection {
       }
       return undefined;
     },
-    extensions({ Extension, Plugin, PluginKey, Decoration, DecorationSet, post: bridgePost, modeChanged, closeHistory: historyBoundary }) {
+    extensions(context) {
+      const { Extension, Plugin, PluginKey, Decoration, DecorationSet, post: bridgePost, modeChanged, closeHistory: historyBoundary } = context;
       post = bridgePost;
       closeHistory = historyBoundary;
       key = new PluginKey("pennedBlockSelection");
@@ -1195,7 +1232,7 @@ enum MobileBlockSelection {
             view: view => createView(view, post),
           })];
         },
-      })];
+      }), ...(window.PennedBlockDragAndDrop?.extensions(context) ?? [])];
     },
   };
 })();

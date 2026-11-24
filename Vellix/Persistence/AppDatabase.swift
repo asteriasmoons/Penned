@@ -704,6 +704,10 @@ extension DatabaseMigrator {
             try DocumentPreviewDescriptorIndex.install(in: db)
         }
 
+        migrator.registerMigration("v34_shared_reminder_references") { db in
+            try DocumentTaskIndex.installReferences(in: db)
+        }
+
         return migrator
     }
 

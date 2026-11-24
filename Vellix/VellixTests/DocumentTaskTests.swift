@@ -7,6 +7,46 @@ import Testing
 struct DocumentTaskTests {
     private func date(_ value: String) -> Date { ISO8601DateFormatter().date(from: value)! }
 
+    @Test func copiedTaskReferencesShareConfigurationHistoryAndDeletionLifecycle() throws {
+        let database = try AppDatabase.makeInMemory()
+        let documents = DocumentRepository(database: database)
+        let tasks = DocumentTaskRepository(database: database)
+        var reminder = DocumentTaskMetadata()
+        reminder.reminderEnabled = true
+        reminder.scheduledAt = date("2026-11-24T09:00:00Z").timeIntervalSince1970
+        let source = try documents.create(DocumentDraft(title: "Original", tipTapJSON: json(reminder)))
+        let reference = try documents.create(DocumentDraft(title: "Copied reference", tipTapJSON: json(reminder)))
+        #expect(try tasks.all().count == 1)
+        #expect(try tasks.references(taskID: reminder.id).count == 2)
+
+        var configured = reminder
+        configured.scheduledAt = date("2026-11-24T10:30:00Z").timeIntervalSince1970
+        let edited = try DocumentTaskIndex.updating(reference.tipTapJSON, blockID: "checklist",
+                                                    metadata: configured, checked: false)
+        _ = try documents.saveEditorJSON(id: reference.id, canonicalJSON: edited)
+        let originalContext = try #require(DocumentTaskIndex.contexts(in:
+            documents.requireDocument(id: source.id).tipTapJSON).first)
+        #expect(originalContext.metadata?.scheduledAt == configured.scheduledAt)
+        #expect(try tasks.all().count == 1)
+
+        _ = try tasks.setCompleted(taskID: reminder.id, occurrenceID: reminder.occurrenceID, completed: true)
+        let sourceAfter = try #require(DocumentTaskIndex.contexts(in:
+            documents.requireDocument(id: source.id).tipTapJSON).first)
+        let copiedAfter = try #require(DocumentTaskIndex.contexts(in:
+            documents.requireDocument(id: reference.id).tipTapJSON).first)
+        #expect(sourceAfter.checked && copiedAfter.checked)
+        #expect(sourceAfter.metadata?.history.count == 1)
+        #expect(copiedAfter.metadata?.history.count == 1)
+        #expect(try tasks.completedOccurrences(taskID: reminder.id).count == 1)
+
+        _ = try documents.saveEditorJSON(id: source.id, canonicalJSON: json(nil))
+        #expect(try tasks.all().count == 1)
+        #expect(try tasks.all().first?.documentID == reference.id)
+        _ = try documents.saveEditorJSON(id: reference.id, canonicalJSON: json(nil))
+        #expect(try tasks.all().isEmpty)
+        #expect(try tasks.completedOccurrences(taskID: reminder.id).isEmpty)
+    }
+
     @Test func recurrenceUsesScheduledDateAndPreservesCalendarAnchors() throws {
         let january = date("2026-01-31T09:00:00Z")
         let monthly = TaskRepeatRule(frequency: .monthly, timeZoneID: "UTC", anchor: january.timeIntervalSince1970)

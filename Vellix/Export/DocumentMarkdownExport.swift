@@ -91,7 +91,9 @@ struct DocumentMarkdownExport {
                     .components(separatedBy: "\n").map { "> " + $0 }.joined(separator: "\n")
             }
             let prefix = type == "blockquote" ? "" : "[!NOTE]\n"
-            return (prefix + blocks(children, page: page)).components(separatedBy: "\n").map { "> " + $0 }.joined(separator: "\n")
+            let title = type == "iconCallout" ? (attrs["title"] as? String ?? "") : ""
+            let heading = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "**" + escape(title) + "**\n\n"
+            return (prefix + heading + blocks(children, page: page)).components(separatedBy: "\n").map { "> " + $0 }.joined(separator: "\n")
         case "toggleItem":
             let heading = children.first.map { block($0, page: page) } ?? ""
             return heading + "\n\n" + blocks(Array(children.dropFirst()), page: page)

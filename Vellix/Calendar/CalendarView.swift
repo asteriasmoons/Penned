@@ -5,73 +5,59 @@ struct CalendarView: View {
     @EnvironmentObject private var environment: AppEnvironment
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.pennedWorkspace) private var workspace
     @Environment(\.pennedWorkspaceTabActive) private var workspaceTabActive
     @ObservedObject var model: CalendarModel
     @State private var configuringDailyNote: DailyNoteDay?
     @State private var openingDailyNote = false
-    @State private var agendaPosition: ScrollPosition
-
-    init(model: CalendarModel) {
-        self.model = model
-        _agendaPosition = State(initialValue: model.mode == .week
-            ? ScrollPosition(id: model.initialScrollDate(), anchor: .top)
-            : ScrollPosition(idType: Date.self, edge: .top))
-    }
+    @State private var agendaPosition = ScrollPosition(edge: .top)
+    @ScaledMetric(relativeTo: .caption) private var minimumCardHeight: CGFloat = 108
 
     var body: some View {
-        VStack(spacing: 0) {
-            if !dynamicTypeSize.isAccessibilitySize {
-                navigator
-                Divider().padding(.horizontal, 18)
-            }
-            GeometryReader { geometry in
+        GeometryReader { geometry in
+            let contentWidth = max(0, min(geometry.size.width, 680) - 36)
+            VStack(spacing: 0) {
+                if !dynamicTypeSize.isAccessibilitySize {
+                    navigator.frame(maxWidth: 644).padding(.horizontal, 18)
+                }
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 18) {
-                        if dynamicTypeSize.isAccessibilitySize { navigator; Divider() }
-                        calendarActions
-                        dailyNoteAction
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        if dynamicTypeSize.isAccessibilitySize { navigator }
+                        accessNotice
                         if model.mode == .week {
-                            expansionControls
-                            ForEach(model.days, id: \.self) { day in
-                                VStack(alignment: .leading, spacing: 18) {
-                                    weekSection(day)
-                                    if day == model.days.last { unscheduledAgenda }
-                                }
-                                // Leave only the trailing room needed to top-align the final day.
-                                .frame(minHeight: day == model.days.last ? max(0, geometry.size.height - Self.agendaBottomInset) : nil,
-                                    alignment: .topLeading)
-                                .id(day)
-                            }
+                            weekCards(width: contentWidth)
+                            weekPanel(width: contentWidth,
+                                agendaHeight: min(340, max(200, geometry.size.height * 0.36)))
                         } else {
+                            dayBanner(width: contentWidth)
+                            dailyNoteAction
                             Text(dayHeading(model.selectedDate))
-                                .font(.system(.title3, design: .rounded).weight(.bold))
-                            CalendarDayAgenda(model: model, day: model.selectedDate)
-                            unscheduledAgenda
+                                .font(.system(.title3, design: .rounded).weight(.black))
+                                .padding(.horizontal, 6)
+                            CalendarDayAgenda(model: model, day: model.selectedDate, showsTimeline: true)
                         }
+                        unscheduledAgenda
                     }
-                    .scrollTargetLayout()
-                    .padding(.horizontal, 18).padding(.top, 18).padding(.bottom, Self.agendaBottomInset)
+                    .frame(maxWidth: 644, alignment: .leading)
+                    .padding(.horizontal, 18).padding(.top, 6).padding(.bottom, Self.agendaBottomInset)
+                    .frame(maxWidth: .infinity, alignment: .top)
                 }
                 .scrollPosition($agendaPosition, anchor: .top)
+                .scrollBounceBehavior(.basedOnSize)
                 .refreshable { await model.refreshAndWait() }
                 .onChange(of: model.selectionRevision) { _, _ in
-                    scrollAgenda(to: model.mode == .week ? model.scrollTargetDate : nil)
+                    scrollAgendaToTop()
                     model.acknowledgeScrollRequest()
                 }
-                .onChange(of: model.mode) { _, mode in
-                    scrollAgenda(to: mode == .week ? model.initialScrollDate() : nil)
+                .onChange(of: model.mode) { _, _ in
+                    scrollAgendaToTop()
                     model.acknowledgeScrollRequest()
                 }
             }
         }
-        .background {
-            #if os(iOS)
-            PadWorkspacePageBackground(fallback: VellixSurface.appBackground)
-            #else
-            VellixSurface.appBackground
-            #endif
-        }
-        .foregroundStyle(VellixSurface.ink)
+        .background(Color.black.ignoresSafeArea())
+        .foregroundStyle(.white)
+        .preferredColorScheme(.dark)
         .tint(CalendarStyle.accent)
         .navigationTitle("Calendar")
         #if os(iOS)
@@ -79,7 +65,7 @@ struct CalendarView: View {
         #endif
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text("Calendar").font(.system(size: 22, weight: .black, design: .rounded))
+                Text("Calendar").font(.system(size: 26, weight: .black, design: .rounded))
             }
         }
         .sheet(item: $model.selectedEvent) { event in CalendarEventDetailSheet(event: event, model: model) }
@@ -107,12 +93,11 @@ struct CalendarView: View {
         .onChange(of: workspaceTabActive) { _, active in if active { model.activate() } else { model.deactivate() } }
     }
 
-    private func scrollAgenda(to day: Date?) {
+    private func scrollAgendaToTop() {
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            if let day { agendaPosition.scrollTo(id: day, anchor: .top) }
-            else { agendaPosition.scrollTo(edge: .top) }
+            agendaPosition.scrollTo(edge: .top)
         }
     }
 
@@ -124,48 +109,130 @@ struct CalendarView: View {
     }
 
     private var navigator: some View {
-        VStack(spacing: 14) {
-            Picker("Calendar View", selection: $model.mode) {
-                ForEach(CalendarAgendaMode.allCases) { Text($0.rawValue).tag($0) }
-            }.pickerStyle(.segmented)
-            HStack(spacing: 6) {
-                navigationButton("Previous \(model.mode.rawValue)", icon: "chevleft", direction: -1)
-                Text(rangeHeading).font(.system(.headline, design: .rounded))
-                    .multilineTextAlignment(.center).frame(maxWidth: .infinity)
-                navigationButton("Next \(model.mode.rawValue)", icon: "chevright", direction: 1)
+        VStack(spacing: 10) {
+            if workspace != nil {
+                Text("Calendar").font(.system(.title, design: .rounded).weight(.black))
             }
-            ViewThatFits(in: .horizontal) {
-                dateRow(expandsToFill: true)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    dateRow(expandsToFill: false)
+            HStack(spacing: 0) {
+                ForEach(CalendarAgendaMode.allCases) { mode in
+                    Button { model.mode = mode } label: {
+                        Text(mode.rawValue)
+                            .font(.system(.subheadline, design: .rounded).weight(.bold))
+                            .frame(maxWidth: .infinity, minHeight: 40)
+                            .background {
+                                if model.mode == mode {
+                                    Capsule().fill(LinearGradient(
+                                        colors: [CalendarStyle.accent, Color(red: 0.66, green: 0.16, blue: 0.91)],
+                                        startPoint: .top, endPoint: .bottom))
+                                        .overlay { Capsule().strokeBorder(.white.opacity(0.24), lineWidth: 1) }
+                                        .shadow(color: CalendarStyle.accent.opacity(0.4), radius: 4)
+                                }
+                            }
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(model.mode == mode ? .isSelected : [])
+                    .accessibilityIdentifier("calendar-view-\(mode.rawValue.lowercased())")
                 }
             }
-        }.padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 0 : 18).padding(.top, 10).padding(.bottom, 16)
-    }
-
-    private func dateRow(expandsToFill: Bool) -> some View {
-        HStack(spacing: expandsToFill ? 0 : 6) {
-            ForEach(model.days, id: \.self) { day in
-                CalendarDateBubble(date: day, selected: model.calendar.isDate(day, inSameDayAs: model.selectedDate),
-                    hasContent: !model.events(on: day).isEmpty || !model.tasks(on: day).isEmpty,
-                    hasDailyNote: model.dailyNote(on: day) != nil) { model.select(day) }
-                    .frame(maxWidth: expandsToFill ? .infinity : nil)
+            .padding(2).background(Color(white: 0.13), in: Capsule())
+            .accessibilityElement(children: .contain).accessibilityLabel("Calendar View")
+            HStack(spacing: 6) {
+                navigationButton("Previous \(model.mode.rawValue)", icon: "chevleft", direction: -1)
+                Button(action: model.today) {
+                    Text(rangeHeading).font(.system(.headline, design: .rounded).weight(.bold))
+                        .multilineTextAlignment(.center).frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).help("Go to today")
+                .accessibilityHint("Returns the calendar to today")
+                .contextMenu {
+                    Button("Today", action: model.today)
+                    Button { model.expandAll() } label: {
+                        Label { Text("Expand All") } icon: { LibraryIcon(name: "chevdown", size: 14) }
+                    }
+                    Button { model.collapseAll() } label: {
+                        Label { Text("Collapse All") } icon: { LibraryIcon(name: "chevup", size: 14) }
+                    }
+                }
+                navigationButton("Next \(model.mode.rawValue)", icon: "chevright", direction: 1)
             }
-        }.frame(maxWidth: expandsToFill ? .infinity : nil)
+        }.padding(.top, 10).padding(.bottom, 6)
     }
 
-    private var calendarActions: some View {
-        HStack(alignment: .center, spacing: 12) {
-            accessNotice.frame(maxWidth: .infinity, alignment: .leading)
-            Button("Today", action: model.today)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(CalendarStyle.accent)
-                .padding(.horizontal, 16).padding(.vertical, 8)
-                .background(CalendarStyle.accent.opacity(0.16), in: Capsule())
-                .fixedSize().frame(minHeight: 44)
-                .contentShape(Rectangle())
-                .buttonStyle(.plain)
-        }.frame(maxWidth: .infinity)
+    private func weekCards(width: CGFloat) -> some View {
+        let cardWidth = max(1, (width - 24) / 4)
+        let cardHeight = max(minimumCardHeight, cardWidth * 1.2)
+        let days = model.days
+        return VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                ForEach(Array(days.prefix(4)), id: \.self) { day in
+                    dateCard(day, width: cardWidth, height: cardHeight)
+                }
+            }
+            HStack(spacing: 8) {
+                ForEach(Array(days.dropFirst(4)), id: \.self) { day in
+                    dateCard(day, width: cardWidth, height: cardHeight)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func dateCard(_ day: Date, width: CGFloat, height: CGFloat) -> some View {
+        CalendarIllustratedDateCard(date: day, artwork: CalendarDayArtwork(date: day, calendar: model.calendar),
+            selected: model.calendar.isDate(day, inSameDayAs: model.selectedDate),
+            eventCount: model.events(on: day).count, taskCount: model.tasks(on: day).count,
+            hasDailyNote: model.dailyNote(on: day) != nil) { model.select(day) }
+            .frame(width: width, height: height)
+    }
+
+    private var selectedDayExpanded: Bool { model.expandedDays.contains(model.selectedDate) }
+    private var selectedDayArtwork: CalendarDayArtwork {
+        CalendarDayArtwork(date: model.selectedDate, calendar: model.calendar)
+    }
+
+    private func banner(width: CGFloat, dayView: Bool) -> some View {
+        CalendarIllustratedDayBanner(title: compactDayHeading(model.selectedDate),
+            eventCount: model.events(on: model.selectedDate).count,
+            taskCount: model.tasks(on: model.selectedDate).count,
+            artwork: selectedDayArtwork,
+            expanded: dayView || selectedDayExpanded,
+            expandedHeight: max(dayView ? 126 : 96, width / (dayView ? 2.9 : 4.1)),
+            toggle: dayView ? nil : { model.toggleDay(model.selectedDate) })
+    }
+
+    private func weekPanel(width: CGFloat, agendaHeight: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            banner(width: width, dayView: false)
+            dailyNoteAction
+                .padding(.horizontal, 14).padding(.top, 14)
+                .padding(.bottom, selectedDayExpanded ? 10 : 14)
+            if selectedDayExpanded {
+                ScrollView {
+                    CalendarDayAgenda(model: model, day: model.selectedDate)
+                        .padding(.horizontal, 14).padding(.bottom, 10)
+                }
+                .frame(height: agendaHeight)
+                .scrollBounceBehavior(.basedOnSize)
+                .id(DailyNoteDay(date: model.selectedDate).key)
+                .accessibilityLabel("Selected day events and tasks")
+            }
+        }
+        .background(.black)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .strokeBorder(selectedDayArtwork.border.opacity(0.9), lineWidth: 2) }
+        .shadow(color: selectedDayArtwork.border.opacity(0.22), radius: 5)
+    }
+
+    private func dayBanner(width: CGFloat) -> some View {
+        banner(width: width, dayView: true)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(selectedDayArtwork.border, lineWidth: 2) }
+            .shadow(color: selectedDayArtwork.border.opacity(0.45), radius: 5)
     }
 
     private var dailyNoteAction: some View {
@@ -204,7 +271,11 @@ struct CalendarView: View {
 
     private func navigationButton(_ title: String, icon: String, direction: Int) -> some View {
         Button { model.navigate(direction) } label: {
-            LibraryIcon(name: icon, size: 18).frame(width: 40, height: 44).contentShape(Rectangle())
+            LibraryIcon(name: icon, size: 16)
+                .frame(width: 30, height: 30)
+                .background(CalendarStyle.accent.opacity(0.12), in: Circle())
+                .overlay { Circle().strokeBorder(CalendarStyle.accent.opacity(0.45), lineWidth: 1.5) }
+                .frame(width: 44, height: 44).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel(title).help(title)
     }
 
@@ -213,20 +284,6 @@ struct CalendarView: View {
         let formatter = DateIntervalFormatter()
         formatter.dateTemplate = "MMM d, yyyy"
         return formatter.string(from: model.week.start, to: model.week.end.addingTimeInterval(-1))
-    }
-
-    private var expansionControls: some View {
-        HStack(spacing: 20) {
-            Button { withAnimation { model.expandAll() } } label: {
-                Label { Text("Expand All") } icon: { LibraryIcon(name: "chevdown", size: 12) }
-                    .frame(minHeight: 44).contentShape(Rectangle())
-            }.disabled(model.days.allSatisfy(model.expandedDays.contains))
-            Button { withAnimation { model.collapseAll() } } label: {
-                Label { Text("Collapse All") } icon: { LibraryIcon(name: "chevup", size: 12) }
-                    .frame(minHeight: 44).contentShape(Rectangle())
-            }.disabled(model.days.allSatisfy { !model.expandedDays.contains($0) })
-            Spacer(minLength: 0)
-        }.font(.caption.weight(.semibold)).buttonStyle(.plain).foregroundStyle(CalendarStyle.accent)
     }
 
     @ViewBuilder private var accessNotice: some View {
@@ -255,71 +312,155 @@ struct CalendarView: View {
         }
     }
 
-    private func weekSection(_ day: Date) -> some View {
-        let expanded = model.expandedDays.contains(day)
-        return VStack(alignment: .leading, spacing: 4) {
-            Button { withAnimation { model.toggleDay(day) } } label: {
-                HStack(alignment: .top, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(dayHeading(day)).font(.system(.headline, design: .rounded))
-                            .foregroundStyle(model.calendar.isDateInToday(day) ? CalendarStyle.accent : VellixSurface.ink)
-                        Text(summary(day)).font(.caption).foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    LibraryIcon(name: expanded ? "chevup" : "chevdown", size: 16)
-                        .foregroundStyle(.secondary).padding(.top, 4)
-                }.padding(.vertical, 10).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityLabel("\(expanded ? "Collapse" : "Expand") \(dayHeading(day))")
-                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-            if expanded { CalendarDayAgenda(model: model, day: day) }
-            Divider().padding(.top, 8)
-        }
-    }
-
     private func dayHeading(_ day: Date) -> String {
         let prefix = model.calendar.isDateInToday(day) ? "Today - " : model.calendar.isDateInTomorrow(day) ? "Tomorrow - " : ""
         return prefix + day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
     }
 
-    private func summary(_ day: Date) -> String {
-        let events = model.events(on: day).count, tasks = model.tasks(on: day).count
-        let notes = model.events(on: day).filter { model.eventNotes[$0.id]?.isTrashed == false }.count
-        var parts: [String] = []
-        if events > 0 { parts.append("\(events) \(events == 1 ? "event" : "events")") }
-        if tasks > 0 { parts.append("\(tasks) \(tasks == 1 ? "task" : "tasks")") }
-        if notes > 0 { parts.append("\(notes) \(notes == 1 ? "note" : "notes")") }
-        if model.dailyNote(on: day) != nil { parts.append("Daily Note") }
-        return parts.isEmpty ? "Nothing scheduled" : parts.joined(separator: ", ")
+    private func compactDayHeading(_ day: Date) -> String {
+        let prefix = model.calendar.isDateInToday(day) ? "Today - " : model.calendar.isDateInTomorrow(day) ? "Tomorrow - " : ""
+        return prefix + day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
     }
 
 }
 
-private struct CalendarDateBubble: View {
+private struct CalendarDayArtwork {
+    let index: Int
+
+    init(date: Date, calendar: Calendar) { index = calendar.component(.weekday, from: date) }
+
+    var card: String { "CardIMG\(index)" }
+    var banner: String { "BannerIMG\(index)" }
+    var border: Color {
+        switch index {
+        case 1: Color(red: 0.77, green: 0.28, blue: 1)
+        case 2: Color(red: 0.10, green: 0.65, blue: 1)
+        case 3: Color(red: 1, green: 0.23, blue: 0.75)
+        case 4: Color(red: 0.16, green: 0.91, blue: 0.92)
+        case 5: Color(red: 0.24, green: 0.93, blue: 0.55)
+        case 6: Color(red: 1, green: 0.78, blue: 0.16)
+        default: Color(red: 0.64, green: 0.43, blue: 1)
+        }
+    }
+}
+
+private struct CalendarIllustratedDateCard: View {
     let date: Date
+    let artwork: CalendarDayArtwork
     let selected: Bool
-    let hasContent: Bool
+    let eventCount: Int
+    let taskCount: Int
     let hasDailyNote: Bool
     let action: () -> Void
-    @ScaledMetric(relativeTo: .body) private var diameter: CGFloat = 34
+    @ScaledMetric(relativeTo: .caption2) private var countFontSize: CGFloat = 10
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 5) {
-                Text(date.formatted(.dateTime.weekday(.abbreviated))).font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text(date.formatted(.dateTime.day())).font(.system(.subheadline, design: .rounded).weight(.bold))
-                    .foregroundStyle(selected ? VellixSurface.inverseInk : CalendarStyle.accent)
-                    .frame(width: diameter, height: diameter)
-                    .background(selected ? CalendarStyle.accent : VellixSurface.controlInk.opacity(0.04), in: Circle())
-                    .overlay { if Calendar.current.isDateInToday(date) { Circle().stroke(CalendarStyle.accent, lineWidth: 1.5) } }
-                HStack(spacing: 3) {
-                    Circle().fill(hasContent ? CalendarStyle.accent : .clear).frame(width: 4, height: 4)
-                    if hasDailyNote { RoundedRectangle(cornerRadius: 1).fill(CalendarStyle.accent).frame(width: 5, height: 5) }
-                }.frame(height: 5)
-            }.frame(minWidth: diameter + 6, minHeight: 66).contentShape(Rectangle())
+            VStack(alignment: .leading, spacing: 0) {
+                Text(date.formatted(.dateTime.weekday(.abbreviated)))
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .lineLimit(1).minimumScaleFactor(0.75)
+                Text(date.formatted(.dateTime.day()))
+                    .font(.system(.title2, design: .rounded).weight(.black))
+                    .lineLimit(1).minimumScaleFactor(0.75)
+                Spacer(minLength: 6)
+                VStack(alignment: .leading, spacing: 4) {
+                    count(eventCount, singular: "Event", plural: "Events", icon: "mooncal")
+                    count(taskCount, singular: "Task", plural: "Tasks", icon: "checkwavy")
+                }
+                .padding(.horizontal, 4).padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.black.opacity(0.76), in: RoundedRectangle(cornerRadius: 9))
+            }
+            .padding(6).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background {
+                GeometryReader { geometry in
+                    Image(artwork.card).resizable().scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                }.allowsHitTesting(false).accessibilityHidden(true)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: 17, style: .continuous)
+                .strokeBorder(artwork.border, lineWidth: selected ? 2.5 : 1.8) }
+            .shadow(color: artwork.border.opacity(selected ? 0.7 : 0.15), radius: selected ? 5 : 2)
+            .contentShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plain).foregroundStyle(.white)
         .accessibilityLabel(date.formatted(date: .complete, time: .omitted))
-        .accessibilityValue(hasDailyNote ? "Daily Note" : hasContent ? "Scheduled content" : "Nothing scheduled")
+        .accessibilityValue("\(eventCount) events, \(taskCount) tasks" + (hasDailyNote ? ", Daily Note" : ""))
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("calendar-date-\(DailyNoteDay(date: date).key)")
+    }
+
+    private func count(_ value: Int, singular: String, plural: String, icon: String) -> some View {
+        HStack(spacing: 3) {
+            LibraryIcon(name: icon, size: 9).foregroundStyle(artwork.border)
+            ViewThatFits(in: .horizontal) {
+                Text("\(value) \(value == 1 ? singular : plural)").fixedSize()
+                Text("\(value)").lineLimit(1).minimumScaleFactor(0.6)
+            }
+            .font(.system(size: countFontSize, weight: .semibold, design: .rounded))
+        }
+    }
+}
+
+private struct CalendarIllustratedDayBanner: View {
+    let title: String
+    let eventCount: Int
+    let taskCount: Int
+    let artwork: CalendarDayArtwork
+    let expanded: Bool
+    let expandedHeight: CGFloat
+    let toggle: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Text(title).font(.system(.title3, design: .rounded).weight(.black))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .shadow(color: .black, radius: 2)
+                if let toggle {
+                    Button(action: toggle) {
+                        LibraryIcon(name: expanded ? "chevup" : "chevdown", size: 14)
+                            .frame(width: 26, height: 26)
+                            .background(.black.opacity(0.65), in: Circle())
+                            .overlay { Circle().strokeBorder(artwork.border.opacity(0.8), lineWidth: 1) }
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(expanded ? "Collapse day agenda" : "Expand day agenda")
+                    .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                    .accessibilityIdentifier("calendar-day-disclosure")
+                }
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) { eventSummary; taskSummary }
+                VStack(alignment: .leading, spacing: 6) { eventSummary; taskSummary }
+            }
+            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+            .shadow(color: .black, radius: 2)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: expanded ? expandedHeight : 88, alignment: .topLeading)
+        .background {
+            GeometryReader { geometry in
+                Image(artwork.banner).resizable().scaledToFill()
+                    .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+            }.allowsHitTesting(false).accessibilityHidden(true)
+        }
+        .foregroundStyle(.white)
+        .clipped()
+    }
+
+    private var eventSummary: some View {
+        Label { Text("\(eventCount) \(eventCount == 1 ? "Event" : "Events")") }
+            icon: { LibraryIcon(name: "mooncal", size: 17).foregroundStyle(artwork.border) }
+    }
+
+    private var taskSummary: some View {
+        Label { Text("\(taskCount) \(taskCount == 1 ? "Task" : "Tasks")") }
+            icon: { LibraryIcon(name: "checkwavy", size: 17).foregroundStyle(artwork.border) }
     }
 }

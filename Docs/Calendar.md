@@ -4,9 +4,142 @@
 
 Calendar replaces Today in the third bottom-left library tab and in the sidebar. Home and Starred are unchanged. There are exactly two modes: Week and Day. `AppEnvironment.calendar` owns one shared `CalendarModel`; changing modes or opening a document does not reset its selected date or expansion state.
 
-Week contains seven date bubbles and seven independently expandable sections. Date selection expands and locates that day without collapsing others. Previous/next, Today, Expand All, Collapse All, and pull-to-refresh have real actions. Day uses the same rows and date navigator, with one daily agenda rather than an hourly grid. Unscheduled document tasks have a separate section in both modes, without inventing a due date.
+Week contains seven illustrated date cards in a four-card row and a centered three-card row, followed by the selected day's expandable agenda panel. Day uses the matching illustrated summary banner and a grouped vertical event/task timeline, not an hourly grid. Both modes share the existing selected date, previous/next navigation, and pull-to-refresh. The date-range heading is a button that returns to Today. Unscheduled document tasks retain a separate section in both modes, without inventing a due date.
 
 Calendar uses the existing dark surfaces, lavender accent, rounded typography, and asset icons. Event-note and existing daily-note previews use `NestedPageThumbnail` with the actual document JSON, appearance, cover, and attachment store at 37 x 48, slightly smaller than Templates' 43 x 56. Calendar task rows instead use a compact source-document badge. Multiple task rows can refer to the same document without creating duplicate documents.
+
+## Illustrated Week And Day Redesign
+
+The two supplied Week/Day references drive this native presentation update. It
+changes `CalendarView.swift` and `CalendarAgendaRows.swift`, not the editor's
+Calendar/Week Strip block, its JavaScript bundle, or its collapse implementation.
+
+### Artwork And Native Overlays
+
+All fourteen imported image sets are present in `Vellix/Assets.xcassets`.
+Weekday artwork uses Foundation's weekday number, independent of the locale's
+first weekday: Sunday = `CardIMG1` (purple), Monday = `CardIMG2` (blue), Tuesday =
+`CardIMG3` (pink), Wednesday = `CardIMG4` (teal), Thursday = `CardIMG5` (green),
+Friday = `CardIMG6` (gold), Saturday = `CardIMG7` (blue-purple). The corresponding
+wide versions are `BannerIMG1` through `BannerIMG7`. The selected date now resolves
+both card and banner through that same weekday index: Monday's blue `CardIMG2`
+uses blue `BannerIMG2`, and so on for all seven pairs. Both Week and Day banners
+and their outlines follow the selected day's artwork; the Week panel is no longer
+hardcoded to purple `BannerIMG1`. Event-category indicators remain independent.
+
+Images render in original colors, with proportional aspect-fill cropping to
+the card/banner bounds, never stretching. They contain no UI. Dates, counts,
+labels, icons, colored outlines, the collapse button, Daily Note action, and
+timeline are native SwiftUI views. Image backgrounds cannot intercept touches
+and are excluded from accessibility. No images were generated or modified.
+
+### Week Layout
+
+- Seven equal cards occupy a 4+3 arrangement. The lower row is centered and
+  retains exactly the same card width/height as the first row. Card dimensions
+  derive from the Calendar's own available width, capped for large workspaces.
+- Each card has a weekday abbreviation, day number, colored border, and dark
+  rounded count panel. Counts come from `model.events(on:)` and `model.tasks(on:)`.
+  Selecting a card calls the existing `model.select(day)` and highlights that
+  card. VoiceOver receives the complete date, counts, selection, and note status.
+- Small-width/large-text count layouts fall back from number-plus-word to the
+  number beside the same event/task icon, preserving the actual value rather
+  than clipping it. Font sizing follows Dynamic Type, not screen width.
+- The selected-day panel has the selected weekday's banner and matching outline,
+  the existing Create/Open Daily Note action, and a black internally scrolling
+  agenda. The agenda viewport is bounded to 200-340 points according to available
+  screen height, so events cannot make that panel grow indefinitely.
+- The Daily Note button has a 14-point horizontal inset and top separation from
+  the artwork, with 10 points before an expanded agenda or 14 points beneath it
+  when collapsed. Its surface no longer touches the banner or outer outline.
+- The native disclosure calls `model.toggleDay(model.selectedDate)`. Collapsing
+  removes only the agenda viewport; the illustrated header, live summary, Daily
+  Note action, and disclosure remain available. Reopening recreates the agenda
+  views from the same retained records, without fetching a second data source.
+
+### Day Layout
+
+- The matching image banner is visually separate from the timeline and Daily Note
+  action. It shows the dynamically formatted selected date, Today/Tomorrow prefix
+  where applicable and real event/task counts. Day has no banner collapse button
+  or collapse action. Its artwork always keeps the full Day banner height,
+  regardless of the selected date's Week-panel expansion state.
+- Timeline rows have a thin connecting rail and purple circular markers, plus
+  their unchanged real event-category indicators. `CalendarEventRow` continues
+  to use `event.calendarColor`; blue calendars stay blue, purple calendars stay
+  purple, and no banner color is substituted into event records or indicators.
+- Day has separate **All Day**, timed **Events**, and **Tasks** sections, in that order, shown
+  when that section has records. All Day initially shows at most the first two
+  events. Its 44-point disclosure header shows the full count and expands to all
+  events or collapses back to two. Expansion is view state keyed by the selected
+  civil date; it does not modify events or the Week panel's saved model state.
+- The same fixed/scaled leading column aligns every timeline rail. All-day rows
+  show All Day in that column rather than duplicating it beneath the title.
+  Tasks and timed events show their actual occurrence/start time beside their
+  marker. Task times are not duplicated in the title area. Timed events retain
+  their full range/continuation labels beneath the title. An ongoing event enters
+  the current day's timeline at midnight without changing its actual start/end.
+- Bold titles and subtle separators appear over black. Event details, task
+  completion/skip, and associated note/source-document links remain actionable.
+- The Week agenda retains its flat chronological display. Day partitions those
+  same records, preserving chronological ordering within each section and stable
+  typed IDs for ties. Multi-day filtering and time labels still use the existing
+  model and event type. No occurrence is copied, persisted, rescheduled, or
+  fabricated for this presentation. Unscheduled tasks still have no invented time.
+- Task rows retain `TaskCompletionCircle`, single/double-tap completion/skip,
+  in-flight guards, reminders, source-document badges, and Calendar return routing.
+  Day timeline task titles are bold; the separate iPad Tasks browser retains its
+  existing default title styling and layout.
+
+### Shared State And Navigation
+
+`CalendarModel`, its EventKit service, repositories, task recurrence, document
+opening, and persistence were not changed. Week and Day still bind to the same
+`model.mode` and `model.selectedDate`. Switching modes does not call `select`,
+`today`, or replace the model. Week uses the existing per-day `expandedDays` set;
+Day's banner is not collapsible and does not read or change that expansion state.
+Day's All Day section instead has independent view-local expansion by civil date.
+Existing date selection/navigation continues to open the selected Week day.
+
+The date heading's context menu retains Today, Expand All, and Collapse All
+without adding an extra button row to the reference composition. The iPad
+workspace (whose navigation bar is hidden by its existing shell) receives its
+own Calendar heading; other presentations keep the existing navigation title
+instead of showing duplicate headings.
+
+The custom Week/Day control uses the requested luminous purple gradient only
+for the selected segment. The page is explicitly pitch black and opts into dark
+appearance. Existing navigation assets, header, event sheet, error/permission
+states, template picker, and Daily Note loading/Space-switch guards remain.
+The obsolete seven-section scroll target is replaced with top scrolling for
+the selected-day presentation. The Week panel's internal scroll identity follows
+the selected civil date, preventing another day's offset from hiding its first
+events. The outer page stays lazy for long timelines and unscheduled tasks.
+
+The shell still owns the unchanged bottom navigation. The Calendar retains its
+110-point trailing inset so the final row can scroll above that navigation;
+safe-area behavior is not replaced with absolute screen positioning. Accessibility
+text sizes move the navigator into the scrollable content to keep it usable.
+
+### Files And Verification
+
+- `Vellix/Calendar/CalendarView.swift`: illustrated layouts, artwork mapping,
+  native cards/banner overlays, shared control/navigation, bounded Week panel,
+  black presentation, responsive sizing, and preserved Daily Note integration.
+- `Vellix/Calendar/CalendarAgendaRows.swift`: grouped Day timeline, first-two
+  All Day disclosure, aligned real time labels, and stable display ordering while
+  retaining existing row actions/category colors. Optional inline time flags
+  default to the previous behavior outside the Day timeline.
+- `Docs/Calendar.md`: current behavior, artwork mapping, integration guarantees,
+  and the verification boundary.
+
+No builds, tests, Swift compilation, linters, app launches, or simulators were
+run. Source review and whitespace checks do not establish pixel matching,
+native hit testing, compile success, nested-scroll feel, or device performance.
+Physical iPhone/iPad verification remains necessary for the two layouts,
+small-screen/large-text behavior, Week-panel and All Day collapse/reopen, rapid date/mode
+switches, authorization, event details, task actions, Daily Notes, and bottom-bar
+clearance. No claim of on-device visual or functional validation is made.
 
 ### Daily Note And Source Badge (October 22, 2026)
 

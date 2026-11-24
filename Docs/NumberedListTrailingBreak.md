@@ -69,6 +69,36 @@ replacement of soft breaks and does not rewrite documents when they open.
 
 ## Validation Boundary
 
+### November 21 Nested-Checklist Follow-Up
+
+The correction described above was working according to the user and remains
+in place. The current helper also recognizes bullet lists and checklists. Its
+relative parent lookups continue to work under a Calendar/Week Strip, day panel,
+and callout; it is not being removed, replaced, or described as obsolete.
+
+The user subsequently compared working top-level checklists with a failing
+checklist inside a callout inside a Week Strip. This establishes a
+nesting-dependent Return failure, not failure of the earlier trailing-line tap
+correction. That earlier correction acts on taps/list-toolbar commands, rather
+than owning the Return key itself. The old report's discussion of the general
+callout hard-break handler is historical: the redesigned ordinary Plain Callout
+now yields Return to normal editing keymaps; only clipped-source direct
+paragraphs retain the special hard-break handler.
+
+The new mobile route uses the existing editor keymaps for this exact nested
+list context before native DOM splitting, and consumes only the duplicate native
+insertion for the key it actually handled. It does not rewrite saved hard
+breaks or change normal callout paragraph Return, list schemas, marks, reminders,
+or the prior tap/toolbar correction. The exact iOS mutation behind the user's
+failing capture is still unrecorded; nested Return routing is an implemented
+correction for the exposed native-DOM path, not a claim of device validation.
+See [Editor Interaction Fixes](EditorInteractionFixes.md#nested-return-correction)
+and [expanded diagnostics](NumberedListDiagnostics.md#nested-calendarcallout-checklist-follow-up).
+
+The validation boundary below belongs to the original trailing-line change.
+This follow-up likewise ran no builds/tests/compilation/linters or app launches;
+the CSS scope fix and native interaction script were edited directly.
+
 No builds, tests, linters, launches, simulators, or runtime verification commands
 were run. Regression cases were added, not executed. This change is based on
 the supplied runtime structure; successful physical-device behavior is not yet

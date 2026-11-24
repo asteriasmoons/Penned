@@ -443,6 +443,8 @@ enum TipTapContentAnalyzer {
             attrs["imagePath"] = settings.imagePath
             attrs["textColor"] = settings.textColor
             attrs["imageTint"] = settings.imageTint
+            attrs["titleColor"] = settings.titleColor
+            attrs["collapseColor"] = settings.collapseColor
         }
 
         if type == "plainCallout" {
@@ -742,7 +744,7 @@ enum TipTapContentAnalyzer {
             if dictionary["type"] as? String == "richLink" {
                 return RichLinkPreviewData(dictionary).title
             }
-            if dictionary["type"] as? String == "gridCard" {
+            if ["gridCard", "iconCallout"].contains(dictionary["type"] as? String ?? "") {
                 let title = (dictionary["attrs"] as? [String: Any])?["title"] as? String ?? ""
                 return [title, textContent(from: dictionary["content"])].filter { !$0.isEmpty }.joined(separator: " ")
             }

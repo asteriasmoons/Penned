@@ -39,8 +39,7 @@
       html[style*="HachiMaruPop"] {
         --vellix-code-font-family: "HachiMaruPop", cursive;
       }
-      html[style*="HachiMaruPop"] .tiptap-editor,
-      html[style*="HachiMaruPop"] .tiptap-editor * {
+      html[style*="HachiMaruPop"] .tiptap-editor {
         font-synthesis: none;
       }
       html[style*="HachiMaruPop"] .tiptap-editor :is(code, pre) {
@@ -136,9 +135,7 @@
       }
 
       .tiptap-editor,
-      .tiptap-editor *,
-      .ProseMirror,
-      .ProseMirror * {
+      .ProseMirror {
         font-family: var(--vellix-font-family) !important;
       }
 
@@ -980,6 +977,66 @@
         border: 0;
       }
       .penned-icon-callout .vellix-callout-icon-image { inset: 2px; }
+
+      .penned-icon-callout > .vellix-callout-icon-button {
+        filter: drop-shadow(0.6px 0 0 var(--penned-callout-icon-outline, var(--vellix-callout-color)))
+          drop-shadow(-0.6px 0 0 var(--penned-callout-icon-outline, var(--vellix-callout-color)))
+          drop-shadow(0 0.6px 0 var(--penned-callout-icon-outline, var(--vellix-callout-color)))
+          drop-shadow(0 -0.6px 0 var(--penned-callout-icon-outline, var(--vellix-callout-color)));
+      }
+      .penned-icon-callout:is([data-callout-has-title="true"], [data-callout-collapsible="true"]) {
+        display: grid;
+        grid-template-columns: 32px minmax(0, 1fr);
+        align-items: start;
+      }
+      .penned-icon-callout[data-callout-collapsible="true"] {
+        grid-template-columns: 32px minmax(0, 1fr) 32px;
+      }
+      .penned-icon-callout > .vellix-callout-icon-button { grid-column: 1; grid-row: 1; }
+      .penned-icon-callout-title {
+        grid-column: 2; grid-row: 1;
+        align-self: center;
+        min-width: 0;
+        color: var(--penned-callout-title);
+        font-weight: 800;
+        font-size: 1.1em;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+      }
+      .penned-icon-callout > .vellix-callout-text { grid-column: 2; grid-row: 1; }
+      .penned-icon-callout[data-callout-has-title="true"] { row-gap: 4px; }
+      .penned-icon-callout[data-callout-has-title="true"] > .vellix-callout-text {
+        grid-column: 1 / -1; grid-row: 2; padding: 0;
+      }
+      .penned-icon-callout-disclosure {
+        grid-column: 3; grid-row: 1;
+        display: grid; place-items: center;
+        box-sizing: border-box;
+        width: 32px; height: 32px;
+        padding: 0; border: 0; margin: 0;
+        background: none;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+      .penned-icon-callout-disclosure > span {
+        display: block; width: 20px; height: 20px;
+        background: var(--penned-callout-disclosure);
+        -webkit-mask: var(--vellix-asset-chevup, var(--vellix-icon-chevup)) center / contain no-repeat;
+        mask: var(--vellix-asset-chevup, var(--vellix-icon-chevup)) center / contain no-repeat;
+        pointer-events: none;
+      }
+      .penned-icon-callout-disclosure[aria-expanded="false"] > span {
+        -webkit-mask-image: var(--vellix-asset-chevdown, var(--vellix-icon-chevdown));
+        mask-image: var(--vellix-asset-chevdown, var(--vellix-icon-chevdown));
+      }
+      .penned-icon-callout[data-callout-collapsed="true"] { row-gap: 0; }
+      .penned-icon-callout[data-callout-collapsed="true"] > .vellix-callout-text {
+        min-height: 0; height: 0; padding: 0;
+        overflow: clip; visibility: hidden; pointer-events: none;
+      }
+      .penned-icon-callout[data-callout-collapsed="true"] > .vellix-callout-text * {
+        visibility: hidden !important; pointer-events: none !important;
+      }
       .penned-icon-callout-image {
         display: block;
         width: 100%;
@@ -1699,8 +1756,8 @@
         border-radius: 16px;
       }
 
-      html:not(.vellix-selection-mode) .tiptap-editor,
-      html:not(.vellix-selection-mode) .tiptap-editor [data-vellix-block-id] {
+      html:not(.vellix-selection-mode) .tiptap-editor:not(.penned-reorder-arming):not(.penned-reorder-active),
+      html:not(.vellix-selection-mode) .tiptap-editor:not(.penned-reorder-arming):not(.penned-reorder-active) [data-vellix-block-id] {
         -webkit-user-select: text !important;
         user-select: text !important;
       }
@@ -2063,23 +2120,40 @@
         -webkit-touch-callout: none;
       }
       .penned-week-strip-header {
-        display: flex;
-        justify-content: center;
+        display: grid;
+        /* Balance the two right-hand controls to center the editable title. */
+        grid-template-columns: 72px minmax(0, 1fr) 36px 36px;
         align-items: center;
-        gap: 16px;
+        gap: 0;
         min-width: 0;
         max-width: 100%;
       }
-      .penned-week-strip-range {
+      .penned-week-strip-title {
+        box-sizing: border-box;
+        appearance: none;
+        -webkit-appearance: none;
+        width: 100%;
         min-width: 0;
+        min-height: 36px;
+        padding: 4px;
+        border: 0;
+        border-radius: 4px;
+        outline: 0;
+        background: transparent;
         overflow: hidden;
         text-overflow: ellipsis;
         text-align: center;
-        font-size: var(--ws-font-size, 14px);
-        font-weight: var(--ws-font-weight, 700);
+        font-family: inherit;
+        font-size: max(16px, var(--ws-font-size, 14px));
+        font-weight: 900;
+        line-height: 1.3;
         white-space: nowrap;
-        color: #f5f5f7;
+        color: var(--ws-content-text-color, #f7f7fa);
+        -webkit-user-select: text;
+        user-select: text;
+        -webkit-touch-callout: default;
       }
+      .penned-week-strip-title:focus-visible { outline: 1px solid currentColor; }
       .penned-week-strip-nav {
         display: grid;
         place-items: center;
@@ -2099,8 +2173,8 @@
         position: relative;
         inset: auto;
         display: block;
-        width: 30px;
-        height: 30px;
+        width: 21px;
+        height: 21px;
         flex: none;
         border-radius: 0;
         z-index: 0;
@@ -2110,6 +2184,14 @@
       .penned-week-strip-nav[data-ws-nav="next"] .penned-label-glass-material {
         -webkit-mask-image: var(--vellix-asset-chevright, var(--vellix-icon-chevright));
         mask-image: var(--vellix-asset-chevright, var(--vellix-icon-chevright));
+      }
+      .penned-week-strip-collapse[aria-expanded="true"] .penned-label-glass-material {
+        -webkit-mask-image: var(--vellix-asset-chevup, var(--vellix-icon-chevup));
+        mask-image: var(--vellix-asset-chevup, var(--vellix-icon-chevup));
+      }
+      .penned-week-strip-collapse[aria-expanded="false"] .penned-label-glass-material {
+        -webkit-mask-image: var(--vellix-asset-chevdown, var(--vellix-icon-chevdown));
+        mask-image: var(--vellix-asset-chevdown, var(--vellix-icon-chevdown));
       }
       .penned-week-strip-days {
         display: grid;
@@ -2129,11 +2211,11 @@
         gap: 5px;
         width: 100%;
         min-width: 0;
-        height: clamp(32px, 18cqw, 62px);
-        padding: 4px 0;
+        height: clamp(28px, 16cqw, 56px);
+        padding: 3.4px 0;
         border: 0;
         border-radius: clamp(7px, 4cqw, 15px);
-        background: linear-gradient(rgb(0 0 0 / 30%), rgb(0 0 0 / 30%)), var(--ws-inactive-tab-color, #303137);
+        background: linear-gradient(rgb(0 0 0 / 8%), rgb(0 0 0 / 8%)), var(--ws-inactive-tab-color, #303137);
         color: #e4e4e9;
         cursor: pointer;
         touch-action: manipulation;
@@ -2148,6 +2230,22 @@
       .penned-week-strip-weekday { font-size: clamp(8px, min(2.8cqw, calc(var(--ws-font-size, 14px) * .8)), 16px); font-weight: var(--ws-font-weight, 700); line-height: 1; }
       .penned-week-strip-number { font-size: clamp(10px, min(4.3cqw, calc(var(--ws-font-size, 14px) * 1.2)), 24px); font-weight: var(--ws-font-weight, 700); line-height: 1.15; }
       .penned-week-strip-panels { min-width: 0; min-height: 160px; margin-top: var(--ws-spacing, 14px); position: relative; }
+      .penned-week-strip[data-collapsed="true"] > .penned-week-strip-chrome {
+        padding-bottom: 0;
+        border-bottom: 0;
+      }
+      .penned-week-strip[data-collapsed="true"] > .penned-week-strip-panels {
+        min-height: 0;
+        height: 0;
+        margin-top: 0;
+        overflow: clip;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .penned-week-strip[data-collapsed="true"] > .penned-week-strip-panels * {
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
       /* Identical to Tabs: keep all editable ProseMirror panels mounted and
          measurable. WebKit can invalidate selection/layout with display:none. */
       .penned-week-day-panel {
@@ -2173,28 +2271,31 @@
         width: 100%;
         container-type: inline-size;
       }
-      .penned-week-strip-header > .penned-week-strip-range { flex: 1 1 auto; }
-      .penned-week-strip-header > .penned-week-strip-nav { flex-shrink: 0; }
-
-      /* All seven buttons always fit in one row; nested narrow containers
-         scale their dimensions rather than creating a horizontal scroller. */
-      @container (max-width: 325px) {
-        .penned-week-strip-header { gap: 8px; }
-        .penned-week-strip-range { font-size: 12px; }
-      }
       .penned-week-strip-nav, .penned-week-strip-day[aria-pressed="true"] {
         position: relative;
         isolation: isolate;
       }
-      .penned-week-strip .penned-label-glass-material { z-index: -1; }
-      /* Darken the selected date and glass navigation icons without changing
-         the user's chosen underlying tint or the reusable Label glass effect. */
-      .penned-week-strip .penned-label-glass-material::after {
-        background: linear-gradient(rgb(0 0 0 / 30%), rgb(0 0 0 / 30%)),
+      .penned-week-strip > .penned-week-strip-chrome > .penned-week-strip-days > .penned-week-strip-day > .penned-label-glass-material { z-index: -1; }
+      /* The extra darkening belongs only to the selected date bubble, never
+         the reusable glass material or labels nested in the date's content. */
+      .penned-week-strip > .penned-week-strip-chrome > .penned-week-strip-days > .penned-week-strip-day[aria-pressed="true"] > .penned-label-glass-material::after {
+        background: linear-gradient(rgb(0 0 0 / 8%), rgb(0 0 0 / 8%)),
           linear-gradient(to bottom, rgb(255 255 255 / 78%) 0%, rgb(255 255 255 / 46%) 8%,
-            rgb(255 255 255 / 18%) 22%, transparent 46% 65%, rgb(13 12 18 / 12%) 86%, rgb(13 12 18 / 34%) 100%);
+            rgb(255 255 255 / 18%) 22%, transparent 46% 65%, rgb(0 0 0 / 4%) 86%, rgb(0 0 0 / 8%) 100%);
       }
       .penned-week-strip-nav .penned-label-glass-material { z-index: 0; }
+      .tiptap-editor .penned-week-strip-nav .penned-label-glass-material::before,
+      .tiptap-editor .penned-week-strip-day[aria-pressed="true"] > .penned-label-glass-material::before {
+        background-image:
+          linear-gradient(calc(180deg - atan2(50cqw, 100cqh)), transparent, var(--label-glass-tint), rgb(0 0 0 / 8%)),
+          linear-gradient(calc(180deg - atan2(100cqw, 100cqh)), rgb(247 245 250 / 28.9%), rgb(247 245 250 / 8.5%), transparent),
+          radial-gradient(circle 78cqmin at 22% 18%, rgb(247 245 250 / 40.8%), rgb(247 245 250 / 13.6%), transparent);
+      }
+      .tiptap-editor .penned-week-strip-nav .penned-label-glass-material::after {
+        background: linear-gradient(to bottom, rgb(255 255 255 / 78%) 0%, rgb(255 255 255 / 46%) 8%,
+          rgb(255 255 255 / 18%) 22%, transparent 46% 65%, rgb(0 0 0 / 4%) 86%, rgb(0 0 0 / 8%) 100%);
+      }
+
 
       /* ===== Tabbed content block ===================================== */
       .penned-tabs {

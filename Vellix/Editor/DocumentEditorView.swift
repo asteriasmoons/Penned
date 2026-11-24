@@ -8,6 +8,7 @@ import EventKit
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
+import WebKit
 
 #if canImport(UIKit)
 import UIKit
@@ -48,6 +49,19 @@ final class DocumentScrollProxy {
     var pendingCaretRevision: Int?
     var caretRevealQueued = false
     private var topBoundaryObservation: NSKeyValueObservation?
+    #if os(iOS)
+    private var blockDragGesture: MobileBlockDragGesture?
+
+    func updateSelectionScrolling(webView: WKWebView, session: TipTapEditorSession, editorIsActive: Bool) {
+        guard let scrollView else { return }
+        if blockDragGesture?.view !== scrollView || blockDragGesture?.webView !== webView {
+            if let old = blockDragGesture { old.isEnabled = false; old.view?.removeGestureRecognizer(old) }
+            blockDragGesture = MobileBlockDragGesture(webView: webView, session: session, scrollView: scrollView)
+            session.blockDragGesture = blockDragGesture
+        }
+        blockDragGesture?.editorIsActive = editorIsActive
+    }
+    #endif
 
     func attach(to scrollView: UIScrollView) {
         guard self.scrollView !== scrollView else { return }
@@ -67,6 +81,8 @@ final class DocumentScrollProxy {
 private struct DocumentScrollViewFinder: UIViewRepresentable {
     let proxy: DocumentScrollProxy
     let session: TipTapEditorSession
+    let webView: WKWebView
+    let editorIsActive: Bool
 
     func makeUIView(context: Context) -> UIView {
         let view = UIView(frame: .zero)
@@ -77,6 +93,9 @@ private struct DocumentScrollViewFinder: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
+        #if os(iOS)
+        proxy.updateSelectionScrolling(webView: webView, session: session, editorIsActive: editorIsActive)
+        #endif
         if proxy.scrollView == nil {
             DispatchQueue.main.async { locate(from: uiView) }
         }
@@ -87,6 +106,9 @@ private struct DocumentScrollViewFinder: UIViewRepresentable {
         while let current = candidate {
             if let scrollView = current as? UIScrollView {
                 proxy.attach(to: scrollView)
+                #if os(iOS)
+                proxy.updateSelectionScrolling(webView: webView, session: session, editorIsActive: editorIsActive)
+                #endif
                 session.renderRecovery.attachScrollView(scrollView)
                 return
             }
@@ -123,7 +145,12 @@ struct DocumentEditorView: View {
     @Environment(\.pennedWorkspace) private var workspace
     @Environment(\.openURL) private var openURL
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(PennedEditorPreferences.scrollToTopButtonKey) private var showsScrollToTopButton = false
     @ObservedObject private var model: DocumentEditorModel
+    #if !canImport(UIKit)
+    @State private var documentScrollPosition = ScrollPosition(edge: .top)
+    #endif
     private let sidebarAction: (() -> Void)?
     @State private var titleText = ""
     @FocusState private var isTitleFocused: Bool
@@ -257,7 +284,10 @@ struct DocumentEditorView: View {
         .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange).receive(on: RunLoop.main)) { _ in
             model.syncLinkedCalendarEvents()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .vellixTasksChanged).receive(on: RunLoop.main)) { _ in model.refreshTaskHistoryPage() }
+        .onReceive(NotificationCenter.default.publisher(for: .vellixTasksChanged).receive(on: RunLoop.main)) { _ in
+            model.refreshTaskHistoryPage()
+            model.refreshSharedTaskReferences()
+        }
         .onChange(of: model.pageReferenceIDs) { _, _ in updateCollectionPresentation() }
         .onReceive(model.$collectionEditorRequest) { request in
             guard let request else { return }
@@ -353,8 +383,10 @@ struct DocumentEditorView: View {
         }
         #if os(iOS)
         .onReceive(model.session.blockSelectionDragUpdates) { handleBlockSelectionDrag($0) }
+        .onReceive(model.session.blockReorderDidLift) { _ in blockSelectionScrollDriver.stop() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
             blockSelectionScrollDriver.stop()
+            model.session.blockDragGesture?.cancelForLifecycle()
             guard environment.selectedDocumentID == model.documentID else { return }
             model.session.renderRecovery.deactivate(reason: "application-inactive")
             model.session.suspendWebInput()
@@ -924,6 +956,7 @@ struct DocumentEditorView: View {
 
             documentStatusBanner(isCompact: isCompact)
             documentBlockControls(isCompact: isCompact)
+            documentScrollToTopButton(isCompact: isCompact)
 
             #if os(iOS)
             documentKeyboardToolbar
@@ -976,8 +1009,10 @@ struct DocumentEditorView: View {
         return ScrollView(showsIndicators: false) {
             documentScrollContent(document, appearance: appearance, size: size, isCompact: isCompact)
         }
+        #if !canImport(UIKit)
+        .scrollPosition($documentScrollPosition)
+        #endif
         #if os(iOS)
-        .scrollDisabled(selectionMode != .off && selectedBlockCount > 0)
         .scrollDismissesKeyboard(.never)
         #endif
         .frame(width: scrollWidth, height: scrollHeight)
@@ -1096,6 +1131,35 @@ struct DocumentEditorView: View {
             .padding(.horizontal, isCompact ? 26 : 34)
             .padding(.bottom, isCompact ? 0 : 24)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        }
+    }
+
+    @ViewBuilder private func documentScrollToTopButton(isCompact: Bool) -> some View {
+        if showsScrollToTopButton && ownsEditorPresentation {
+            Button {
+                guard ownsEditorPresentation else { return }
+                #if canImport(UIKit)
+                guard let scrollView = documentScrollProxy.scrollView else { return }
+                scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x,
+                                                   y: -scrollView.adjustedContentInset.top), animated: !reduceMotion)
+                #else
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.24)) {
+                    documentScrollPosition.scrollTo(edge: .top)
+                }
+                #endif
+            } label: {
+                LibraryIcon(name: "upwavy", size: 25)
+                    .foregroundStyle(VellixSurface.controlInk)
+                    .frame(width: 48, height: 48)
+                    .pennedPhoneDarkChrome(cornerRadius: 48)
+                    .overlay(Circle().strokeBorder(VellixSurface.controlInk.opacity(0.14)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Scroll to top of document")
+            .help("Scroll to top of document")
+            .padding(.trailing, isCompact ? 18 : 34)
+            .padding(.bottom, selectionMode != .off ? 112 : 82)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
     }
 
@@ -1699,7 +1763,8 @@ struct DocumentEditorView: View {
     @ViewBuilder
     private func documentScrollFinder() -> some View {
         #if canImport(UIKit)
-        DocumentScrollViewFinder(proxy: documentScrollProxy, session: model.session)
+        DocumentScrollViewFinder(proxy: documentScrollProxy, session: model.session, webView: model.webViewStore.webView,
+                                 editorIsActive: ownsEditorPresentation && !isEditorLocked)
         #else
         Color.clear
         #endif

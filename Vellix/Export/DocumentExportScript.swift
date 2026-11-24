@@ -141,6 +141,13 @@ enum DocumentExportScript {
     }
     content.querySelectorAll('.penned-collection-footer,.penned-collection-entry-actions,.penned-collection-header > button:last-child,.column-resize-handle,.resize-handle,.table-resize-handle,.vellix-table-cell-menu,.vellix-table-resize-line,.vellix-plain-callout-color-button,.vellix-blockquote-color-button,.ProseMirror-gapcursor,.ProseMirror-trailingBreak,[data-placeholder-overlay],.penned-attachment-actions').forEach(n=>n.remove());
     content.querySelectorAll('.penned-information-card-disclosure').forEach(n=>n.remove());
+    content.querySelectorAll('.penned-icon-callout-disclosure').forEach(n=>n.remove());
+    content.querySelectorAll('.penned-icon-callout').forEach(n=>{
+      n.setAttribute('data-callout-collapsed', 'false');
+      n.setAttribute('data-callout-collapsible', 'false');
+      const body = n.querySelector(':scope > .vellix-callout-text');
+      body?.removeAttribute('inert'); body?.removeAttribute('aria-hidden');
+    });
     content.querySelectorAll('.penned-information-card[data-ic-collapsed]').forEach(n=>{
       n.removeAttribute('data-ic-collapsed');
       n.removeAttribute('data-ic-collapsible');

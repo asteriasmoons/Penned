@@ -1,0 +1,2115 @@
+2026-11-23 16:18:00.075 xcodebuild[90546:5756839] [MT] IDESchemeActionsInvocationRecord: Device <DVTiOSDeviceSimulatorPlaceholder: 0x7c91885f40 (Any iOS Simulator Device | undefined_arch)> is missing operatingSystemVersion, operatingSystemVersionWithBuildNumber.
+/Users/asteriasmoons/Desktop/Vellix/Vellix/VellixTests/LibraryOverviewTestSupport.swift:2:18: warning: File 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import (in target 'Vellix' from project 'Vellix')
+/Users/asteriasmoons/Desktop/Vellix/Vellix/VellixTests/LibraryOverviewTestSupport.swift:2:18: warning: File 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import (in target 'Vellix' from project 'Vellix')
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/InlineTextColor.swift:140:27: warning: '+' was deprecated in iOS 26.0: Use string interpolation on `Text` instead: `Text("Hello \(name)")` [#DeprecatedDeclaration]
+138 |             }
+139 |             if let explicitColor { text = explicitColor.applying(to: text) }
+140 |             return result + text
+    |                           `- warning: '+' was deprecated in iOS 26.0: Use string interpolation on `Text` instead: `Text("Hello \(name)")` [#DeprecatedDeclaration]
+141 |         }
+142 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Accounts/LibraryWorkspace.swift:105:35: warning: main actor-isolated instance method 'hasUnownedLocalContent()' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+103 |             if assigningLocalLibrary && !useLocal {
+104 |                 claimLocalContent = try await Task.detached(priority: .userInitiated) {
+105 |                     try libraries.hasUnownedLocalContent()
+    |                                   `- warning: main actor-isolated instance method 'hasUnownedLocalContent()' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+106 |                 }.value
+107 |             } else {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:231:22: warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 229 |     nonisolated static func loadBootstrapState(database: AppDatabase, preferredSpaceID: String?,
+ 230 |                                                createsDefaultSpace: Bool) throws -> BootstrapState {
+ 231 |         let spaces = SpaceRepository(database: database)
+     |                      `- warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 232 |         var spaceID = try spaces.existingFallback(preferred: preferredSpaceID)
+ 233 |         if spaceID == nil && createsDefaultSpace {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1105:5: note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+1103 |     let database: AppDatabase
+1104 | 
+1105 |     init(database: AppDatabase) {
+     |     `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+1106 |         self.database = database
+1107 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:238:25: warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 236 |         let scope = spaceID ?? "$unavailable"
+ 237 |         // These repositories are owned by this load, not shared with the UI's mutable Space scope.
+ 238 |         let documents = DocumentRepository(database: database)
+     |                         `- warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 239 |         let folders = FolderRepository(database: database)
+ 240 |         let templates = TemplateRepository(database: database)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:72:5: note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+  70 |     var spaceID: String?
+  71 | 
+  72 |     init(database: AppDatabase) {
+     |     `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+  73 |         self.database = database
+  74 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:239:23: warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 237 |         // These repositories are owned by this load, not shared with the UI's mutable Space scope.
+ 238 |         let documents = DocumentRepository(database: database)
+ 239 |         let folders = FolderRepository(database: database)
+     |                       `- warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 240 |         let templates = TemplateRepository(database: database)
+ 241 |         documents.spaceID = scope; folders.spaceID = scope; templates.spaceID = scope
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1155:5: note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+1153 |     var spaceID: String?
+1154 | 
+1155 |     init(database: AppDatabase) {
+     |     `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+1156 |         self.database = database
+1157 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:240:25: warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 238 |         let documents = DocumentRepository(database: database)
+ 239 |         let folders = FolderRepository(database: database)
+ 240 |         let templates = TemplateRepository(database: database)
+     |                         `- warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 241 |         documents.spaceID = scope; folders.spaceID = scope; templates.spaceID = scope
+ 242 |         let allSpaces = try spaces.includingArchived()
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1297:5: note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+1295 |     var spaceID: String?
+1296 | 
+1297 |     init(database: AppDatabase) {
+     |     `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+1298 |         self.database = database
+1299 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:241:19: warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 239 |         let folders = FolderRepository(database: database)
+ 240 |         let templates = TemplateRepository(database: database)
+ 241 |         documents.spaceID = scope; folders.spaceID = scope; templates.spaceID = scope
+     |                   `- warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 242 |         let allSpaces = try spaces.includingArchived()
+ 243 |         let overview = try loadOverview(documents: documents, folders: folders, templates: templates, allSpaces: allSpaces)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:70:9: note: mutation of this property is only permitted within the actor
+  68 | final class DocumentRepository: @unchecked Sendable {
+  69 |     private let database: AppDatabase
+  70 |     var spaceID: String?
+     |         `- note: mutation of this property is only permitted within the actor
+  71 | 
+  72 |     init(database: AppDatabase) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:241:44: warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 239 |         let folders = FolderRepository(database: database)
+ 240 |         let templates = TemplateRepository(database: database)
+ 241 |         documents.spaceID = scope; folders.spaceID = scope; templates.spaceID = scope
+     |                                            `- warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 242 |         let allSpaces = try spaces.includingArchived()
+ 243 |         let overview = try loadOverview(documents: documents, folders: folders, templates: templates, allSpaces: allSpaces)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1153:9: note: mutation of this property is only permitted within the actor
+1151 | final class FolderRepository: @unchecked Sendable {
+1152 |     private let database: AppDatabase
+1153 |     var spaceID: String?
+     |         `- note: mutation of this property is only permitted within the actor
+1154 | 
+1155 |     init(database: AppDatabase) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:241:71: warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 239 |         let folders = FolderRepository(database: database)
+ 240 |         let templates = TemplateRepository(database: database)
+ 241 |         documents.spaceID = scope; folders.spaceID = scope; templates.spaceID = scope
+     |                                                                       `- warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 242 |         let allSpaces = try spaces.includingArchived()
+ 243 |         let overview = try loadOverview(documents: documents, folders: folders, templates: templates, allSpaces: allSpaces)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1295:9: note: mutation of this property is only permitted within the actor
+1293 |     static func documentTemplateID(_ id: String) -> String { "template-mode-" + id }
+1294 |     private let database: AppDatabase
+1295 |     var spaceID: String?
+     |         `- note: mutation of this property is only permitted within the actor
+1296 | 
+1297 |     init(database: AppDatabase) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:245:71: warning: call to main actor-isolated instance method 'dailyNoteOnlyTemplateIDs(among:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 243 |         let overview = try loadOverview(documents: documents, folders: folders, templates: templates, allSpaces: allSpaces)
+ 244 |         return BootstrapState(spaceID: spaceID, allSpaces: allSpaces, overview: overview,
+ 245 |                               dailyNoteOnlyTemplateIDs: try templates.dailyNoteOnlyTemplateIDs(among: overview.templates))
+     |                                                                       `- warning: call to main actor-isolated instance method 'dailyNoteOnlyTemplateIDs(among:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 246 |     }
+ 247 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1478:10: note: calls to instance method 'dailyNoteOnlyTemplateIDs(among:)' from outside of its actor context are implicitly asynchronous
+1476 |     }
+1477 | 
+1478 |     func dailyNoteOnlyTemplateIDs(among templates: [TemplateRecord]? = nil) throws -> Set<String> {
+     |          `- note: calls to instance method 'dailyNoteOnlyTemplateIDs(among:)' from outside of its actor context are implicitly asynchronous
+1479 |         try database.read { db in
+1480 |             let records = try templates ?? TemplateRecord.fetchAll(db, sql: "SELECT * FROM templates WHERE \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID=?)", arguments: [spaceID, spaceID])
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:250:36: warning: call to main actor-isolated instance method 'topLevelSummaryCountsByFolder()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 248 |     private nonisolated static func loadOverview(documents: DocumentRepository, folders: FolderRepository,
+ 249 |                                                 templates: TemplateRepository, allSpaces: [SpaceRecord]) throws -> LibraryOverview {
+ 250 |         let counts = try documents.topLevelSummaryCountsByFolder()
+     |                                    `- warning: call to main actor-isolated instance method 'topLevelSummaryCountsByFolder()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 251 |         return try LibraryOverview(
+ 252 |             recent: documents.recentSummaries(),
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:443:10: note: calls to instance method 'topLevelSummaryCountsByFolder()' from outside of its actor context are implicitly asynchronous
+ 441 |     // Home needs counts for every visible folder plus Unsorted. Return them
+ 442 |     // together instead of issuing a synchronous COUNT from each SwiftUI row.
+ 443 |     func topLevelSummaryCountsByFolder() throws -> [String?: Int] {
+     |          `- note: calls to instance method 'topLevelSummaryCountsByFolder()' from outside of its actor context are implicitly asynchronous
+ 444 |         try database.read { db in
+ 445 |             let rows = try Row.fetchAll(db, sql: """
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:252:31: warning: call to main actor-isolated instance method 'recentSummaries(limit:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 250 |         let counts = try documents.topLevelSummaryCountsByFolder()
+ 251 |         return try LibraryOverview(
+ 252 |             recent: documents.recentSummaries(),
+     |                               `- warning: call to main actor-isolated instance method 'recentSummaries(limit:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 253 |             favorites: documents.favoriteSummaries(),
+ 254 |             dailyNotes: documents.allDailyNoteSummaries(),
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:471:10: note: calls to instance method 'recentSummaries(limit:)' from outside of its actor context are implicitly asynchronous
+ 469 |     // are naturally small, so they mirror the existing full-record queries directly
+ 470 |     // rather than paginate.
+ 471 |     func recentSummaries(limit: Int = 12) throws -> [DocumentSummary] {
+     |          `- note: calls to instance method 'recentSummaries(limit:)' from outside of its actor context are implicitly asynchronous
+ 472 |         try database.read { db in
+ 473 |             try DocumentSummary.fetchAll(db, sql: """
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:253:34: warning: call to main actor-isolated instance method 'favoriteSummaries()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 251 |         return try LibraryOverview(
+ 252 |             recent: documents.recentSummaries(),
+ 253 |             favorites: documents.favoriteSummaries(),
+     |                                  `- warning: call to main actor-isolated instance method 'favoriteSummaries()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 254 |             dailyNotes: documents.allDailyNoteSummaries(),
+ 255 |             trashed: documents.trashedSummaries(),
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:496:10: note: calls to instance method 'favoriteSummaries()' from outside of its actor context are implicitly asynchronous
+ 494 |     }
+ 495 | 
+ 496 |     func favoriteSummaries() throws -> [DocumentSummary] {
+     |          `- note: calls to instance method 'favoriteSummaries()' from outside of its actor context are implicitly asynchronous
+ 497 |         try database.read { db in
+ 498 |             try DocumentSummary.fetchAll(db, sql: """
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:254:35: warning: call to main actor-isolated instance method 'allDailyNoteSummaries()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 252 |             recent: documents.recentSummaries(),
+ 253 |             favorites: documents.favoriteSummaries(),
+ 254 |             dailyNotes: documents.allDailyNoteSummaries(),
+     |                                   `- warning: call to main actor-isolated instance method 'allDailyNoteSummaries()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 255 |             trashed: documents.trashedSummaries(),
+ 256 |             documentCount: counts.values.reduce(0, +),
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:485:10: note: calls to instance method 'allDailyNoteSummaries()' from outside of its actor context are implicitly asynchronous
+ 483 |     // All top-level daily notes as summaries (the Daily Notes surface groups them by
+ 484 |     // month/year, so the whole set is needed; it is naturally bounded to one per day).
+ 485 |     func allDailyNoteSummaries() throws -> [DocumentSummary] {
+     |          `- note: calls to instance method 'allDailyNoteSummaries()' from outside of its actor context are implicitly asynchronous
+ 486 |         try database.read { db in
+ 487 |             try DocumentSummary.fetchAll(db, sql: """
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:255:32: warning: call to main actor-isolated instance method 'trashedSummaries()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 253 |             favorites: documents.favoriteSummaries(),
+ 254 |             dailyNotes: documents.allDailyNoteSummaries(),
+ 255 |             trashed: documents.trashedSummaries(),
+     |                                `- warning: call to main actor-isolated instance method 'trashedSummaries()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 256 |             documentCount: counts.values.reduce(0, +),
+ 257 |             documentCountsByFolder: counts,
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:507:10: note: calls to instance method 'trashedSummaries()' from outside of its actor context are implicitly asynchronous
+ 505 |     }
+ 506 | 
+ 507 |     func trashedSummaries() throws -> [DocumentSummary] {
+     |          `- note: calls to instance method 'trashedSummaries()' from outside of its actor context are implicitly asynchronous
+ 508 |         try database.read { db in
+ 509 |             try DocumentSummary.fetchAll(db, sql: """
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:261:30: warning: call to main actor-isolated instance method 'all()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 259 |                 $0.sortOrder == $1.sortOrder ? $0.updatedAt > $1.updatedAt : $0.sortOrder < $1.sortOrder
+ 260 |             },
+ 261 |             folders: folders.all(),
+     |                              `- warning: call to main actor-isolated instance method 'all()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 262 |             templates: templates.all(),
+ 263 |             templateDocuments: templates.previewDocuments()
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1159:10: note: calls to instance method 'all()' from outside of its actor context are implicitly asynchronous
+1157 |     }
+1158 | 
+1159 |     func all() throws -> [FolderRecord] {
+     |          `- note: calls to instance method 'all()' from outside of its actor context are implicitly asynchronous
+1160 |         try database.read { db in
+1161 |             try FolderRecord.fetchAll(
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:262:34: warning: call to main actor-isolated instance method 'all()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 260 |             },
+ 261 |             folders: folders.all(),
+ 262 |             templates: templates.all(),
+     |                                  `- warning: call to main actor-isolated instance method 'all()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 263 |             templateDocuments: templates.previewDocuments()
+ 264 |         )
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1301:10: note: calls to instance method 'all()' from outside of its actor context are implicitly asynchronous
+1299 |     }
+1300 | 
+1301 |     func all() throws -> [TemplateRecord] {
+     |          `- note: calls to instance method 'all()' from outside of its actor context are implicitly asynchronous
+1302 |         try database.read { db in
+1303 |             try TemplateRecord.fetchAll(
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:263:42: warning: call to main actor-isolated instance method 'previewDocuments()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 261 |             folders: folders.all(),
+ 262 |             templates: templates.all(),
+ 263 |             templateDocuments: templates.previewDocuments()
+     |                                          `- warning: call to main actor-isolated instance method 'previewDocuments()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 264 |         )
+ 265 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1323:10: note: calls to instance method 'previewDocuments()' from outside of its actor context are implicitly asynchronous
+1321 |     }
+1322 | 
+1323 |     func previewDocuments() throws -> [String: DocumentRecord] {
+     |          `- note: calls to instance method 'previewDocuments()' from outside of its actor context are implicitly asynchronous
+1324 |         try database.read { db in
+1325 |             let documents = try DocumentRecord.fetchAll(db, sql: """
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:856:28: warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 854 |             let lookup = Task.detached(priority: .userInitiated) {
+ 855 |                 let repository = DocumentRepository(database: database)
+ 856 |                 repository.spaceID = spaceID ?? "$unavailable"
+     |                            |- warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+     |                            `- note: consider declaring an isolated method on 'MainActor' to perform the mutation
+ 857 |                 return try repository.document(id: id)
+ 858 |             }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:70:9: note: mutation of this property is only permitted within the actor
+  68 | final class DocumentRepository: @unchecked Sendable {
+  69 |     private let database: AppDatabase
+  70 |     var spaceID: String?
+     |         `- note: mutation of this property is only permitted within the actor
+  71 | 
+  72 |     init(database: AppDatabase) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:855:34: warning: main actor-isolated initializer 'init(database:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 853 |             let lookupStarted = trace?.event("document-lookup-start")
+ 854 |             let lookup = Task.detached(priority: .userInitiated) {
+ 855 |                 let repository = DocumentRepository(database: database)
+     |                                  `- warning: main actor-isolated initializer 'init(database:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 856 |                 repository.spaceID = spaceID ?? "$unavailable"
+ 857 |                 return try repository.document(id: id)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:857:39: warning: main actor-isolated instance method 'document(id:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 855 |                 let repository = DocumentRepository(database: database)
+ 856 |                 repository.spaceID = spaceID ?? "$unavailable"
+ 857 |                 return try repository.document(id: id)
+     |                                       `- warning: main actor-isolated instance method 'document(id:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 858 |             }
+ 859 |             do {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:946:64: warning: main actor-isolated instance method 'markOpened(id:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 944 |             trace?.event("navigation-selected", documentOpeningTraceState, since: started)
+ 945 |             let documents = documents, documentID = id
+ 946 |             Task.detached(priority: .utility) { try? documents.markOpened(id: documentID) }
+     |                                                                `- warning: main actor-isolated instance method 'markOpened(id:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 947 |         }
+ 948 |         if model.session.isPresentationReady, model.session.hasLoadedDocument(id) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/PadWorkspaceModel.swift:165:52: warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 68 | }
+ 69 | 
+ 70 | struct PadWorkspaceLocation: Equatable {
+    |        `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+ 71 |     var destination: PadWorkspaceDestination = .library(.allDocuments)
+ 72 |     var folderID: String?
+    :
+163 |     }
+164 | 
+165 |     func newTab(_ location: PadWorkspaceLocation = PadWorkspaceLocation(), openingTrace: PennedDocumentOpenTrace? = nil) async throws {
+    |                                                    `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+166 |         try await transition(openingTrace: openingTrace) {
+167 |             try self.validate(location)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Attachments/AttachmentMedia.swift:286:38: warning: reference to captured var 'self' in concurrently-executing code; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+284 |             }
+285 |             QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] result, _ in
+286 |                 Task { @MainActor in self?.finish(result?.cgImage) }
+    |                                      `- warning: reference to captured var 'self' in concurrently-executing code; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+287 |             }
+288 |         }
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/NestedPageThumbnail.swift:18:74: warning: main actor-isolated conformance of 'DocumentAppearance' to 'Equatable' cannot be used in nonisolated context; this is an error in the Swift 6 language mode [#IsolatedConformances]
+ 16 | 
+ 17 |     static func == (lhs: Self, rhs: Self) -> Bool {
+ 18 |         lhs.json == rhs.json && lhs.title == rhs.title && lhs.appearance == rhs.appearance &&
+    |                                                                          `- warning: main actor-isolated conformance of 'DocumentAppearance' to 'Equatable' cannot be used in nonisolated context; this is an error in the Swift 6 language mode [#IsolatedConformances]
+ 19 |         lhs.size == rhs.size && lhs.isCardSheet == rhs.isCardSheet && lhs.isStylePreview == rhs.isStylePreview &&
+ 20 |         lhs.cover == rhs.cover && lhs.attachmentStore === rhs.attachmentStore && lhs.includesCover == rhs.includesCover &&
+
+[#IsolatedConformances]: <https://docs.swift.org/compiler/documentation/diagnostics/isolated-conformances>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/CodeBlockTextEditor.swift:20:22: warning: 'nonisolated' cannot be applied to mutable stored properties; this is an error in the Swift 6 language mode
+ 18 |     static let shared = CodeSyntaxEngine()
+ 19 |     private let queue = DispatchQueue(label: "penned.code-syntax", qos: .userInitiated)
+ 20 |     private lazy var grammar: JSValue? = {
+    |                      `- warning: 'nonisolated' cannot be applied to mutable stored properties; this is an error in the Swift 6 language mode
+ 21 |         guard let url = CodeBlockCatalog.asset("code-syntax", extension: "js"),
+ 22 |               let script = try? String(contentsOf: url, encoding: .utf8), let context = JSContext() else { return nil }
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Clipper/WebClipperCoordinator.swift:65:21: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+ 63 |             do {
+ 64 |                 let (spaces, folders, tags) = try await Task.detached(priority: .utility) {
+ 65 |                     try (SpaceRepository(database: database).all(), FolderRepository(database: database).all(),
+    |                     |    |                                          |- note: calls to instance method 'all()' from outside of its actor context are implicitly asynchronous
+    |                     |    |                                          `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+    |                     |    |- note: calls to instance method 'all()' from outside of its actor context are implicitly asynchronous
+    |                     |    `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+    |                     `- warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+ 66 |                          DocumentTagRepository(database: database).catalogue())
+    |                          |- note: calls to instance method 'catalogue()' from outside of its actor context are implicitly asynchronous
+    |                          `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+ 67 |                 }.value
+ 68 |                 try Task.checkCancellation()
+/Users/asteriasmoons/Desktop/Vellix/Vellix/VellixTests/LibraryOverviewTestSupport.swift:2:18: warning: file 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import [#ModuleSelfImport]
+ 1 | import Foundation
+ 2 | @testable import Vellix
+   |                  `- warning: file 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import [#ModuleSelfImport]
+ 3 | 
+ 4 | // The library no longer materializes every top-level document in `overview.all`;
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:236:40: warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 89 | 
+ 90 |     @discardableResult
+ 91 |     static func reconcile(in db: Database) throws -> Bool {
+    |                 `- note: add '@MainActor' to make static method 'reconcile(in:)' part of global actor 'MainActor'
+ 92 |         // Older migrations can run before the reference table exists.
+ 93 |         guard try db.tableExists("documentTaskReferences") else { return false }
+    :
+234 |                 document.revision += 1
+235 |                 try document.update(db)
+236 |                 try DocumentRepository.upsertSearchIndex(document, in: db)
+    |                                        `- warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+237 |                 changed = true
+238 |             }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1073:17: note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1071 |     }
+1072 | 
+1073 |     static func upsertSearchIndex(_ record: DocumentRecord, in db: Database) throws {
+     |                 `- note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1074 |         try deleteSearchIndex(id: record.id, in: db)
+1075 |         let templateID = record.templateID ?? TemplateRepository.documentTemplateID(record.id)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:346:48: warning: main actor-isolated property 'trimmedNonEmpty' can not be referenced from a nonisolated context
+339 |     static func isDetail(_ documentID: String) -> Bool { documentID.hasPrefix("vellix-task-page:") && isManaged(documentID) }
+340 | 
+341 |     static func reconcile(sourceID: String, in db: Database) throws {
+    |                 `- note: add '@MainActor' to make static method 'reconcile(sourceID:in:)' part of global actor 'MainActor'
+342 |         guard let source = try DocumentRecord.fetchOne(db, key: sourceID) else { return }
+343 |         let texts = DocumentTaskIndex.texts(in: source.tipTapJSON)
+344 |         for context in try DocumentTaskIndex.contexts(in: source.tipTapJSON) {
+345 |             guard let task = context.metadata else { continue }
+346 |             let text = texts[context.blockID]?.trimmedNonEmpty ?? "Untitled Task"
+    |                                                `- warning: main actor-isolated property 'trimmedNonEmpty' can not be referenced from a nonisolated context
+347 |             let detail = detailID(task.id), history = historyID(task.id)
+348 |             let reference: [String: Any] = ["type": "pageReference", "attrs": ["id": task.id + "-history-link", "documentID": history]]
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1760:9: note: property declared here
+1758 | 
+1759 | extension String {
+1760 |     var trimmedNonEmpty: String? {
+     |         `- note: property declared here
+1761 |         let value = trimmingCharacters(in: .whitespacesAndNewlines)
+1762 |         return value.isEmpty ? nil : value
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:420:32: warning: call to main actor-isolated instance method 'encodedJSON()' in a synchronous nonisolated context [#ActorIsolatedCall]
+394 |     }
+395 | 
+396 |     private static func save(id: String, title: String, parentID: String, content: [[String: Any]], task: DocumentTaskMetadata, taskText: String, source: DocumentRecord, in db: Database) throws {
+    |                         `- note: add '@MainActor' to make static method 'save(id:title:parentID:content:task:taskText:source:in:)' part of global actor 'MainActor'
+397 |         let old = try DocumentRecord.fetchOne(db, key: id)
+398 |         let oldObject = old.map { TipTapContentAnalyzer.documentObject(from: $0.tipTapJSON) }
+    :
+418 |         var appearance = source.appearance
+419 |         appearance.showsCover = false
+420 |         let style = appearance.encodedJSON()
+    |                                `- warning: call to main actor-isolated instance method 'encodedJSON()' in a synchronous nonisolated context [#ActorIsolatedCall]
+421 |         let savedTitle = old.map { isDetail(id) && $0.title == (projection["sourceTitle"] as? String) ? title : $0.title } ?? title
+422 |         if let old, old.title == savedTitle, old.tipTapJSON == analysis.canonicalJSON, old.parentDocumentID == parentID,
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentAppearance.swift:412:10: note: calls to instance method 'encodedJSON()' from outside of its actor context are implicitly asynchronous
+410 |     }
+411 | 
+412 |     func encodedJSON() -> String? {
+    |          `- note: calls to instance method 'encodedJSON()' from outside of its actor context are implicitly asynchronous
+413 |         guard let data = try? JSONEncoder().encode(self) else {
+414 |             return nil
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:439:32: warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+394 |     }
+395 | 
+396 |     private static func save(id: String, title: String, parentID: String, content: [[String: Any]], task: DocumentTaskMetadata, taskText: String, source: DocumentRecord, in db: Database) throws {
+    |                         `- note: add '@MainActor' to make static method 'save(id:title:parentID:content:task:taskText:source:in:)' part of global actor 'MainActor'
+397 |         let old = try DocumentRecord.fetchOne(db, key: id)
+398 |         let oldObject = old.map { TipTapContentAnalyzer.documentObject(from: $0.tipTapJSON) }
+    :
+437 |         if old != nil { record.revision += 1 }
+438 |         try record.save(db)
+439 |         try DocumentRepository.upsertSearchIndex(record, in: db)
+    |                                `- warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+440 |     }
+441 | }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1073:17: note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1071 |     }
+1072 | 
+1073 |     static func upsertSearchIndex(_ record: DocumentRecord, in db: Database) throws {
+     |                 `- note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1074 |         try deleteSearchIndex(id: record.id, in: db)
+1075 |         let templateID = record.templateID ?? TemplateRepository.documentTemplateID(record.id)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/TaskNotificationsManager.swift:93:82: warning: main actor-isolated instance method 'all(includeTemplates:includeInactive:includeText:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 91 |     private func loadTasks(includeText: Bool = true) async throws -> [DocumentTaskRecord] {
+ 92 |         let repository = self.repository
+ 93 |         let tasks = try await Task.detached(priority: .utility) { try repository.all(includeText: includeText) }.value
+    |                                                                                  `- warning: main actor-isolated instance method 'all(includeTemplates:includeInactive:includeText:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 94 |         try Task.checkCancellation()
+ 95 |         return tasks
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#ModuleSelfImport]: <https://docs.swift.org/compiler/documentation/diagnostics/module-self-import>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Templates/TemplateGalleryCloudStore.swift:61:25: warning: call to main actor-isolated static method 'parseTimestamp' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 59 |         value.dateDecodingStrategy = .custom { decoder in
+ 60 |             let container = try decoder.singleValueContainer()
+ 61 |             return Self.parseTimestamp(try container.decode(String.self))
+    |                         `- warning: call to main actor-isolated static method 'parseTimestamp' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 62 |         }
+ 63 |         return value
+    :
+ 68 |     /// rejects. These dates are only used for sorting/display, so parsing never
+ 69 |     /// fails the whole catalog: on an unrecognized value we fall back to a sentinel.
+ 70 |     static func parseTimestamp(_ raw: String) -> Date {
+    |                 `- note: calls to static method 'parseTimestamp' from outside of its actor context are implicitly asynchronous
+ 71 |         let iso = ISO8601DateFormatter()
+ 72 |         for options in [[.withInternetDateTime, .withFractionalSeconds], [.withInternetDateTime]] as [ISO8601DateFormatter.Options] {
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/VellixTests/LibraryOverviewTestSupport.swift:2:18: warning: file 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import [#ModuleSelfImport]
+ 1 | import Foundation
+ 2 | @testable import Vellix
+   |                  `- warning: file 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import [#ModuleSelfImport]
+ 3 | 
+ 4 | // The library no longer materializes every top-level document in `overview.all`;
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/PadWorkspaceModel.swift:165:52: warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 68 | }
+ 69 | 
+ 70 | struct PadWorkspaceLocation: Equatable {
+    |        `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+ 71 |     var destination: PadWorkspaceDestination = .library(.allDocuments)
+ 72 |     var folderID: String?
+    :
+163 |     }
+164 | 
+165 |     func newTab(_ location: PadWorkspaceLocation = PadWorkspaceLocation(), openingTrace: PennedDocumentOpenTrace? = nil) async throws {
+    |                                                    `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+166 |         try await transition(openingTrace: openingTrace) {
+167 |             try self.validate(location)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:16:38: warning: main actor-isolated property 'userInterfaceIdiom' can not be referenced from a nonisolated context
+ 14 |     static let deviceTag: String = {
+ 15 |         #if canImport(UIKit)
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+    |                                      `- warning: main actor-isolated property 'userInterfaceIdiom' can not be referenced from a nonisolated context
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:61:52: note: property declared here
+59 | @property(nonatomic,readonly,getter=isMultitaskingSupported) BOOL multitaskingSupported API_AVAILABLE(ios(4.0));
+60 | 
+61 | @property(nonatomic,readonly) UIUserInterfaceIdiom userInterfaceIdiom API_AVAILABLE(ios(3.2));
+   |                                                    `- note: property declared here
+62 | 
+63 | - (void)playInputClick API_AVAILABLE(ios(4.2)) API_UNAVAILABLE(visionos);  // Plays a click only if an enabling input view is on-screen and user has enabled input clicks.
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:16:30: warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 14 |     static let deviceTag: String = {
+ 15 |         #if canImport(UIKit)
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+    |                              `- warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:37:49: note: class property declared here
+35 | @interface UIDevice : NSObject
+36 | 
+37 | @property(class, nonatomic, readonly) UIDevice *currentDevice;
+   |                                                 `- note: class property declared here
+38 | 
+39 | @property(nonatomic,readonly,strong) NSString    *name;              // Synonym for model. Prior to iOS 16, user-assigned device name (e.g. @"My iPhone").
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:18:44: warning: main actor-isolated property 'systemVersion' can not be referenced from a nonisolated context
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+    |                                            `- warning: main actor-isolated property 'systemVersion' can not be referenced from a nonisolated context
+ 19 |         #else
+ 20 |         return "mac"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:43:51: note: property declared here
+41 | @property(nonatomic,readonly,strong) NSString    *localizedModel;    // localized version of model
+42 | @property(nonatomic,readonly,strong) NSString    *systemName;        // e.g. @"iOS"
+43 | @property(nonatomic,readonly,strong) NSString    *systemVersion;     // e.g. @"4.0"
+   |                                                   `- note: property declared here
+44 | @property(nonatomic,readonly) UIDeviceOrientation orientation API_UNAVAILABLE(tvos, visionos);       // return current device orientation.  this will return UIDeviceOrientationUnknown unless device orientation notifications are being generated.
+45 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:18:36: warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+    |                                    `- warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 19 |         #else
+ 20 |         return "mac"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:37:49: note: class property declared here
+35 | @interface UIDevice : NSObject
+36 | 
+37 | @property(class, nonatomic, readonly) UIDevice *currentDevice;
+   |                                                 `- note: class property declared here
+38 | 
+39 | @property(nonatomic,readonly,strong) NSString    *name;              // Synonym for model. Prior to iOS 16, user-assigned device name (e.g. @"My iPhone").
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/CodeBlockTextEditor.swift:20:22: warning: 'nonisolated' cannot be applied to mutable stored properties; this is an error in the Swift 6 language mode
+ 18 |     static let shared = CodeSyntaxEngine()
+ 19 |     private let queue = DispatchQueue(label: "penned.code-syntax", qos: .userInitiated)
+ 20 |     private lazy var grammar: JSValue? = {
+    |                      `- warning: 'nonisolated' cannot be applied to mutable stored properties; this is an error in the Swift 6 language mode
+ 21 |         guard let url = CodeBlockCatalog.asset("code-syntax", extension: "js"),
+ 22 |               let script = try? String(contentsOf: url, encoding: .utf8), let context = JSContext() else { return nil }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentWordExport.swift:17:21: warning: call to main actor-isolated static method 'xml' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 15 |     private var baseSize = 30
+ 16 |     private var listDefinitions: [String] = []
+ 17 |     private let x = DocumentExportNames.xml
+    |                     `- warning: call to main actor-isolated static method 'xml' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 18 | 
+ 19 |     init(snapshot: DocumentExportSnapshot, settings: DocumentExportSettings) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentExportModels.swift:108:17: note: calls to static method 'xml' from outside of its actor context are implicitly asynchronous
+106 |         return String((name.isEmpty || name == "." || name == ".." ? "Document" : name).prefix(100))
+107 |     }
+108 |     static func xml(_ value: String) -> String {
+    |                 `- note: calls to static method 'xml' from outside of its actor context are implicitly asynchronous
+109 |         String(String.UnicodeScalarView(value.unicodeScalars.filter { scalar in
+110 |             let n = scalar.value
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#ModuleSelfImport]: <https://docs.swift.org/compiler/documentation/diagnostics/module-self-import>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncEngine.swift:423:38: warning: call to main actor-isolated instance method 'makeRecord(_:attachments:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+421 |                 let records = try batchItems.filter { !blocked.contains($0.row.recordName) }.map { item in
+422 |                     try Task.checkCancellation()
+423 |                     return try store.makeRecord(item, attachments: attachments)
+    |                                      `- warning: call to main actor-isolated instance method 'makeRecord(_:attachments:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+424 |                 }
+425 |                 return (records, blocked)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncRecords.swift:6:10: note: calls to instance method 'makeRecord(_:attachments:)' from outside of its actor context are implicitly asynchronous
+  4 | 
+  5 | extension LibrarySyncStore {
+  6 |     func makeRecord(_ item: LibrarySyncItem, attachments: AttachmentStore) throws -> CKRecord {
+    |          `- note: calls to instance method 'makeRecord(_:attachments:)' from outside of its actor context are implicitly asynchronous
+  7 |         let id = CKRecord.ID(recordName: item.row.recordName, zoneID: zoneID)
+  8 |         let record = try item.systemFields.map(Self.restoredRecord) ?? CKRecord(recordType: "PennedLibraryRecord", recordID: id)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncEngine.swift:634:27: warning: call to main actor-isolated instance method 'stageIncoming(_:attachments:source:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+632 |             for record in records {
+633 |                 try Task.checkCancellation()
+634 |                 try store.stageIncoming(record, attachments: attachments, source: source)
+    |                           `- warning: call to main actor-isolated instance method 'stageIncoming(_:attachments:source:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+635 |             }
+636 |             for recordID in deletions {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncRecords.swift:59:10: note: calls to instance method 'stageIncoming(_:attachments:source:)' from outside of its actor context are implicitly asynchronous
+ 57 |     }
+ 58 | 
+ 59 |     func stageIncoming(_ record: CKRecord, attachments: AttachmentStore, source: String = "fetch") throws {
+    |          `- note: calls to instance method 'stageIncoming(_:attachments:source:)' from outside of its actor context are implicitly asynchronous
+ 60 |         guard record.recordID.zoneID == zoneID, record.recordType == "PennedLibraryRecord",
+ 61 |               record["libraryID"] as? String == libraryID,
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncEngine.swift:638:27: warning: call to main actor-isolated instance method 'stagePhysicalDeletion' in a synchronous nonisolated context [#ActorIsolatedCall]
+636 |             for recordID in deletions {
+637 |                 try Task.checkCancellation()
+638 |                 try store.stagePhysicalDeletion(recordID)
+    |                           `- warning: call to main actor-isolated instance method 'stagePhysicalDeletion' in a synchronous nonisolated context [#ActorIsolatedCall]
+639 |             }
+640 |         }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncRecords.swift:114:10: note: calls to instance method 'stagePhysicalDeletion' from outside of its actor context are implicitly asynchronous
+112 |     }
+113 | 
+114 |     func stagePhysicalDeletion(_ id: CKRecord.ID) throws {
+    |          `- note: calls to instance method 'stagePhysicalDeletion' from outside of its actor context are implicitly asynchronous
+115 |         guard id.zoneID == zoneID else { throw LibraryError.wrongOwner }
+116 |         if PennedSyncTrace.isWatched(id.recordName) { PennedSyncTrace.record("cloud.physicalDeletion") }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncStore.swift:244:25: warning: call to main actor-isolated instance method 'removeDocumentBaseline(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+242 |             if record.recordID.recordName.hasPrefix("documents-") {
+243 |                 if (record["deleted"] as? NSNumber)?.boolValue == true {
+244 |                     try removeDocumentBaseline(record.recordID.recordName, in: db)
+    |                         `- warning: call to main actor-isolated instance method 'removeDocumentBaseline(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+245 |                 } else {
+246 |                     // The journal may already contain the next edit. Only trust a
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncImport.swift:566:10: note: calls to instance method 'removeDocumentBaseline(_:in:)' from outside of its actor context are implicitly asynchronous
+564 |     }
+565 | 
+566 |     func removeDocumentBaseline(_ recordName: String, in db: Database) throws {
+    |          `- note: calls to instance method 'removeDocumentBaseline(_:in:)' from outside of its actor context are implicitly asynchronous
+567 |         try db.execute(sql: "DELETE FROM librarySyncBaselines WHERE libraryID=? AND recordName=?", arguments: [libraryID, recordName])
+568 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncStore.swift:257:29: warning: call to main actor-isolated instance method 'saveDocumentBaseline(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+255 |                        row.table == "documents", row.recordName == record.recordID.recordName,
+256 |                        row.values["tipTapJSON"]?.text != nil {
+257 |                         try saveDocumentBaseline(row, in: db)
+    |                             `- warning: call to main actor-isolated instance method 'saveDocumentBaseline(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+258 |                     }
+259 |                 }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncImport.swift:559:10: note: calls to instance method 'saveDocumentBaseline(_:in:)' from outside of its actor context are implicitly asynchronous
+557 |     }
+558 | 
+559 |     func saveDocumentBaseline(_ row: SyncRow, in db: Database) throws {
+    |          `- note: calls to instance method 'saveDocumentBaseline(_:in:)' from outside of its actor context are implicitly asynchronous
+560 |         try db.execute(sql: """
+561 |             INSERT INTO librarySyncBaselines(libraryID,recordName,payload) VALUES (?,?,?)
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/VellixTests/LibraryOverviewTestSupport.swift:2:18: warning: file 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import [#ModuleSelfImport]
+ 1 | import Foundation
+ 2 | @testable import Vellix
+   |                  `- warning: file 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import [#ModuleSelfImport]
+ 3 | 
+ 4 | // The library no longer materializes every top-level document in `overview.all`;
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/PadWorkspaceModel.swift:165:52: warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 68 | }
+ 69 | 
+ 70 | struct PadWorkspaceLocation: Equatable {
+    |        `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+ 71 |     var destination: PadWorkspaceDestination = .library(.allDocuments)
+ 72 |     var folderID: String?
+    :
+163 |     }
+164 | 
+165 |     func newTab(_ location: PadWorkspaceLocation = PadWorkspaceLocation(), openingTrace: PennedDocumentOpenTrace? = nil) async throws {
+    |                                                    `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+166 |         try await transition(openingTrace: openingTrace) {
+167 |             try self.validate(location)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:16:38: warning: main actor-isolated property 'userInterfaceIdiom' can not be referenced from a nonisolated context
+ 14 |     static let deviceTag: String = {
+ 15 |         #if canImport(UIKit)
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+    |                                      `- warning: main actor-isolated property 'userInterfaceIdiom' can not be referenced from a nonisolated context
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:61:52: note: property declared here
+59 | @property(nonatomic,readonly,getter=isMultitaskingSupported) BOOL multitaskingSupported API_AVAILABLE(ios(4.0));
+60 | 
+61 | @property(nonatomic,readonly) UIUserInterfaceIdiom userInterfaceIdiom API_AVAILABLE(ios(3.2));
+   |                                                    `- note: property declared here
+62 | 
+63 | - (void)playInputClick API_AVAILABLE(ios(4.2)) API_UNAVAILABLE(visionos);  // Plays a click only if an enabling input view is on-screen and user has enabled input clicks.
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:16:30: warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 14 |     static let deviceTag: String = {
+ 15 |         #if canImport(UIKit)
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+    |                              `- warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:37:49: note: class property declared here
+35 | @interface UIDevice : NSObject
+36 | 
+37 | @property(class, nonatomic, readonly) UIDevice *currentDevice;
+   |                                                 `- note: class property declared here
+38 | 
+39 | @property(nonatomic,readonly,strong) NSString    *name;              // Synonym for model. Prior to iOS 16, user-assigned device name (e.g. @"My iPhone").
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:18:44: warning: main actor-isolated property 'systemVersion' can not be referenced from a nonisolated context
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+    |                                            `- warning: main actor-isolated property 'systemVersion' can not be referenced from a nonisolated context
+ 19 |         #else
+ 20 |         return "mac"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:43:51: note: property declared here
+41 | @property(nonatomic,readonly,strong) NSString    *localizedModel;    // localized version of model
+42 | @property(nonatomic,readonly,strong) NSString    *systemName;        // e.g. @"iOS"
+43 | @property(nonatomic,readonly,strong) NSString    *systemVersion;     // e.g. @"4.0"
+   |                                                   `- note: property declared here
+44 | @property(nonatomic,readonly) UIDeviceOrientation orientation API_UNAVAILABLE(tvos, visionos);       // return current device orientation.  this will return UIDeviceOrientationUnknown unless device orientation notifications are being generated.
+45 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:18:36: warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+    |                                    `- warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 19 |         #else
+ 20 |         return "mac"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:37:49: note: class property declared here
+35 | @interface UIDevice : NSObject
+36 | 
+37 | @property(class, nonatomic, readonly) UIDevice *currentDevice;
+   |                                                 `- note: class property declared here
+38 | 
+39 | @property(nonatomic,readonly,strong) NSString    *name;              // Synonym for model. Prior to iOS 16, user-assigned device name (e.g. @"My iPhone").
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/CodeBlockTextEditor.swift:20:22: warning: 'nonisolated' cannot be applied to mutable stored properties; this is an error in the Swift 6 language mode
+ 18 |     static let shared = CodeSyntaxEngine()
+ 19 |     private let queue = DispatchQueue(label: "penned.code-syntax", qos: .userInitiated)
+ 20 |     private lazy var grammar: JSValue? = {
+    |                      `- warning: 'nonisolated' cannot be applied to mutable stored properties; this is an error in the Swift 6 language mode
+ 21 |         guard let url = CodeBlockCatalog.asset("code-syntax", extension: "js"),
+ 22 |               let script = try? String(contentsOf: url, encoding: .utf8), let context = JSContext() else { return nil }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentWordExport.swift:17:21: warning: call to main actor-isolated static method 'xml' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 15 |     private var baseSize = 30
+ 16 |     private var listDefinitions: [String] = []
+ 17 |     private let x = DocumentExportNames.xml
+    |                     `- warning: call to main actor-isolated static method 'xml' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 18 | 
+ 19 |     init(snapshot: DocumentExportSnapshot, settings: DocumentExportSettings) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentExportModels.swift:108:17: note: calls to static method 'xml' from outside of its actor context are implicitly asynchronous
+106 |         return String((name.isEmpty || name == "." || name == ".." ? "Document" : name).prefix(100))
+107 |     }
+108 |     static func xml(_ value: String) -> String {
+    |                 `- note: calls to static method 'xml' from outside of its actor context are implicitly asynchronous
+109 |         String(String.UnicodeScalarView(value.unicodeScalars.filter { scalar in
+110 |             let n = scalar.value
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#ModuleSelfImport]: <https://docs.swift.org/compiler/documentation/diagnostics/module-self-import>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncEngine.swift:423:38: warning: call to main actor-isolated instance method 'makeRecord(_:attachments:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+421 |                 let records = try batchItems.filter { !blocked.contains($0.row.recordName) }.map { item in
+422 |                     try Task.checkCancellation()
+423 |                     return try store.makeRecord(item, attachments: attachments)
+    |                                      `- warning: call to main actor-isolated instance method 'makeRecord(_:attachments:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+424 |                 }
+425 |                 return (records, blocked)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncRecords.swift:6:10: note: calls to instance method 'makeRecord(_:attachments:)' from outside of its actor context are implicitly asynchronous
+  4 | 
+  5 | extension LibrarySyncStore {
+  6 |     func makeRecord(_ item: LibrarySyncItem, attachments: AttachmentStore) throws -> CKRecord {
+    |          `- note: calls to instance method 'makeRecord(_:attachments:)' from outside of its actor context are implicitly asynchronous
+  7 |         let id = CKRecord.ID(recordName: item.row.recordName, zoneID: zoneID)
+  8 |         let record = try item.systemFields.map(Self.restoredRecord) ?? CKRecord(recordType: "PennedLibraryRecord", recordID: id)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncEngine.swift:634:27: warning: call to main actor-isolated instance method 'stageIncoming(_:attachments:source:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+632 |             for record in records {
+633 |                 try Task.checkCancellation()
+634 |                 try store.stageIncoming(record, attachments: attachments, source: source)
+    |                           `- warning: call to main actor-isolated instance method 'stageIncoming(_:attachments:source:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+635 |             }
+636 |             for recordID in deletions {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncRecords.swift:59:10: note: calls to instance method 'stageIncoming(_:attachments:source:)' from outside of its actor context are implicitly asynchronous
+ 57 |     }
+ 58 | 
+ 59 |     func stageIncoming(_ record: CKRecord, attachments: AttachmentStore, source: String = "fetch") throws {
+    |          `- note: calls to instance method 'stageIncoming(_:attachments:source:)' from outside of its actor context are implicitly asynchronous
+ 60 |         guard record.recordID.zoneID == zoneID, record.recordType == "PennedLibraryRecord",
+ 61 |               record["libraryID"] as? String == libraryID,
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncEngine.swift:638:27: warning: call to main actor-isolated instance method 'stagePhysicalDeletion' in a synchronous nonisolated context [#ActorIsolatedCall]
+636 |             for recordID in deletions {
+637 |                 try Task.checkCancellation()
+638 |                 try store.stagePhysicalDeletion(recordID)
+    |                           `- warning: call to main actor-isolated instance method 'stagePhysicalDeletion' in a synchronous nonisolated context [#ActorIsolatedCall]
+639 |             }
+640 |         }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncRecords.swift:114:10: note: calls to instance method 'stagePhysicalDeletion' from outside of its actor context are implicitly asynchronous
+112 |     }
+113 | 
+114 |     func stagePhysicalDeletion(_ id: CKRecord.ID) throws {
+    |          `- note: calls to instance method 'stagePhysicalDeletion' from outside of its actor context are implicitly asynchronous
+115 |         guard id.zoneID == zoneID else { throw LibraryError.wrongOwner }
+116 |         if PennedSyncTrace.isWatched(id.recordName) { PennedSyncTrace.record("cloud.physicalDeletion") }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncStore.swift:244:25: warning: call to main actor-isolated instance method 'removeDocumentBaseline(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+242 |             if record.recordID.recordName.hasPrefix("documents-") {
+243 |                 if (record["deleted"] as? NSNumber)?.boolValue == true {
+244 |                     try removeDocumentBaseline(record.recordID.recordName, in: db)
+    |                         `- warning: call to main actor-isolated instance method 'removeDocumentBaseline(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+245 |                 } else {
+246 |                     // The journal may already contain the next edit. Only trust a
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncImport.swift:566:10: note: calls to instance method 'removeDocumentBaseline(_:in:)' from outside of its actor context are implicitly asynchronous
+564 |     }
+565 | 
+566 |     func removeDocumentBaseline(_ recordName: String, in db: Database) throws {
+    |          `- note: calls to instance method 'removeDocumentBaseline(_:in:)' from outside of its actor context are implicitly asynchronous
+567 |         try db.execute(sql: "DELETE FROM librarySyncBaselines WHERE libraryID=? AND recordName=?", arguments: [libraryID, recordName])
+568 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncStore.swift:257:29: warning: call to main actor-isolated instance method 'saveDocumentBaseline(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+255 |                        row.table == "documents", row.recordName == record.recordID.recordName,
+256 |                        row.values["tipTapJSON"]?.text != nil {
+257 |                         try saveDocumentBaseline(row, in: db)
+    |                             `- warning: call to main actor-isolated instance method 'saveDocumentBaseline(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+258 |                     }
+259 |                 }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Sync/LibrarySyncImport.swift:559:10: note: calls to instance method 'saveDocumentBaseline(_:in:)' from outside of its actor context are implicitly asynchronous
+557 |     }
+558 | 
+559 |     func saveDocumentBaseline(_ row: SyncRow, in db: Database) throws {
+    |          `- note: calls to instance method 'saveDocumentBaseline(_:in:)' from outside of its actor context are implicitly asynchronous
+560 |         try db.execute(sql: """
+561 |             INSERT INTO librarySyncBaselines(libraryID,recordName,payload) VALUES (?,?,?)
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Templates/TemplateGalleryCloudStore.swift:61:25: warning: call to main actor-isolated static method 'parseTimestamp' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 59 |         value.dateDecodingStrategy = .custom { decoder in
+ 60 |             let container = try decoder.singleValueContainer()
+ 61 |             return Self.parseTimestamp(try container.decode(String.self))
+    |                         `- warning: call to main actor-isolated static method 'parseTimestamp' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 62 |         }
+ 63 |         return value
+    :
+ 68 |     /// rejects. These dates are only used for sorting/display, so parsing never
+ 69 |     /// fails the whole catalog: on an unrecognized value we fall back to a sentinel.
+ 70 |     static func parseTimestamp(_ raw: String) -> Date {
+    |                 `- note: calls to static method 'parseTimestamp' from outside of its actor context are implicitly asynchronous
+ 71 |         let iso = ISO8601DateFormatter()
+ 72 |         for options in [[.withInternetDateTime, .withFractionalSeconds], [.withInternetDateTime]] as [ISO8601DateFormatter.Options] {
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/InlineTextColor.swift:140:27: warning: '+' was deprecated in iOS 26.0: Use string interpolation on `Text` instead: `Text("Hello \(name)")` [#DeprecatedDeclaration]
+138 |             }
+139 |             if let explicitColor { text = explicitColor.applying(to: text) }
+140 |             return result + text
+    |                           `- warning: '+' was deprecated in iOS 26.0: Use string interpolation on `Text` instead: `Text("Hello \(name)")` [#DeprecatedDeclaration]
+141 |         }
+142 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Accounts/LibraryWorkspace.swift:105:35: warning: main actor-isolated instance method 'hasUnownedLocalContent()' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+103 |             if assigningLocalLibrary && !useLocal {
+104 |                 claimLocalContent = try await Task.detached(priority: .userInitiated) {
+105 |                     try libraries.hasUnownedLocalContent()
+    |                                   `- warning: main actor-isolated instance method 'hasUnownedLocalContent()' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+106 |                 }.value
+107 |             } else {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:231:22: warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 229 |     nonisolated static func loadBootstrapState(database: AppDatabase, preferredSpaceID: String?,
+ 230 |                                                createsDefaultSpace: Bool) throws -> BootstrapState {
+ 231 |         let spaces = SpaceRepository(database: database)
+     |                      `- warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 232 |         var spaceID = try spaces.existingFallback(preferred: preferredSpaceID)
+ 233 |         if spaceID == nil && createsDefaultSpace {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1105:5: note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+1103 |     let database: AppDatabase
+1104 | 
+1105 |     init(database: AppDatabase) {
+     |     `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+1106 |         self.database = database
+1107 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:238:25: warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 236 |         let scope = spaceID ?? "$unavailable"
+ 237 |         // These repositories are owned by this load, not shared with the UI's mutable Space scope.
+ 238 |         let documents = DocumentRepository(database: database)
+     |                         `- warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 239 |         let folders = FolderRepository(database: database)
+ 240 |         let templates = TemplateRepository(database: database)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:72:5: note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+  70 |     var spaceID: String?
+  71 | 
+  72 |     init(database: AppDatabase) {
+     |     `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+  73 |         self.database = database
+  74 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:239:23: warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 237 |         // These repositories are owned by this load, not shared with the UI's mutable Space scope.
+ 238 |         let documents = DocumentRepository(database: database)
+ 239 |         let folders = FolderRepository(database: database)
+     |                       `- warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 240 |         let templates = TemplateRepository(database: database)
+ 241 |         documents.spaceID = scope; folders.spaceID = scope; templates.spaceID = scope
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1155:5: note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+1153 |     var spaceID: String?
+1154 | 
+1155 |     init(database: AppDatabase) {
+     |     `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+1156 |         self.database = database
+1157 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:240:25: warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 238 |         let documents = DocumentRepository(database: database)
+ 239 |         let folders = FolderRepository(database: database)
+ 240 |         let templates = TemplateRepository(database: database)
+     |                         `- warning: call to main actor-isolated initializer 'init(database:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 241 |         documents.spaceID = scope; folders.spaceID = scope; templates.spaceID = scope
+ 242 |         let allSpaces = try spaces.includingArchived()
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1297:5: note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+1295 |     var spaceID: String?
+1296 | 
+1297 |     init(database: AppDatabase) {
+     |     `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+1298 |         self.database = database
+1299 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:241:19: warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 239 |         let folders = FolderRepository(database: database)
+ 240 |         let templates = TemplateRepository(database: database)
+ 241 |         documents.spaceID = scope; folders.spaceID = scope; templates.spaceID = scope
+     |                   `- warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 242 |         let allSpaces = try spaces.includingArchived()
+ 243 |         let overview = try loadOverview(documents: documents, folders: folders, templates: templates, allSpaces: allSpaces)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:70:9: note: mutation of this property is only permitted within the actor
+  68 | final class DocumentRepository: @unchecked Sendable {
+  69 |     private let database: AppDatabase
+  70 |     var spaceID: String?
+     |         `- note: mutation of this property is only permitted within the actor
+  71 | 
+  72 |     init(database: AppDatabase) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:241:44: warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 239 |         let folders = FolderRepository(database: database)
+ 240 |         let templates = TemplateRepository(database: database)
+ 241 |         documents.spaceID = scope; folders.spaceID = scope; templates.spaceID = scope
+     |                                            `- warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 242 |         let allSpaces = try spaces.includingArchived()
+ 243 |         let overview = try loadOverview(documents: documents, folders: folders, templates: templates, allSpaces: allSpaces)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1153:9: note: mutation of this property is only permitted within the actor
+1151 | final class FolderRepository: @unchecked Sendable {
+1152 |     private let database: AppDatabase
+1153 |     var spaceID: String?
+     |         `- note: mutation of this property is only permitted within the actor
+1154 | 
+1155 |     init(database: AppDatabase) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:241:71: warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 239 |         let folders = FolderRepository(database: database)
+ 240 |         let templates = TemplateRepository(database: database)
+ 241 |         documents.spaceID = scope; folders.spaceID = scope; templates.spaceID = scope
+     |                                                                       `- warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 242 |         let allSpaces = try spaces.includingArchived()
+ 243 |         let overview = try loadOverview(documents: documents, folders: folders, templates: templates, allSpaces: allSpaces)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1295:9: note: mutation of this property is only permitted within the actor
+1293 |     static func documentTemplateID(_ id: String) -> String { "template-mode-" + id }
+1294 |     private let database: AppDatabase
+1295 |     var spaceID: String?
+     |         `- note: mutation of this property is only permitted within the actor
+1296 | 
+1297 |     init(database: AppDatabase) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:245:71: warning: call to main actor-isolated instance method 'dailyNoteOnlyTemplateIDs(among:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 243 |         let overview = try loadOverview(documents: documents, folders: folders, templates: templates, allSpaces: allSpaces)
+ 244 |         return BootstrapState(spaceID: spaceID, allSpaces: allSpaces, overview: overview,
+ 245 |                               dailyNoteOnlyTemplateIDs: try templates.dailyNoteOnlyTemplateIDs(among: overview.templates))
+     |                                                                       `- warning: call to main actor-isolated instance method 'dailyNoteOnlyTemplateIDs(among:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 246 |     }
+ 247 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1478:10: note: calls to instance method 'dailyNoteOnlyTemplateIDs(among:)' from outside of its actor context are implicitly asynchronous
+1476 |     }
+1477 | 
+1478 |     func dailyNoteOnlyTemplateIDs(among templates: [TemplateRecord]? = nil) throws -> Set<String> {
+     |          `- note: calls to instance method 'dailyNoteOnlyTemplateIDs(among:)' from outside of its actor context are implicitly asynchronous
+1479 |         try database.read { db in
+1480 |             let records = try templates ?? TemplateRecord.fetchAll(db, sql: "SELECT * FROM templates WHERE \(LibraryAccess.spaces()) AND (? IS NULL OR spaceID=?)", arguments: [spaceID, spaceID])
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:250:36: warning: call to main actor-isolated instance method 'topLevelSummaryCountsByFolder()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 248 |     private nonisolated static func loadOverview(documents: DocumentRepository, folders: FolderRepository,
+ 249 |                                                 templates: TemplateRepository, allSpaces: [SpaceRecord]) throws -> LibraryOverview {
+ 250 |         let counts = try documents.topLevelSummaryCountsByFolder()
+     |                                    `- warning: call to main actor-isolated instance method 'topLevelSummaryCountsByFolder()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 251 |         return try LibraryOverview(
+ 252 |             recent: documents.recentSummaries(),
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:443:10: note: calls to instance method 'topLevelSummaryCountsByFolder()' from outside of its actor context are implicitly asynchronous
+ 441 |     // Home needs counts for every visible folder plus Unsorted. Return them
+ 442 |     // together instead of issuing a synchronous COUNT from each SwiftUI row.
+ 443 |     func topLevelSummaryCountsByFolder() throws -> [String?: Int] {
+     |          `- note: calls to instance method 'topLevelSummaryCountsByFolder()' from outside of its actor context are implicitly asynchronous
+ 444 |         try database.read { db in
+ 445 |             let rows = try Row.fetchAll(db, sql: """
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:252:31: warning: call to main actor-isolated instance method 'recentSummaries(limit:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 250 |         let counts = try documents.topLevelSummaryCountsByFolder()
+ 251 |         return try LibraryOverview(
+ 252 |             recent: documents.recentSummaries(),
+     |                               `- warning: call to main actor-isolated instance method 'recentSummaries(limit:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 253 |             favorites: documents.favoriteSummaries(),
+ 254 |             dailyNotes: documents.allDailyNoteSummaries(),
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:471:10: note: calls to instance method 'recentSummaries(limit:)' from outside of its actor context are implicitly asynchronous
+ 469 |     // are naturally small, so they mirror the existing full-record queries directly
+ 470 |     // rather than paginate.
+ 471 |     func recentSummaries(limit: Int = 12) throws -> [DocumentSummary] {
+     |          `- note: calls to instance method 'recentSummaries(limit:)' from outside of its actor context are implicitly asynchronous
+ 472 |         try database.read { db in
+ 473 |             try DocumentSummary.fetchAll(db, sql: """
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:253:34: warning: call to main actor-isolated instance method 'favoriteSummaries()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 251 |         return try LibraryOverview(
+ 252 |             recent: documents.recentSummaries(),
+ 253 |             favorites: documents.favoriteSummaries(),
+     |                                  `- warning: call to main actor-isolated instance method 'favoriteSummaries()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 254 |             dailyNotes: documents.allDailyNoteSummaries(),
+ 255 |             trashed: documents.trashedSummaries(),
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:496:10: note: calls to instance method 'favoriteSummaries()' from outside of its actor context are implicitly asynchronous
+ 494 |     }
+ 495 | 
+ 496 |     func favoriteSummaries() throws -> [DocumentSummary] {
+     |          `- note: calls to instance method 'favoriteSummaries()' from outside of its actor context are implicitly asynchronous
+ 497 |         try database.read { db in
+ 498 |             try DocumentSummary.fetchAll(db, sql: """
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:254:35: warning: call to main actor-isolated instance method 'allDailyNoteSummaries()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 252 |             recent: documents.recentSummaries(),
+ 253 |             favorites: documents.favoriteSummaries(),
+ 254 |             dailyNotes: documents.allDailyNoteSummaries(),
+     |                                   `- warning: call to main actor-isolated instance method 'allDailyNoteSummaries()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 255 |             trashed: documents.trashedSummaries(),
+ 256 |             documentCount: counts.values.reduce(0, +),
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:485:10: note: calls to instance method 'allDailyNoteSummaries()' from outside of its actor context are implicitly asynchronous
+ 483 |     // All top-level daily notes as summaries (the Daily Notes surface groups them by
+ 484 |     // month/year, so the whole set is needed; it is naturally bounded to one per day).
+ 485 |     func allDailyNoteSummaries() throws -> [DocumentSummary] {
+     |          `- note: calls to instance method 'allDailyNoteSummaries()' from outside of its actor context are implicitly asynchronous
+ 486 |         try database.read { db in
+ 487 |             try DocumentSummary.fetchAll(db, sql: """
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:255:32: warning: call to main actor-isolated instance method 'trashedSummaries()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 253 |             favorites: documents.favoriteSummaries(),
+ 254 |             dailyNotes: documents.allDailyNoteSummaries(),
+ 255 |             trashed: documents.trashedSummaries(),
+     |                                `- warning: call to main actor-isolated instance method 'trashedSummaries()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 256 |             documentCount: counts.values.reduce(0, +),
+ 257 |             documentCountsByFolder: counts,
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:507:10: note: calls to instance method 'trashedSummaries()' from outside of its actor context are implicitly asynchronous
+ 505 |     }
+ 506 | 
+ 507 |     func trashedSummaries() throws -> [DocumentSummary] {
+     |          `- note: calls to instance method 'trashedSummaries()' from outside of its actor context are implicitly asynchronous
+ 508 |         try database.read { db in
+ 509 |             try DocumentSummary.fetchAll(db, sql: """
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:261:30: warning: call to main actor-isolated instance method 'all()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 259 |                 $0.sortOrder == $1.sortOrder ? $0.updatedAt > $1.updatedAt : $0.sortOrder < $1.sortOrder
+ 260 |             },
+ 261 |             folders: folders.all(),
+     |                              `- warning: call to main actor-isolated instance method 'all()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 262 |             templates: templates.all(),
+ 263 |             templateDocuments: templates.previewDocuments()
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1159:10: note: calls to instance method 'all()' from outside of its actor context are implicitly asynchronous
+1157 |     }
+1158 | 
+1159 |     func all() throws -> [FolderRecord] {
+     |          `- note: calls to instance method 'all()' from outside of its actor context are implicitly asynchronous
+1160 |         try database.read { db in
+1161 |             try FolderRecord.fetchAll(
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:262:34: warning: call to main actor-isolated instance method 'all()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 260 |             },
+ 261 |             folders: folders.all(),
+ 262 |             templates: templates.all(),
+     |                                  `- warning: call to main actor-isolated instance method 'all()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 263 |             templateDocuments: templates.previewDocuments()
+ 264 |         )
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1301:10: note: calls to instance method 'all()' from outside of its actor context are implicitly asynchronous
+1299 |     }
+1300 | 
+1301 |     func all() throws -> [TemplateRecord] {
+     |          `- note: calls to instance method 'all()' from outside of its actor context are implicitly asynchronous
+1302 |         try database.read { db in
+1303 |             try TemplateRecord.fetchAll(
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:263:42: warning: call to main actor-isolated instance method 'previewDocuments()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 261 |             folders: folders.all(),
+ 262 |             templates: templates.all(),
+ 263 |             templateDocuments: templates.previewDocuments()
+     |                                          `- warning: call to main actor-isolated instance method 'previewDocuments()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 264 |         )
+ 265 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1323:10: note: calls to instance method 'previewDocuments()' from outside of its actor context are implicitly asynchronous
+1321 |     }
+1322 | 
+1323 |     func previewDocuments() throws -> [String: DocumentRecord] {
+     |          `- note: calls to instance method 'previewDocuments()' from outside of its actor context are implicitly asynchronous
+1324 |         try database.read { db in
+1325 |             let documents = try DocumentRecord.fetchAll(db, sql: """
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:856:28: warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+ 854 |             let lookup = Task.detached(priority: .userInitiated) {
+ 855 |                 let repository = DocumentRepository(database: database)
+ 856 |                 repository.spaceID = spaceID ?? "$unavailable"
+     |                            |- warning: main actor-isolated property 'spaceID' can not be mutated from a nonisolated context
+     |                            `- note: consider declaring an isolated method on 'MainActor' to perform the mutation
+ 857 |                 return try repository.document(id: id)
+ 858 |             }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:70:9: note: mutation of this property is only permitted within the actor
+  68 | final class DocumentRepository: @unchecked Sendable {
+  69 |     private let database: AppDatabase
+  70 |     var spaceID: String?
+     |         `- note: mutation of this property is only permitted within the actor
+  71 | 
+  72 |     init(database: AppDatabase) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:855:34: warning: main actor-isolated initializer 'init(database:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 853 |             let lookupStarted = trace?.event("document-lookup-start")
+ 854 |             let lookup = Task.detached(priority: .userInitiated) {
+ 855 |                 let repository = DocumentRepository(database: database)
+     |                                  `- warning: main actor-isolated initializer 'init(database:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 856 |                 repository.spaceID = spaceID ?? "$unavailable"
+ 857 |                 return try repository.document(id: id)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:857:39: warning: main actor-isolated instance method 'document(id:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 855 |                 let repository = DocumentRepository(database: database)
+ 856 |                 repository.spaceID = spaceID ?? "$unavailable"
+ 857 |                 return try repository.document(id: id)
+     |                                       `- warning: main actor-isolated instance method 'document(id:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 858 |             }
+ 859 |             do {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/AppEnvironment.swift:946:64: warning: main actor-isolated instance method 'markOpened(id:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 944 |             trace?.event("navigation-selected", documentOpeningTraceState, since: started)
+ 945 |             let documents = documents, documentID = id
+ 946 |             Task.detached(priority: .utility) { try? documents.markOpened(id: documentID) }
+     |                                                                `- warning: main actor-isolated instance method 'markOpened(id:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 947 |         }
+ 948 |         if model.session.isPresentationReady, model.session.hasLoadedDocument(id) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/PadWorkspaceModel.swift:165:52: warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 68 | }
+ 69 | 
+ 70 | struct PadWorkspaceLocation: Equatable {
+    |        `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+ 71 |     var destination: PadWorkspaceDestination = .library(.allDocuments)
+ 72 |     var folderID: String?
+    :
+163 |     }
+164 | 
+165 |     func newTab(_ location: PadWorkspaceLocation = PadWorkspaceLocation(), openingTrace: PennedDocumentOpenTrace? = nil) async throws {
+    |                                                    `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+166 |         try await transition(openingTrace: openingTrace) {
+167 |             try self.validate(location)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Attachments/AttachmentMedia.swift:286:38: warning: reference to captured var 'self' in concurrently-executing code; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+284 |             }
+285 |             QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] result, _ in
+286 |                 Task { @MainActor in self?.finish(result?.cgImage) }
+    |                                      `- warning: reference to captured var 'self' in concurrently-executing code; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+287 |             }
+288 |         }
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Persistence/AppDatabase.swift:322:70: warning: main actor-isolated static property 'vellixTasksChanged' can not be referenced from a Sendable closure
+320 |         let notify: @Sendable () -> Void = { [self, tasksChanged, tagsChanged] in
+321 |             guard isAccessible else { return }
+322 |             if tasksChanged { NotificationCenter.default.post(name: .vellixTasksChanged, object: self) }
+    |                                                                      `- warning: main actor-isolated static property 'vellixTasksChanged' can not be referenced from a Sendable closure
+323 |             if tagsChanged { NotificationCenter.default.post(name: .pennedTagsChanged, object: self) }
+324 |             NotificationCenter.default.post(name: .pennedCollectionsChanged, object: self)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:5:16: note: static property declared here
+  3 | 
+  4 | extension Notification.Name {
+  5 |     static let vellixTasksChanged = Notification.Name("Vellix.TasksChanged")
+    |                `- note: static property declared here
+  6 | }
+  7 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Persistence/AppDatabase.swift:323:69: warning: main actor-isolated static property 'pennedTagsChanged' can not be referenced from a Sendable closure
+321 |             guard isAccessible else { return }
+322 |             if tasksChanged { NotificationCenter.default.post(name: .vellixTasksChanged, object: self) }
+323 |             if tagsChanged { NotificationCenter.default.post(name: .pennedTagsChanged, object: self) }
+    |                                                                     `- warning: main actor-isolated static property 'pennedTagsChanged' can not be referenced from a Sendable closure
+324 |             NotificationCenter.default.post(name: .pennedCollectionsChanged, object: self)
+325 |         }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tags/DocumentTagRepository.swift:5:16: note: static property declared here
+  3 | 
+  4 | extension Notification.Name {
+  5 |     static let pennedTagsChanged = Notification.Name("Penned.TagsChanged")
+    |                `- note: static property declared here
+  6 | }
+  7 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Persistence/AppDatabase.swift:324:52: warning: main actor-isolated static property 'pennedCollectionsChanged' can not be referenced from a Sendable closure
+322 |             if tasksChanged { NotificationCenter.default.post(name: .vellixTasksChanged, object: self) }
+323 |             if tagsChanged { NotificationCenter.default.post(name: .pennedTagsChanged, object: self) }
+324 |             NotificationCenter.default.post(name: .pennedCollectionsChanged, object: self)
+    |                                                    `- warning: main actor-isolated static property 'pennedCollectionsChanged' can not be referenced from a Sendable closure
+325 |         }
+326 |         // Never invoke a subscriber inline, including when GCD runs a database
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Collections/CollectionModels.swift:345:16: note: static property declared here
+343 | 
+344 | extension Notification.Name {
+345 |     static let pennedCollectionsChanged = Notification.Name("penned.collectionsChanged")
+    |                `- note: static property declared here
+346 | }
+347 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Publishing/PublishingPresentation.swift:9:60: warning: 'weak' ownership of capture 'accounts' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 6 |     @Environment(\.scenePhase) private var scenePhase
+ 7 |     func body(content: Content) -> some View {
+ 8 |         content.task(id: (accounts.currentAccountIdentity?.libraryOwnerKey ?? "signed-out") + String(accounts.currentUser?.remoteAuthDeleted ?? false)) {
+   |                                                                                                                                                         |- note: 'accounts' implicitly strongly captured here
+   |                                                                                                                                                         `- note: add 'accounts' as a capture list item to silence
+ 9 |             environment.publishing.start(identity: { [weak accounts] in
+   |                                                            |- warning: 'weak' ownership of capture 'accounts' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+   |                                                            `- note: explicitly assign the capture list item to silence
+10 |                 accounts?.currentUser?.remoteAuthDeleted == false ? accounts?.currentAccountIdentity : nil
+11 |             }, accessToken: { [weak accounts] in
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Publishing/PublishingPresentation.swift:11:37: warning: 'weak' ownership of capture 'accounts' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 6 |     @Environment(\.scenePhase) private var scenePhase
+ 7 |     func body(content: Content) -> some View {
+ 8 |         content.task(id: (accounts.currentAccountIdentity?.libraryOwnerKey ?? "signed-out") + String(accounts.currentUser?.remoteAuthDeleted ?? false)) {
+   |                                                                                                                                                         |- note: 'accounts' implicitly strongly captured here
+   |                                                                                                                                                         `- note: add 'accounts' as a capture list item to silence
+ 9 |             environment.publishing.start(identity: { [weak accounts] in
+10 |                 accounts?.currentUser?.remoteAuthDeleted == false ? accounts?.currentAccountIdentity : nil
+11 |             }, accessToken: { [weak accounts] in
+   |                                     |- warning: 'weak' ownership of capture 'accounts' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+   |                                     `- note: explicitly assign the capture list item to silence
+12 |                 guard let accounts else { throw PublishingFailure.authenticationRequired }
+13 |                 return try await accounts.publishingAccessToken()
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Publishing/PublishingPresentation.swift:14:38: warning: 'weak' ownership of capture 'accounts' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 6 |     @Environment(\.scenePhase) private var scenePhase
+ 7 |     func body(content: Content) -> some View {
+ 8 |         content.task(id: (accounts.currentAccountIdentity?.libraryOwnerKey ?? "signed-out") + String(accounts.currentUser?.remoteAuthDeleted ?? false)) {
+   |                                                                                                                                                         |- note: 'accounts' implicitly strongly captured here
+   |                                                                                                                                                         `- note: add 'accounts' as a capture list item to silence
+ 9 |             environment.publishing.start(identity: { [weak accounts] in
+10 |                 accounts?.currentUser?.remoteAuthDeleted == false ? accounts?.currentAccountIdentity : nil
+   :
+12 |                 guard let accounts else { throw PublishingFailure.authenticationRequired }
+13 |                 return try await accounts.publishingAccessToken()
+14 |             }, authorAvatar: { [weak accounts] in accounts?.currentUser?.profileImageData })
+   |                                      |- warning: 'weak' ownership of capture 'accounts' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+   |                                      `- note: explicitly assign the capture list item to silence
+15 |         }
+16 |         .onChange(of: accounts.currentUser?.profileRevision) { _, _ in environment.publishing.profileChanged() }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Publishing/PublishingProjection.swift:43:73: warning: call to main actor-isolated static method 'media(_:assets:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 35 |     }
+ 36 | 
+ 37 |     static func content(_ source: [String: Any], media: [String: PublishingMedia], depth: Int = 0) throws -> [String: Any] {
+    |                 `- note: add '@MainActor' to make static method 'content(_:media:depth:)' part of global actor 'MainActor'
+ 38 |         guard depth <= 64, let type = source["type"] as? String else { throw PublishingFailure.invalidContent("Invalid document structure.") }
+ 39 |         if ["pageReference", "privateReference"].contains(type) { return ["type": "privateReference"] }
+    :
+ 41 |         if ["publishedPage", "publishedCollection"].contains(type) {
+ 42 |             let attrs = source["attrs"] as? [String: Any] ?? [:]
+ 43 |             return ["type": type, "attrs": try PublishingVisibleContent.media(attrs, assets: media)]
+    |                                                                         `- warning: call to main actor-isolated static method 'media(_:assets:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 44 |         }
+ 45 |         guard let allowed = attributes[type] else { throw PublishingFailure.invalidContent("Unsupported block: \(type).") }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Publishing/PublishingVisibleContent.swift:126:17: note: calls to static method 'media(_:assets:)' from outside of its actor context are implicitly asynchronous
+124 |     }
+125 | 
+126 |     static func media(_ value: Any, assets: [String: PublishingMedia]) throws -> Any {
+    |                 `- note: calls to static method 'media(_:assets:)' from outside of its actor context are implicitly asynchronous
+127 |         if var object = value as? [String: Any] {
+128 |             for key in ["relativePath", "imagePath"] {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Publishing/PublishingQueue.swift:39:65: warning: reference to captured var 'self' in concurrently-executing code; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+ 37 |             .receive(on: RunLoop.main).sink { [weak self] _ in self?.reload() }
+ 38 |         network.pathUpdateHandler = { [weak self] path in
+ 39 |             if path.status == .satisfied { Task { @MainActor in self?.retry() } }
+    |                                                                 `- warning: reference to captured var 'self' in concurrently-executing code; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+ 40 |         }
+ 41 |         network.start(queue: DispatchQueue(label: "penned.publishing.network"))
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewCache.swift:487:57: warning: main actor-isolated static method 'image(path:store:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 485 |             let paths = imagePaths, store = attachments
+ 486 |             Task.detached(priority: .utility) {
+ 487 |                 for path in paths { _ = CardImageLoader.image(path: path, store: store) }
+     |                                                         `- warning: main actor-isolated static method 'image(path:store:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 488 |             }
+ 489 |         }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:16:38: warning: main actor-isolated property 'userInterfaceIdiom' can not be referenced from a nonisolated context
+ 14 |     static let deviceTag: String = {
+ 15 |         #if canImport(UIKit)
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+    |                                      `- warning: main actor-isolated property 'userInterfaceIdiom' can not be referenced from a nonisolated context
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:61:52: note: property declared here
+59 | @property(nonatomic,readonly,getter=isMultitaskingSupported) BOOL multitaskingSupported API_AVAILABLE(ios(4.0));
+60 | 
+61 | @property(nonatomic,readonly) UIUserInterfaceIdiom userInterfaceIdiom API_AVAILABLE(ios(3.2));
+   |                                                    `- note: property declared here
+62 | 
+63 | - (void)playInputClick API_AVAILABLE(ios(4.2)) API_UNAVAILABLE(visionos);  // Plays a click only if an enabling input view is on-screen and user has enabled input clicks.
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:16:30: warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 14 |     static let deviceTag: String = {
+ 15 |         #if canImport(UIKit)
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+    |                              `- warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:37:49: note: class property declared here
+35 | @interface UIDevice : NSObject
+36 | 
+37 | @property(class, nonatomic, readonly) UIDevice *currentDevice;
+   |                                                 `- note: class property declared here
+38 | 
+39 | @property(nonatomic,readonly,strong) NSString    *name;              // Synonym for model. Prior to iOS 16, user-assigned device name (e.g. @"My iPhone").
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:18:44: warning: main actor-isolated property 'systemVersion' can not be referenced from a nonisolated context
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+    |                                            `- warning: main actor-isolated property 'systemVersion' can not be referenced from a nonisolated context
+ 19 |         #else
+ 20 |         return "mac"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:43:51: note: property declared here
+41 | @property(nonatomic,readonly,strong) NSString    *localizedModel;    // localized version of model
+42 | @property(nonatomic,readonly,strong) NSString    *systemName;        // e.g. @"iOS"
+43 | @property(nonatomic,readonly,strong) NSString    *systemVersion;     // e.g. @"4.0"
+   |                                                   `- note: property declared here
+44 | @property(nonatomic,readonly) UIDeviceOrientation orientation API_UNAVAILABLE(tvos, visionos);       // return current device orientation.  this will return UIDeviceOrientationUnknown unless device orientation notifications are being generated.
+45 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:18:36: warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+    |                                    `- warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 19 |         #else
+ 20 |         return "mac"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:37:49: note: class property declared here
+35 | @interface UIDevice : NSObject
+36 | 
+37 | @property(class, nonatomic, readonly) UIDevice *currentDevice;
+   |                                                 `- note: class property declared here
+38 | 
+39 | @property(nonatomic,readonly,strong) NSString    *name;              // Synonym for model. Prior to iOS 16, user-assigned device name (e.g. @"My iPhone").
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRecords.swift:225:61: warning: call to main actor-isolated static method 'decode' in a synchronous nonisolated context [#ActorIsolatedCall]
+223 |     // Mirror DocumentRecord's derived presentation accessors exactly; each depends
+224 |     // only on columns carried by the summary.
+225 |     var appearance: DocumentAppearance { DocumentAppearance.decode(appearanceJSON) }
+    |                                                             `- warning: call to main actor-isolated static method 'decode' in a synchronous nonisolated context [#ActorIsolatedCall]
+226 |     var isThemed: Bool { appearance.themeID != nil }
+227 |     var cardStyle: PageCardStyle? { PageCardStyle.decode(cardStyleJSON) }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentAppearance.swift:400:17: note: calls to static method 'decode' from outside of its actor context are implicitly asynchronous
+398 |     }
+399 | 
+400 |     static func decode(_ json: String?) -> DocumentAppearance {
+    |                 `- note: calls to static method 'decode' from outside of its actor context are implicitly asynchronous
+401 |         guard
+402 |             let json,
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRecords.swift:227:51: warning: call to main actor-isolated static method 'decode' in a synchronous nonisolated context [#ActorIsolatedCall]
+225 |     var appearance: DocumentAppearance { DocumentAppearance.decode(appearanceJSON) }
+226 |     var isThemed: Bool { appearance.themeID != nil }
+227 |     var cardStyle: PageCardStyle? { PageCardStyle.decode(cardStyleJSON) }
+    |                                                   `- warning: call to main actor-isolated static method 'decode' in a synchronous nonisolated context [#ActorIsolatedCall]
+228 | 
+229 |     // Project a full record down to a summary, for the bounded sections that already
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/PageCardStyle.swift:90:17: note: calls to static method 'decode' from outside of its actor context are implicitly asynchronous
+ 88 |         let cache = NSCache<NSString, CardStyleBox>(); cache.countLimit = 512; return cache
+ 89 |     }()
+ 90 |     static func decode(_ json: String?) -> PageCardStyle? {
+    |                 `- note: calls to static method 'decode' from outside of its actor context are implicitly asynchronous
+ 91 |         guard let json, let data = json.data(using: .utf8) else { return nil }
+ 92 |         let key = json as NSString
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentStyleRepository.swift:39:27: warning: main actor-isolated conformance of 'DocumentStyleDefinition' to 'Decodable' cannot be used in nonisolated context; this is an error in the Swift 6 language mode [#IsolatedConformances]
+ 37 |     var isBuiltIn: Bool { id.hasPrefix("theme-") }
+ 38 |     func definition() throws -> DocumentStyleDefinition {
+ 39 |         try JSONDecoder().decode(DocumentStyleDefinition.self, from: Data(styleJSON.utf8))
+    |                           `- warning: main actor-isolated conformance of 'DocumentStyleDefinition' to 'Decodable' cannot be used in nonisolated context; this is an error in the Swift 6 language mode [#IsolatedConformances]
+ 40 |     }
+ 41 | }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/ImmediateTablePreview.swift:114:57: warning: '+' was deprecated in iOS 26.0: Use string interpolation on `Text` instead: `Text("Hello \(name)")` [#DeprecatedDeclaration]
+112 |         if children.isEmpty { return Text(cellText(node)) }
+113 |         return children.enumerated().reduce(Text("")) { result, item in
+114 |             result + Text(item.offset == 0 ? "" : "\n") + styledCellText(item.element, fontStyle: fontStyle, weight: weight, italic: italic)
+    |                                                         `- warning: '+' was deprecated in iOS 26.0: Use string interpolation on `Text` instead: `Text("Hello \(name)")` [#DeprecatedDeclaration]
+115 |         }
+116 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/ImmediateTablePreview.swift:114:20: warning: '+' was deprecated in iOS 26.0: Use string interpolation on `Text` instead: `Text("Hello \(name)")` [#DeprecatedDeclaration]
+112 |         if children.isEmpty { return Text(cellText(node)) }
+113 |         return children.enumerated().reduce(Text("")) { result, item in
+114 |             result + Text(item.offset == 0 ? "" : "\n") + styledCellText(item.element, fontStyle: fontStyle, weight: weight, italic: italic)
+    |                    `- warning: '+' was deprecated in iOS 26.0: Use string interpolation on `Text` instead: `Text("Hello \(name)")` [#DeprecatedDeclaration]
+115 |         }
+116 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/LibraryDocumentPreview.swift:246:86: warning: main actor-isolated instance method 'document(id:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+244 |         let id = summary.id
+245 |         let repository = environment.documents
+246 |         let loaded = await Task.detached(priority: .userInitiated) { try? repository.document(id: id) }.value
+    |                                                                                      `- warning: main actor-isolated instance method 'document(id:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+247 |         if traced { print("🟡 CODE-DEN-PREVIEW [summary] record load=\(loaded == nil ? "FAILED" : "SUCCESS") cancelled=\(Task.isCancelled) loadedTitle=\(loaded?.title ?? "none")") }
+248 |         guard !Task.isCancelled, previewIdentity == identity, resolveKey == key, let loaded,
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#IsolatedConformances]: <https://docs.swift.org/compiler/documentation/diagnostics/isolated-conformances>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/NestedPageThumbnail.swift:18:74: warning: main actor-isolated conformance of 'DocumentAppearance' to 'Equatable' cannot be used in nonisolated context; this is an error in the Swift 6 language mode [#IsolatedConformances]
+ 16 | 
+ 17 |     static func == (lhs: Self, rhs: Self) -> Bool {
+ 18 |         lhs.json == rhs.json && lhs.title == rhs.title && lhs.appearance == rhs.appearance &&
+    |                                                                          `- warning: main actor-isolated conformance of 'DocumentAppearance' to 'Equatable' cannot be used in nonisolated context; this is an error in the Swift 6 language mode [#IsolatedConformances]
+ 19 |         lhs.size == rhs.size && lhs.isCardSheet == rhs.isCardSheet && lhs.isStylePreview == rhs.isStylePreview &&
+ 20 |         lhs.cover == rhs.cover && lhs.attachmentStore === rhs.attachmentStore && lhs.includesCover == rhs.includesCover &&
+
+[#IsolatedConformances]: <https://docs.swift.org/compiler/documentation/diagnostics/isolated-conformances>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Clipper/WebClipperCoordinator.swift:65:21: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+ 63 |             do {
+ 64 |                 let (spaces, folders, tags) = try await Task.detached(priority: .utility) {
+ 65 |                     try (SpaceRepository(database: database).all(), FolderRepository(database: database).all(),
+    |                     |    |                                          |- note: calls to instance method 'all()' from outside of its actor context are implicitly asynchronous
+    |                     |    |                                          `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+    |                     |    |- note: calls to instance method 'all()' from outside of its actor context are implicitly asynchronous
+    |                     |    `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+    |                     `- warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+ 66 |                          DocumentTagRepository(database: database).catalogue())
+    |                          |- note: calls to instance method 'catalogue()' from outside of its actor context are implicitly asynchronous
+    |                          `- note: calls to initializer 'init(database:)' from outside of its actor context are implicitly asynchronous
+ 67 |                 }.value
+ 68 |                 try Task.checkCancellation()
+/Users/asteriasmoons/Desktop/Vellix/Vellix/VellixTests/LibraryOverviewTestSupport.swift:2:18: warning: file 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import [#ModuleSelfImport]
+ 1 | import Foundation
+ 2 | @testable import Vellix
+   |                  `- warning: file 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import [#ModuleSelfImport]
+ 3 | 
+ 4 | // The library no longer materializes every top-level document in `overview.all`;
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:236:40: warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 89 | 
+ 90 |     @discardableResult
+ 91 |     static func reconcile(in db: Database) throws -> Bool {
+    |                 `- note: add '@MainActor' to make static method 'reconcile(in:)' part of global actor 'MainActor'
+ 92 |         // Older migrations can run before the reference table exists.
+ 93 |         guard try db.tableExists("documentTaskReferences") else { return false }
+    :
+234 |                 document.revision += 1
+235 |                 try document.update(db)
+236 |                 try DocumentRepository.upsertSearchIndex(document, in: db)
+    |                                        `- warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+237 |                 changed = true
+238 |             }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1073:17: note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1071 |     }
+1072 | 
+1073 |     static func upsertSearchIndex(_ record: DocumentRecord, in db: Database) throws {
+     |                 `- note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1074 |         try deleteSearchIndex(id: record.id, in: db)
+1075 |         let templateID = record.templateID ?? TemplateRepository.documentTemplateID(record.id)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:346:48: warning: main actor-isolated property 'trimmedNonEmpty' can not be referenced from a nonisolated context
+339 |     static func isDetail(_ documentID: String) -> Bool { documentID.hasPrefix("vellix-task-page:") && isManaged(documentID) }
+340 | 
+341 |     static func reconcile(sourceID: String, in db: Database) throws {
+    |                 `- note: add '@MainActor' to make static method 'reconcile(sourceID:in:)' part of global actor 'MainActor'
+342 |         guard let source = try DocumentRecord.fetchOne(db, key: sourceID) else { return }
+343 |         let texts = DocumentTaskIndex.texts(in: source.tipTapJSON)
+344 |         for context in try DocumentTaskIndex.contexts(in: source.tipTapJSON) {
+345 |             guard let task = context.metadata else { continue }
+346 |             let text = texts[context.blockID]?.trimmedNonEmpty ?? "Untitled Task"
+    |                                                `- warning: main actor-isolated property 'trimmedNonEmpty' can not be referenced from a nonisolated context
+347 |             let detail = detailID(task.id), history = historyID(task.id)
+348 |             let reference: [String: Any] = ["type": "pageReference", "attrs": ["id": task.id + "-history-link", "documentID": history]]
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1760:9: note: property declared here
+1758 | 
+1759 | extension String {
+1760 |     var trimmedNonEmpty: String? {
+     |         `- note: property declared here
+1761 |         let value = trimmingCharacters(in: .whitespacesAndNewlines)
+1762 |         return value.isEmpty ? nil : value
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:420:32: warning: call to main actor-isolated instance method 'encodedJSON()' in a synchronous nonisolated context [#ActorIsolatedCall]
+394 |     }
+395 | 
+396 |     private static func save(id: String, title: String, parentID: String, content: [[String: Any]], task: DocumentTaskMetadata, taskText: String, source: DocumentRecord, in db: Database) throws {
+    |                         `- note: add '@MainActor' to make static method 'save(id:title:parentID:content:task:taskText:source:in:)' part of global actor 'MainActor'
+397 |         let old = try DocumentRecord.fetchOne(db, key: id)
+398 |         let oldObject = old.map { TipTapContentAnalyzer.documentObject(from: $0.tipTapJSON) }
+    :
+418 |         var appearance = source.appearance
+419 |         appearance.showsCover = false
+420 |         let style = appearance.encodedJSON()
+    |                                `- warning: call to main actor-isolated instance method 'encodedJSON()' in a synchronous nonisolated context [#ActorIsolatedCall]
+421 |         let savedTitle = old.map { isDetail(id) && $0.title == (projection["sourceTitle"] as? String) ? title : $0.title } ?? title
+422 |         if let old, old.title == savedTitle, old.tipTapJSON == analysis.canonicalJSON, old.parentDocumentID == parentID,
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentAppearance.swift:412:10: note: calls to instance method 'encodedJSON()' from outside of its actor context are implicitly asynchronous
+410 |     }
+411 | 
+412 |     func encodedJSON() -> String? {
+    |          `- note: calls to instance method 'encodedJSON()' from outside of its actor context are implicitly asynchronous
+413 |         guard let data = try? JSONEncoder().encode(self) else {
+414 |             return nil
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:439:32: warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+394 |     }
+395 | 
+396 |     private static func save(id: String, title: String, parentID: String, content: [[String: Any]], task: DocumentTaskMetadata, taskText: String, source: DocumentRecord, in db: Database) throws {
+    |                         `- note: add '@MainActor' to make static method 'save(id:title:parentID:content:task:taskText:source:in:)' part of global actor 'MainActor'
+397 |         let old = try DocumentRecord.fetchOne(db, key: id)
+398 |         let oldObject = old.map { TipTapContentAnalyzer.documentObject(from: $0.tipTapJSON) }
+    :
+437 |         if old != nil { record.revision += 1 }
+438 |         try record.save(db)
+439 |         try DocumentRepository.upsertSearchIndex(record, in: db)
+    |                                `- warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+440 |     }
+441 | }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1073:17: note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1071 |     }
+1072 | 
+1073 |     static func upsertSearchIndex(_ record: DocumentRecord, in db: Database) throws {
+     |                 `- note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1074 |         try deleteSearchIndex(id: record.id, in: db)
+1075 |         let templateID = record.templateID ?? TemplateRepository.documentTemplateID(record.id)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/TaskNotificationsManager.swift:93:82: warning: main actor-isolated instance method 'all(includeTemplates:includeInactive:includeText:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 91 |     private func loadTasks(includeText: Bool = true) async throws -> [DocumentTaskRecord] {
+ 92 |         let repository = self.repository
+ 93 |         let tasks = try await Task.detached(priority: .utility) { try repository.all(includeText: includeText) }.value
+    |                                                                                  `- warning: main actor-isolated instance method 'all(includeTemplates:includeInactive:includeText:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 94 |         try Task.checkCancellation()
+ 95 |         return tasks
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#ModuleSelfImport]: <https://docs.swift.org/compiler/documentation/diagnostics/module-self-import>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewCache.swift:487:57: warning: main actor-isolated static method 'image(path:store:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 485 |             let paths = imagePaths, store = attachments
+ 486 |             Task.detached(priority: .utility) {
+ 487 |                 for path in paths { _ = CardImageLoader.image(path: path, store: store) }
+     |                                                         `- warning: main actor-isolated static method 'image(path:store:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+ 488 |             }
+ 489 |         }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:16:38: warning: main actor-isolated property 'userInterfaceIdiom' can not be referenced from a nonisolated context
+ 14 |     static let deviceTag: String = {
+ 15 |         #if canImport(UIKit)
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+    |                                      `- warning: main actor-isolated property 'userInterfaceIdiom' can not be referenced from a nonisolated context
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:61:52: note: property declared here
+59 | @property(nonatomic,readonly,getter=isMultitaskingSupported) BOOL multitaskingSupported API_AVAILABLE(ios(4.0));
+60 | 
+61 | @property(nonatomic,readonly) UIUserInterfaceIdiom userInterfaceIdiom API_AVAILABLE(ios(3.2));
+   |                                                    `- note: property declared here
+62 | 
+63 | - (void)playInputClick API_AVAILABLE(ios(4.2)) API_UNAVAILABLE(visionos);  // Plays a click only if an enabling input view is on-screen and user has enabled input clicks.
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:16:30: warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 14 |     static let deviceTag: String = {
+ 15 |         #if canImport(UIKit)
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+    |                              `- warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:37:49: note: class property declared here
+35 | @interface UIDevice : NSObject
+36 | 
+37 | @property(class, nonatomic, readonly) UIDevice *currentDevice;
+   |                                                 `- note: class property declared here
+38 | 
+39 | @property(nonatomic,readonly,strong) NSString    *name;              // Synonym for model. Prior to iOS 16, user-assigned device name (e.g. @"My iPhone").
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:18:44: warning: main actor-isolated property 'systemVersion' can not be referenced from a nonisolated context
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+    |                                            `- warning: main actor-isolated property 'systemVersion' can not be referenced from a nonisolated context
+ 19 |         #else
+ 20 |         return "mac"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:43:51: note: property declared here
+41 | @property(nonatomic,readonly,strong) NSString    *localizedModel;    // localized version of model
+42 | @property(nonatomic,readonly,strong) NSString    *systemName;        // e.g. @"iOS"
+43 | @property(nonatomic,readonly,strong) NSString    *systemVersion;     // e.g. @"4.0"
+   |                                                   `- note: property declared here
+44 | @property(nonatomic,readonly) UIDeviceOrientation orientation API_UNAVAILABLE(tvos, visionos);       // return current device orientation.  this will return UIDeviceOrientationUnknown unless device orientation notifications are being generated.
+45 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:18:36: warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+    |                                    `- warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 19 |         #else
+ 20 |         return "mac"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:37:49: note: class property declared here
+35 | @interface UIDevice : NSObject
+36 | 
+37 | @property(class, nonatomic, readonly) UIDevice *currentDevice;
+   |                                                 `- note: class property declared here
+38 | 
+39 | @property(nonatomic,readonly,strong) NSString    *name;              // Synonym for model. Prior to iOS 16, user-assigned device name (e.g. @"My iPhone").
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRecords.swift:225:61: warning: call to main actor-isolated static method 'decode' in a synchronous nonisolated context [#ActorIsolatedCall]
+223 |     // Mirror DocumentRecord's derived presentation accessors exactly; each depends
+224 |     // only on columns carried by the summary.
+225 |     var appearance: DocumentAppearance { DocumentAppearance.decode(appearanceJSON) }
+    |                                                             `- warning: call to main actor-isolated static method 'decode' in a synchronous nonisolated context [#ActorIsolatedCall]
+226 |     var isThemed: Bool { appearance.themeID != nil }
+227 |     var cardStyle: PageCardStyle? { PageCardStyle.decode(cardStyleJSON) }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentAppearance.swift:400:17: note: calls to static method 'decode' from outside of its actor context are implicitly asynchronous
+398 |     }
+399 | 
+400 |     static func decode(_ json: String?) -> DocumentAppearance {
+    |                 `- note: calls to static method 'decode' from outside of its actor context are implicitly asynchronous
+401 |         guard
+402 |             let json,
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRecords.swift:227:51: warning: call to main actor-isolated static method 'decode' in a synchronous nonisolated context [#ActorIsolatedCall]
+225 |     var appearance: DocumentAppearance { DocumentAppearance.decode(appearanceJSON) }
+226 |     var isThemed: Bool { appearance.themeID != nil }
+227 |     var cardStyle: PageCardStyle? { PageCardStyle.decode(cardStyleJSON) }
+    |                                                   `- warning: call to main actor-isolated static method 'decode' in a synchronous nonisolated context [#ActorIsolatedCall]
+228 | 
+229 |     // Project a full record down to a summary, for the bounded sections that already
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/PageCardStyle.swift:90:17: note: calls to static method 'decode' from outside of its actor context are implicitly asynchronous
+ 88 |         let cache = NSCache<NSString, CardStyleBox>(); cache.countLimit = 512; return cache
+ 89 |     }()
+ 90 |     static func decode(_ json: String?) -> PageCardStyle? {
+    |                 `- note: calls to static method 'decode' from outside of its actor context are implicitly asynchronous
+ 91 |         guard let json, let data = json.data(using: .utf8) else { return nil }
+ 92 |         let key = json as NSString
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentStyleRepository.swift:39:27: warning: main actor-isolated conformance of 'DocumentStyleDefinition' to 'Decodable' cannot be used in nonisolated context; this is an error in the Swift 6 language mode [#IsolatedConformances]
+ 37 |     var isBuiltIn: Bool { id.hasPrefix("theme-") }
+ 38 |     func definition() throws -> DocumentStyleDefinition {
+ 39 |         try JSONDecoder().decode(DocumentStyleDefinition.self, from: Data(styleJSON.utf8))
+    |                           `- warning: main actor-isolated conformance of 'DocumentStyleDefinition' to 'Decodable' cannot be used in nonisolated context; this is an error in the Swift 6 language mode [#IsolatedConformances]
+ 40 |     }
+ 41 | }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/ImmediateTablePreview.swift:114:57: warning: '+' was deprecated in iOS 26.0: Use string interpolation on `Text` instead: `Text("Hello \(name)")` [#DeprecatedDeclaration]
+112 |         if children.isEmpty { return Text(cellText(node)) }
+113 |         return children.enumerated().reduce(Text("")) { result, item in
+114 |             result + Text(item.offset == 0 ? "" : "\n") + styledCellText(item.element, fontStyle: fontStyle, weight: weight, italic: italic)
+    |                                                         `- warning: '+' was deprecated in iOS 26.0: Use string interpolation on `Text` instead: `Text("Hello \(name)")` [#DeprecatedDeclaration]
+115 |         }
+116 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/ImmediateTablePreview.swift:114:20: warning: '+' was deprecated in iOS 26.0: Use string interpolation on `Text` instead: `Text("Hello \(name)")` [#DeprecatedDeclaration]
+112 |         if children.isEmpty { return Text(cellText(node)) }
+113 |         return children.enumerated().reduce(Text("")) { result, item in
+114 |             result + Text(item.offset == 0 ? "" : "\n") + styledCellText(item.element, fontStyle: fontStyle, weight: weight, italic: italic)
+    |                    `- warning: '+' was deprecated in iOS 26.0: Use string interpolation on `Text` instead: `Text("Hello \(name)")` [#DeprecatedDeclaration]
+115 |         }
+116 |     }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/LibraryDocumentPreview.swift:246:86: warning: main actor-isolated instance method 'document(id:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+244 |         let id = summary.id
+245 |         let repository = environment.documents
+246 |         let loaded = await Task.detached(priority: .userInitiated) { try? repository.document(id: id) }.value
+    |                                                                                      `- warning: main actor-isolated instance method 'document(id:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+247 |         if traced { print("🟡 CODE-DEN-PREVIEW [summary] record load=\(loaded == nil ? "FAILED" : "SUCCESS") cancelled=\(Task.isCancelled) loadedTitle=\(loaded?.title ?? "none")") }
+248 |         guard !Task.isCancelled, previewIdentity == identity, resolveKey == key, let loaded,
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#IsolatedConformances]: <https://docs.swift.org/compiler/documentation/diagnostics/isolated-conformances>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/TipTapEditorSession.swift:2621:37: warning: main actor-isolated instance method 'validateBlockDropTarget(sourceID:destinationID:movingPageIDs:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+2619 |             let repository = self.documentRepository, sourceID = self.documentID
+2620 |             return await Task.detached(priority: .userInitiated) {
+2621 |                 do { try repository.validateBlockDropTarget(sourceID: sourceID, destinationID: destinationID, movingPageIDs: pageIDs); return true }
+     |                                     `- warning: main actor-isolated instance method 'validateBlockDropTarget(sourceID:destinationID:movingPageIDs:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+2622 |                 catch { return false }
+2623 |             }.value
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/TipTapWebView.swift:883:21: warning: consider using asynchronous alternative function
+ 881 |             })()
+ 882 |             """#
+ 883 |             webView.evaluateJavaScript(script) { [weak self] result, error in
+     |                     `- warning: consider using asynchronous alternative function
+ 884 |                 guard let self else { return }
+ 885 |                 let report: [String: Any] = [
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/WebKit.framework/Headers/WKWebView.h:269:1: note: 'evaluateJavaScript' declared here
+267 |    - A `contentWorld` value of `WKContentWorld.pageWorld`
+268 | */
+269 | - (void)evaluateJavaScript:(NSString *)javaScriptString completionHandler:(WK_SWIFT_UI_ACTOR void (^ _Nullable)(id WK_NULLABLE_RESULT, NSError * _Nullable error))completionHandler;
+    | `- note: 'evaluateJavaScript' declared here
+270 | 
+271 | /* @abstract Evaluates the given JavaScript string.
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/TipTapWebView.swift:980:41: warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+ 978 |         let rendererFormat = UIGraphicsImageRendererFormat()
+ 979 |         rendererFormat.opaque = false
+ 980 |         rendererFormat.scale = UIScreen.main.scale
+     |                                         `- warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+ 981 | 
+ 982 |         let rendered = UIGraphicsImageRenderer(size: targetSize, format: rendererFormat).image { _ in
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/TipTapWebView.swift:1009:53: warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+1007 |         guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
+1008 | 
+1009 |         let renderScale = max(image.scale, UIScreen.main.scale)
+     |                                                     `- warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+1010 |         let format = UIGraphicsImageRendererFormat()
+1011 |         format.scale = renderScale
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/TipTapWebView.swift:1449:41: warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+1447 |         let rendererFormat = UIGraphicsImageRendererFormat.default()
+1448 |         rendererFormat.opaque = false
+1449 |         rendererFormat.scale = UIScreen.main.scale
+     |                                         `- warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+1450 | 
+1451 |         let rendered = UIGraphicsImageRenderer(size: targetSize, format: rendererFormat).image { _ in
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/TipTapWebView.swift:1478:53: warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+1476 |         guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
+1477 | 
+1478 |         let renderScale = max(image.scale, UIScreen.main.scale)
+     |                                                     `- warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+1479 |         let format = UIGraphicsImageRendererFormat()
+1480 |         format.scale = renderScale
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentExportPlatform.swift:35:95: warning: 'showsPageRange' was deprecated in iOS 10.0: Pages can be removed from the print preview, so page range is always shown. [#DeprecatedDeclaration]
+ 33 |         let printController = UIPrintInteractionController.shared
+ 34 |         let info = UIPrintInfo(dictionary: nil); info.jobName = title; info.outputType = .general
+ 35 |         printController.printInfo = info; printController.printingItem = url; printController.showsPageRange = true
+    |                                                                                               `- warning: 'showsPageRange' was deprecated in iOS 10.0: Pages can be removed from the print preview, so page range is always shown. [#DeprecatedDeclaration]
+ 36 |         guard let view = presenter()?.view else { throw DocumentExportError.failed("The print window is not available.") }
+ 37 |         if UIDevice.current.userInterfaceIdiom == .pad {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentExportService.swift:140:180: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+136 |         let token = generation
+137 |         busy = true; error = nil; output = nil
+138 |         operation = Task {
+    |                          |- note: 'self' implicitly strongly captured here
+    |                          `- note: add 'self' as a capture list item to silence
+139 |             do {
+140 |                 let value = try await DocumentExportService.generate(documentID: documentID, format: format, settings: settings, environment: environment, scheme: scheme) { [weak self] value in
+    |                                                                                                                                                                                    |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+    |                                                                                                                                                                                    `- note: explicitly assign the capture list item to silence
+141 |                     if self?.generation == token { self?.progress = value }
+142 |                 }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentMarkdownExport.swift:41:21: warning: initialization of immutable value 'attr' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 39 |             var value = escape(node["text"] as? String ?? "")
+ 40 |             for mark in node["marks"] as? [[String: Any]] ?? [] {
+ 41 |                 let attr = mark["attrs"] as? [String: Any] ?? [:]
+    |                     `- warning: initialization of immutable value 'attr' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 42 |                 switch mark["type"] as? String {
+ 43 |                 case "bold": value = settings.strongDelimiter + value + settings.strongDelimiter
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentWordExport.swift:17:21: warning: call to main actor-isolated static method 'xml' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 15 |     private var baseSize = 30
+ 16 |     private var listDefinitions: [String] = []
+ 17 |     private let x = DocumentExportNames.xml
+    |                     `- warning: call to main actor-isolated static method 'xml' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 18 | 
+ 19 |     init(snapshot: DocumentExportSnapshot, settings: DocumentExportSettings) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentExportModels.swift:108:17: note: calls to static method 'xml' from outside of its actor context are implicitly asynchronous
+106 |         return String((name.isEmpty || name == "." || name == ".." ? "Document" : name).prefix(100))
+107 |     }
+108 |     static func xml(_ value: String) -> String {
+    |                 `- note: calls to static method 'xml' from outside of its actor context are implicitly asynchronous
+109 |         String(String.UnicodeScalarView(value.unicodeScalars.filter { scalar in
+110 |             let n = scalar.value
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/CodeBlockTextEditor.swift:20:22: warning: 'nonisolated' cannot be applied to mutable stored properties; this is an error in the Swift 6 language mode
+ 18 |     static let shared = CodeSyntaxEngine()
+ 19 |     private let queue = DispatchQueue(label: "penned.code-syntax", qos: .userInitiated)
+ 20 |     private lazy var grammar: JSValue? = {
+    |                      `- warning: 'nonisolated' cannot be applied to mutable stored properties; this is an error in the Swift 6 language mode
+ 21 |         guard let url = CodeBlockCatalog.asset("code-syntax", extension: "js"),
+ 22 |               let script = try? String(contentsOf: url, encoding: .utf8), let context = JSContext() else { return nil }
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Persistence/AppDatabase.swift:322:70: warning: main actor-isolated static property 'vellixTasksChanged' can not be referenced from a Sendable closure
+320 |         let notify: @Sendable () -> Void = { [self, tasksChanged, tagsChanged] in
+321 |             guard isAccessible else { return }
+322 |             if tasksChanged { NotificationCenter.default.post(name: .vellixTasksChanged, object: self) }
+    |                                                                      `- warning: main actor-isolated static property 'vellixTasksChanged' can not be referenced from a Sendable closure
+323 |             if tagsChanged { NotificationCenter.default.post(name: .pennedTagsChanged, object: self) }
+324 |             NotificationCenter.default.post(name: .pennedCollectionsChanged, object: self)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:5:16: note: static property declared here
+  3 | 
+  4 | extension Notification.Name {
+  5 |     static let vellixTasksChanged = Notification.Name("Vellix.TasksChanged")
+    |                `- note: static property declared here
+  6 | }
+  7 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Persistence/AppDatabase.swift:323:69: warning: main actor-isolated static property 'pennedTagsChanged' can not be referenced from a Sendable closure
+321 |             guard isAccessible else { return }
+322 |             if tasksChanged { NotificationCenter.default.post(name: .vellixTasksChanged, object: self) }
+323 |             if tagsChanged { NotificationCenter.default.post(name: .pennedTagsChanged, object: self) }
+    |                                                                     `- warning: main actor-isolated static property 'pennedTagsChanged' can not be referenced from a Sendable closure
+324 |             NotificationCenter.default.post(name: .pennedCollectionsChanged, object: self)
+325 |         }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tags/DocumentTagRepository.swift:5:16: note: static property declared here
+  3 | 
+  4 | extension Notification.Name {
+  5 |     static let pennedTagsChanged = Notification.Name("Penned.TagsChanged")
+    |                `- note: static property declared here
+  6 | }
+  7 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Persistence/AppDatabase.swift:324:52: warning: main actor-isolated static property 'pennedCollectionsChanged' can not be referenced from a Sendable closure
+322 |             if tasksChanged { NotificationCenter.default.post(name: .vellixTasksChanged, object: self) }
+323 |             if tagsChanged { NotificationCenter.default.post(name: .pennedTagsChanged, object: self) }
+324 |             NotificationCenter.default.post(name: .pennedCollectionsChanged, object: self)
+    |                                                    `- warning: main actor-isolated static property 'pennedCollectionsChanged' can not be referenced from a Sendable closure
+325 |         }
+326 |         // Never invoke a subscriber inline, including when GCD runs a database
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Collections/CollectionModels.swift:345:16: note: static property declared here
+343 | 
+344 | extension Notification.Name {
+345 |     static let pennedCollectionsChanged = Notification.Name("penned.collectionsChanged")
+    |                `- note: static property declared here
+346 | }
+347 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Publishing/PublishingPresentation.swift:9:60: warning: 'weak' ownership of capture 'accounts' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 6 |     @Environment(\.scenePhase) private var scenePhase
+ 7 |     func body(content: Content) -> some View {
+ 8 |         content.task(id: (accounts.currentAccountIdentity?.libraryOwnerKey ?? "signed-out") + String(accounts.currentUser?.remoteAuthDeleted ?? false)) {
+   |                                                                                                                                                         |- note: 'accounts' implicitly strongly captured here
+   |                                                                                                                                                         `- note: add 'accounts' as a capture list item to silence
+ 9 |             environment.publishing.start(identity: { [weak accounts] in
+   |                                                            |- warning: 'weak' ownership of capture 'accounts' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+   |                                                            `- note: explicitly assign the capture list item to silence
+10 |                 accounts?.currentUser?.remoteAuthDeleted == false ? accounts?.currentAccountIdentity : nil
+11 |             }, accessToken: { [weak accounts] in
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Publishing/PublishingPresentation.swift:11:37: warning: 'weak' ownership of capture 'accounts' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 6 |     @Environment(\.scenePhase) private var scenePhase
+ 7 |     func body(content: Content) -> some View {
+ 8 |         content.task(id: (accounts.currentAccountIdentity?.libraryOwnerKey ?? "signed-out") + String(accounts.currentUser?.remoteAuthDeleted ?? false)) {
+   |                                                                                                                                                         |- note: 'accounts' implicitly strongly captured here
+   |                                                                                                                                                         `- note: add 'accounts' as a capture list item to silence
+ 9 |             environment.publishing.start(identity: { [weak accounts] in
+10 |                 accounts?.currentUser?.remoteAuthDeleted == false ? accounts?.currentAccountIdentity : nil
+11 |             }, accessToken: { [weak accounts] in
+   |                                     |- warning: 'weak' ownership of capture 'accounts' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+   |                                     `- note: explicitly assign the capture list item to silence
+12 |                 guard let accounts else { throw PublishingFailure.authenticationRequired }
+13 |                 return try await accounts.publishingAccessToken()
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Publishing/PublishingPresentation.swift:14:38: warning: 'weak' ownership of capture 'accounts' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+ 6 |     @Environment(\.scenePhase) private var scenePhase
+ 7 |     func body(content: Content) -> some View {
+ 8 |         content.task(id: (accounts.currentAccountIdentity?.libraryOwnerKey ?? "signed-out") + String(accounts.currentUser?.remoteAuthDeleted ?? false)) {
+   |                                                                                                                                                         |- note: 'accounts' implicitly strongly captured here
+   |                                                                                                                                                         `- note: add 'accounts' as a capture list item to silence
+ 9 |             environment.publishing.start(identity: { [weak accounts] in
+10 |                 accounts?.currentUser?.remoteAuthDeleted == false ? accounts?.currentAccountIdentity : nil
+   :
+12 |                 guard let accounts else { throw PublishingFailure.authenticationRequired }
+13 |                 return try await accounts.publishingAccessToken()
+14 |             }, authorAvatar: { [weak accounts] in accounts?.currentUser?.profileImageData })
+   |                                      |- warning: 'weak' ownership of capture 'accounts' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+   |                                      `- note: explicitly assign the capture list item to silence
+15 |         }
+16 |         .onChange(of: accounts.currentUser?.profileRevision) { _, _ in environment.publishing.profileChanged() }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Publishing/PublishingProjection.swift:43:73: warning: call to main actor-isolated static method 'media(_:assets:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 35 |     }
+ 36 | 
+ 37 |     static func content(_ source: [String: Any], media: [String: PublishingMedia], depth: Int = 0) throws -> [String: Any] {
+    |                 `- note: add '@MainActor' to make static method 'content(_:media:depth:)' part of global actor 'MainActor'
+ 38 |         guard depth <= 64, let type = source["type"] as? String else { throw PublishingFailure.invalidContent("Invalid document structure.") }
+ 39 |         if ["pageReference", "privateReference"].contains(type) { return ["type": "privateReference"] }
+    :
+ 41 |         if ["publishedPage", "publishedCollection"].contains(type) {
+ 42 |             let attrs = source["attrs"] as? [String: Any] ?? [:]
+ 43 |             return ["type": type, "attrs": try PublishingVisibleContent.media(attrs, assets: media)]
+    |                                                                         `- warning: call to main actor-isolated static method 'media(_:assets:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 44 |         }
+ 45 |         guard let allowed = attributes[type] else { throw PublishingFailure.invalidContent("Unsupported block: \(type).") }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Publishing/PublishingVisibleContent.swift:126:17: note: calls to static method 'media(_:assets:)' from outside of its actor context are implicitly asynchronous
+124 |     }
+125 | 
+126 |     static func media(_ value: Any, assets: [String: PublishingMedia]) throws -> Any {
+    |                 `- note: calls to static method 'media(_:assets:)' from outside of its actor context are implicitly asynchronous
+127 |         if var object = value as? [String: Any] {
+128 |             for key in ["relativePath", "imagePath"] {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Publishing/PublishingQueue.swift:39:65: warning: reference to captured var 'self' in concurrently-executing code; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+ 37 |             .receive(on: RunLoop.main).sink { [weak self] _ in self?.reload() }
+ 38 |         network.pathUpdateHandler = { [weak self] path in
+ 39 |             if path.status == .satisfied { Task { @MainActor in self?.retry() } }
+    |                                                                 `- warning: reference to captured var 'self' in concurrently-executing code; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+ 40 |         }
+ 41 |         network.start(queue: DispatchQueue(label: "penned.publishing.network"))
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/TipTapEditorSession.swift:2621:37: warning: main actor-isolated instance method 'validateBlockDropTarget(sourceID:destinationID:movingPageIDs:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+2619 |             let repository = self.documentRepository, sourceID = self.documentID
+2620 |             return await Task.detached(priority: .userInitiated) {
+2621 |                 do { try repository.validateBlockDropTarget(sourceID: sourceID, destinationID: destinationID, movingPageIDs: pageIDs); return true }
+     |                                     `- warning: main actor-isolated instance method 'validateBlockDropTarget(sourceID:destinationID:movingPageIDs:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+2622 |                 catch { return false }
+2623 |             }.value
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/TipTapWebView.swift:883:21: warning: consider using asynchronous alternative function
+ 881 |             })()
+ 882 |             """#
+ 883 |             webView.evaluateJavaScript(script) { [weak self] result, error in
+     |                     `- warning: consider using asynchronous alternative function
+ 884 |                 guard let self else { return }
+ 885 |                 let report: [String: Any] = [
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/WebKit.framework/Headers/WKWebView.h:269:1: note: 'evaluateJavaScript' declared here
+267 |    - A `contentWorld` value of `WKContentWorld.pageWorld`
+268 | */
+269 | - (void)evaluateJavaScript:(NSString *)javaScriptString completionHandler:(WK_SWIFT_UI_ACTOR void (^ _Nullable)(id WK_NULLABLE_RESULT, NSError * _Nullable error))completionHandler;
+    | `- note: 'evaluateJavaScript' declared here
+270 | 
+271 | /* @abstract Evaluates the given JavaScript string.
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/TipTapWebView.swift:980:41: warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+ 978 |         let rendererFormat = UIGraphicsImageRendererFormat()
+ 979 |         rendererFormat.opaque = false
+ 980 |         rendererFormat.scale = UIScreen.main.scale
+     |                                         `- warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+ 981 | 
+ 982 |         let rendered = UIGraphicsImageRenderer(size: targetSize, format: rendererFormat).image { _ in
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/TipTapWebView.swift:1009:53: warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+1007 |         guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
+1008 | 
+1009 |         let renderScale = max(image.scale, UIScreen.main.scale)
+     |                                                     `- warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+1010 |         let format = UIGraphicsImageRendererFormat()
+1011 |         format.scale = renderScale
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/TipTapWebView.swift:1449:41: warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+1447 |         let rendererFormat = UIGraphicsImageRendererFormat.default()
+1448 |         rendererFormat.opaque = false
+1449 |         rendererFormat.scale = UIScreen.main.scale
+     |                                         `- warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+1450 | 
+1451 |         let rendered = UIGraphicsImageRenderer(size: targetSize, format: rendererFormat).image { _ in
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/TipTapWebView.swift:1478:53: warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+1476 |         guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
+1477 | 
+1478 |         let renderScale = max(image.scale, UIScreen.main.scale)
+     |                                                     `- warning: 'main' was deprecated in iOS 26.0: Use a UIScreen instance found through context instead (i.e, view.window.windowScene.screen), or for properties like UIScreen.scale with trait equivalents, use a traitCollection found through context. [#DeprecatedDeclaration]
+1479 |         let format = UIGraphicsImageRendererFormat()
+1480 |         format.scale = renderScale
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentExportPlatform.swift:35:95: warning: 'showsPageRange' was deprecated in iOS 10.0: Pages can be removed from the print preview, so page range is always shown. [#DeprecatedDeclaration]
+ 33 |         let printController = UIPrintInteractionController.shared
+ 34 |         let info = UIPrintInfo(dictionary: nil); info.jobName = title; info.outputType = .general
+ 35 |         printController.printInfo = info; printController.printingItem = url; printController.showsPageRange = true
+    |                                                                                               `- warning: 'showsPageRange' was deprecated in iOS 10.0: Pages can be removed from the print preview, so page range is always shown. [#DeprecatedDeclaration]
+ 36 |         guard let view = presenter()?.view else { throw DocumentExportError.failed("The print window is not available.") }
+ 37 |         if UIDevice.current.userInterfaceIdiom == .pad {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentExportService.swift:140:180: warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+136 |         let token = generation
+137 |         busy = true; error = nil; output = nil
+138 |         operation = Task {
+    |                          |- note: 'self' implicitly strongly captured here
+    |                          `- note: add 'self' as a capture list item to silence
+139 |             do {
+140 |                 let value = try await DocumentExportService.generate(documentID: documentID, format: format, settings: settings, environment: environment, scheme: scheme) { [weak self] value in
+    |                                                                                                                                                                                    |- warning: 'weak' ownership of capture 'self' differs from implicitly-captured strong reference in outer scope [#ImplicitStrongCapture]
+    |                                                                                                                                                                                    `- note: explicitly assign the capture list item to silence
+141 |                     if self?.generation == token { self?.progress = value }
+142 |                 }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentMarkdownExport.swift:41:21: warning: initialization of immutable value 'attr' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 39 |             var value = escape(node["text"] as? String ?? "")
+ 40 |             for mark in node["marks"] as? [[String: Any]] ?? [] {
+ 41 |                 let attr = mark["attrs"] as? [String: Any] ?? [:]
+    |                     `- warning: initialization of immutable value 'attr' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+ 42 |                 switch mark["type"] as? String {
+ 43 |                 case "bold": value = settings.strongDelimiter + value + settings.strongDelimiter
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentWordExport.swift:17:21: warning: call to main actor-isolated static method 'xml' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 15 |     private var baseSize = 30
+ 16 |     private var listDefinitions: [String] = []
+ 17 |     private let x = DocumentExportNames.xml
+    |                     `- warning: call to main actor-isolated static method 'xml' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 18 | 
+ 19 |     init(snapshot: DocumentExportSnapshot, settings: DocumentExportSettings) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentExportModels.swift:108:17: note: calls to static method 'xml' from outside of its actor context are implicitly asynchronous
+106 |         return String((name.isEmpty || name == "." || name == ".." ? "Document" : name).prefix(100))
+107 |     }
+108 |     static func xml(_ value: String) -> String {
+    |                 `- note: calls to static method 'xml' from outside of its actor context are implicitly asynchronous
+109 |         String(String.UnicodeScalarView(value.unicodeScalars.filter { scalar in
+110 |             let n = scalar.value
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[#ImplicitStrongCapture]: <https://docs.swift.org/compiler/documentation/diagnostics/implicit-strong-capture>
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+note: Disabling hardened runtime with ad-hoc codesigning. (in target 'Vellix' from project 'Vellix')
+note: Run script build phase 'Generate Icon Library' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'Vellix' from project 'Vellix')

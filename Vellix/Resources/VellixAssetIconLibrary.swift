@@ -806,6 +806,22 @@ enum VellixAssetIconLibrary {
             VellixAssetIcon(name: "whistle"),
             VellixAssetIcon(name: "xsmile"),
         ]),
+        VellixAssetIconCategory(name: "Unsorted", icons: [
+            VellixAssetIcon(name: "BannerIMG1"),
+            VellixAssetIcon(name: "BannerIMG2"),
+            VellixAssetIcon(name: "BannerIMG3"),
+            VellixAssetIcon(name: "BannerIMG4"),
+            VellixAssetIcon(name: "BannerIMG5"),
+            VellixAssetIcon(name: "BannerIMG6"),
+            VellixAssetIcon(name: "BannerIMG7"),
+            VellixAssetIcon(name: "CardIMG1"),
+            VellixAssetIcon(name: "CardIMG2"),
+            VellixAssetIcon(name: "CardIMG3"),
+            VellixAssetIcon(name: "CardIMG4"),
+            VellixAssetIcon(name: "CardIMG5"),
+            VellixAssetIcon(name: "CardIMG6"),
+            VellixAssetIcon(name: "CardIMG7"),
+        ]),
     ]
 
     /// Flattened list of every icon across all categories.

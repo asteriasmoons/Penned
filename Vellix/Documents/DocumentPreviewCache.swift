@@ -308,6 +308,13 @@ final class DocumentPreviewCache: ObservableObject {
         return presentedImages.object(forKey: key)?.image ?? memory.object(forKey: key)?.image
     }
 
+    // Display-only fallback, never an exact-key cache hit. Keeping freshness
+    // lookups separate lets a visible card retain its PNG AND request regeneration.
+    func retainedPresentationImage(documentID: String, spaceID: String?) -> CGImage? {
+        guard documents.spaceID == nil || documents.spaceID == spaceID else { return nil }
+        return orphanedPreviewImage(forDocumentID: documentID)
+    }
+
     func loadPresentationImage(for document: DocumentRecord, colorScheme: ColorScheme = .dark) async -> CGImage? {
         let key = presentationCacheKey(for: document, colorScheme: colorScheme)
         if let image = cachedPresentationImage(for: document, colorScheme: colorScheme) { return image }
@@ -445,6 +452,7 @@ final class DocumentPreviewCache: ObservableObject {
     func remove(documentIDs: Set<String>) {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         for file in files where documentIDs.contains(String(file.lastPathComponent.prefix(36))) { try? FileManager.default.removeItem(at: file) }
+        clearOrphanCache(ids: documentIDs)
         memory.removeAllObjects(); resetForSpaceChange()
     }
 
@@ -546,11 +554,14 @@ final class DocumentPreviewCache: ObservableObject {
                 let blank = DocumentPreviewImageFile.isBlank(image)
                 traceCodeDen(document, "render finished size=\(image.width)x\(image.height) cancelled=\(Task.isCancelled) sameGeneration=\(sameGeneration) sameKey=\(sameKey) blank=\(blank)")
                 guard !Task.isCancelled, sameGeneration, sameKey, !blank else { return nil }
+                try await Task.detached(priority: .utility) {
+                    try DocumentPreviewImageFile.write(image, to: url)
+                }.value
+                guard !Task.isCancelled, renderGeneration == generation,
+                      contents[document.id]?.cacheKey(for: colorScheme) == key else { return nil }
                 remember(image, key: key)
-                try DocumentPreviewImageFile.write(image, to: url)
                 traceCodeDen(document, "PNG SAVED path=\(url.lastPathComponent) exists=\(FileManager.default.fileExists(atPath: url.path))")
                 PennedPreviewDiagnostics.recordRegenerated()
-                contentRevision += 1
                 // One persisted revision per document; these are disposable previews, not user data.
                 // Compare by file name: contentsOfDirectory can return /private-prefixed
                 // URLs that are != the write URL for the SAME file, which previously
@@ -559,6 +570,8 @@ final class DocumentPreviewCache: ObservableObject {
                 for old in oldFiles where old.lastPathComponent.hasPrefix(document.id + "-") && old.lastPathComponent != url.lastPathComponent {
                     try? FileManager.default.removeItem(at: old)
                 }
+                clearOrphanCache(ids: [document.id])
+                contentRevision += 1
                 return image
             } catch {
                 traceCodeDen(document, "RENDER FAILED: \(error.localizedDescription)")

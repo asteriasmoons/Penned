@@ -116,6 +116,9 @@ final class DocumentEditorCache: ObservableObject {
                 model.refreshLibraryContext()
             }
             model.session.resumeRetainedPresentation(for: document.id)
+            if document.tipTapJSON.contains("\"trackedTask\"") {
+                model.refreshSharedTaskReferences()
+            }
             trace?.event("editor-cache-completed", "route=retained-document", since: started)
             return model
         }
@@ -159,6 +162,17 @@ final class DocumentEditorCache: ObservableObject {
             self?.ownsEditorPresentation?(documentID) == true
         }
         model.onOpenNestedPage = { [weak self] child in self?.openNestedPage?(child, documentID) }
+        model.prepareBlockDropDestination = { [weak self] id in
+            // A retained child may have an outstanding autosave. Drain it before
+            // the transfer compares and updates its persisted body.
+            if let destination = self?.modelsByDocumentID[id], destination.hasUnsavedLibraryContent {
+                try await destination.captureAndSave(preservingBlockSelection: true)
+            }
+        }
+        model.blockDropRecordSaved = { [weak self] saved, contentChanged in
+            guard let cached = self?.modelsByDocumentID[saved.id] else { return }
+            await cached.adoptBlockDropRecord(saved, contentChanged: contentChanged)
+        }
         model.onChildCreated = { [weak self] child in
             self?.prepare(child)
         }

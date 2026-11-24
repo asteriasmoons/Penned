@@ -48,6 +48,23 @@ struct DocumentDraft {
     }
 }
 
+nonisolated struct BlockDropTransferCheckpoint: Sendable {
+    let sourceID: String
+    let destinationID: String
+    let destinationBefore: String
+    let destinationAfter: String
+    let movedPageIDs: [String]
+    let originalFolderIDs: [String: String]
+    let movedAttachmentIDs: [String]
+}
+
+nonisolated struct BlockDropTransferResult: Sendable {
+    let source: DocumentRecord
+    let destination: DocumentRecord
+    let checkpoint: BlockDropTransferCheckpoint
+    let movedPages: [DocumentRecord]
+}
+
 final class DocumentRepository: @unchecked Sendable {
     private let database: AppDatabase
     var spaceID: String?
@@ -614,6 +631,116 @@ final class DocumentRepository: @unchecked Sendable {
 
     func saveEditorJSON(id: String, canonicalJSON: String, in db: Database) throws -> DocumentRecord {
         try saveEditorJSON(id: id, canonicalJSON: canonicalJSON, analysis: nil, in: db)
+    }
+
+    // Both bodies and their ownership changes share one writer transaction.
+    // Undo/redo uses a compare-and-swap on the destination, never overwrites edits
+    // made there since the transfer, and never deletes the source before commit.
+    func validateBlockDropTarget(sourceID: String, destinationID: String, movingPageIDs: [String]) throws {
+        try database.read { db in
+            let source = try SpaceOwnership.document(sourceID, scope: spaceID, in: db)
+            let target = try SpaceOwnership.document(destinationID, scope: source.spaceID, in: db)
+            guard source.id != target.id, source.spaceID == target.spaceID, !source.isTrashed, !source.isArchived,
+                  !target.isTrashed, !target.isArchived else {
+                throw VellixError.impossibleMove("This page cannot receive these blocks.")
+            }
+            for id in movingPageIDs {
+                let page = try SpaceOwnership.document(id, scope: source.spaceID, in: db)
+                guard page.parentDocumentID == source.id else {
+                    throw VellixError.impossibleMove("This page is not owned by the source document.")
+                }
+                try Self.validateParent(parentID: target.id, childID: id, in: db)
+            }
+        }
+    }
+
+    func transferDroppedBlocks(sourceID: String, sourceBefore: String, sourceAfter: String,
+                               destinationID: String?, blocksJSON: String?,
+                               checkpoint: BlockDropTransferCheckpoint?, forward: Bool) throws -> BlockDropTransferResult {
+        let before = try TipTapContentAnalyzer.analyze(sourceBefore).canonicalJSON
+        let after = try TipTapContentAnalyzer.analyze(sourceAfter).canonicalJSON
+        return try database.write { db in
+            let source = try SpaceOwnership.document(sourceID, scope: spaceID, in: db)
+            guard source.tipTapJSON == before, !source.isTrashed, !source.isArchived else {
+                throw VellixError.impossibleMove("The source document changed. Your blocks were not moved.")
+            }
+            let targetID = checkpoint?.destinationID ?? destinationID ?? ""
+            let target = try SpaceOwnership.document(targetID, scope: source.spaceID, in: db)
+            guard target.id != source.id, target.spaceID == source.spaceID, !target.isTrashed, !target.isArchived else {
+                throw VellixError.impossibleMove("This nested page cannot receive these blocks.")
+            }
+            let saved: BlockDropTransferCheckpoint
+            if let checkpoint {
+                guard checkpoint.sourceID == source.id,
+                      target.tipTapJSON == (forward ? checkpoint.destinationBefore : checkpoint.destinationAfter) else {
+                    throw VellixError.impossibleMove("The nested page has changed since this move. Undo or redo was not applied, to protect its newer content.")
+                }
+                saved = checkpoint
+            } else {
+                guard forward, TipTapContentAnalyzer.pageReferenceIDs(in: before).contains(target.id),
+                      let blocksJSON, let data = blocksJSON.data(using: .utf8),
+                      let blocks = try JSONSerialization.jsonObject(with: data) as? [[String: Any]], !blocks.isEmpty else {
+                    throw VellixError.impossibleMove("The nested Page or Card drop is no longer valid.")
+                }
+                var body = TipTapContentAnalyzer.documentObject(from: target.tipTapJSON)
+                var existing = body["content"] as? [[String: Any]] ?? []
+                if existing.count == 1, existing[0]["type"] as? String == "paragraph",
+                   (existing[0]["content"] as? [Any] ?? []).isEmpty,
+                   ((existing[0]["attrs"] as? [String: Any])?["placeholderEnabled"] as? Bool) != true {
+                    existing = []
+                }
+                body["content"] = blocks + existing
+                let destinationAfter = try TipTapContentAnalyzer.analyze(String(decoding:
+                    JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]), as: UTF8.self)).canonicalJSON
+                var pages = Set<String>()
+                func collect(_ nodes: [[String: Any]]) {
+                    for node in nodes {
+                        if ["pageReference", "collection"].contains(node["type"] as? String ?? ""),
+                           let id = (node["attrs"] as? [String: Any])?["documentID"] as? String, !id.isEmpty { pages.insert(id) }
+                        collect(node["content"] as? [[String: Any]] ?? [])
+                    }
+                }
+                collect(blocks)
+                var folders: [String: String] = [:]
+                for id in pages {
+                    if let folderID = try SpaceOwnership.document(id, scope: source.spaceID, in: db).folderID { folders[id] = folderID }
+                }
+                let movedJSON = String(decoding: try JSONSerialization.data(withJSONObject: ["type": "doc", "content": blocks]), as: UTF8.self)
+                let exclusivePaths = EditorAttachment.paths(in: movedJSON).subtracting(EditorAttachment.paths(in: after))
+                let assets = try AttachmentRecord.fetchAll(db, sql: "SELECT * FROM attachments WHERE documentID=?", arguments: [source.id])
+                saved = BlockDropTransferCheckpoint(sourceID: source.id, destinationID: target.id,
+                    destinationBefore: target.tipTapJSON, destinationAfter: destinationAfter,
+                    movedPageIDs: pages.sorted(), originalFolderIDs: folders,
+                    movedAttachmentIDs: assets.filter { exclusivePaths.contains($0.relativePath) }.map(\.id))
+            }
+            let oldOwner = forward ? source.id : target.id, newOwner = forward ? target.id : source.id
+            var movedPages: [DocumentRecord] = []
+            for id in saved.movedPageIDs {
+                var page = try SpaceOwnership.document(id, scope: source.spaceID, in: db)
+                guard page.parentDocumentID == oldOwner,
+                      try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM collectionEntries WHERE documentID=?)", arguments: [id]) != true else {
+                    throw VellixError.impossibleMove("A nested page's ownership changed. The move was not applied.")
+                }
+                try Self.validateParent(parentID: newOwner, childID: id, in: db)
+                page.parentDocumentID = newOwner
+                page.folderID = forward ? target.folderID : saved.originalFolderIDs[id]
+                page.updatedAt = Date()
+                try page.update(db)
+                try Self.upsertSearchIndex(page, in: db)
+                movedPages.append(page)
+            }
+            for id in saved.movedAttachmentIDs {
+                guard var asset = try AttachmentRecord.fetchOne(db, key: id), asset.documentID == oldOwner else {
+                    throw VellixError.impossibleMove("An attachment's ownership changed. The move was not applied.")
+                }
+                asset.documentID = newOwner
+                try asset.update(db)
+            }
+            let updatedTarget = try saveEditorJSON(id: target.id,
+                canonicalJSON: forward ? saved.destinationAfter : saved.destinationBefore, in: db)
+            let updatedSource = try saveEditorJSON(id: source.id, canonicalJSON: after, in: db)
+            return BlockDropTransferResult(source: updatedSource, destination: updatedTarget, checkpoint: saved, movedPages: movedPages)
+        }
     }
 
     private func saveEditorJSON(id: String, canonicalJSON: String, analysis prepared: TipTapAnalysis?, in db: Database) throws -> DocumentRecord {

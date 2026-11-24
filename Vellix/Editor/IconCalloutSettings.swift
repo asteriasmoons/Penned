@@ -12,6 +12,11 @@ nonisolated struct IconCalloutSettings: Equatable, Sendable {
     var imagePath: String?
     var textColor: String?
     var imageTint: String?
+    var title: String
+    var titleColor: String?
+    var collapsible: Bool
+    var collapsed: Bool
+    var collapseColor: String?
     var widthPercent: Double?
     var minimumHeight: Int?
 
@@ -24,6 +29,11 @@ nonisolated struct IconCalloutSettings: Equatable, Sendable {
         imagePath = (attrs["imagePath"] as? String).flatMap { AttachmentStore.validRelativePath($0) ? $0 : nil }
         textColor = Self.optionalColor(attrs["textColor"])
         imageTint = Self.optionalColor(attrs["imageTint"])
+        title = attrs["title"] as? String ?? ""
+        titleColor = Self.optionalColor(attrs["titleColor"])
+        collapsible = !plain && (attrs["collapsible"] as? Bool == true || attrs["collapsible"] as? String == "true")
+        collapsed = collapsible && (attrs["collapsed"] as? Bool == true || attrs["collapsed"] as? String == "true")
+        collapseColor = Self.optionalColor(attrs["collapseColor"])
         widthPercent = (attrs["widthPercent"] as? Double).flatMap { $0.isFinite && $0 > 0 ? min(100, max(1, $0)) : nil }
         minimumHeight = (attrs["minimumHeight"] as? Int).flatMap { $0 > 0 ? Self.clampMinimumHeight($0) : nil }
     }
@@ -34,6 +44,9 @@ nonisolated struct IconCalloutSettings: Equatable, Sendable {
     }
 
     var inkColor: String { textColor ?? GridCardSettings.readableInk(on: backgroundColor) }
+    var titleInk: String { titleColor ?? inkColor }
+    var disclosureInk: String { collapseColor ?? iconColor }
+    var hasTitle: Bool { !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     static func clampMinimumHeight(_ value: Int) -> Int { min(1600, max(44, value)) }
 
@@ -50,6 +63,11 @@ nonisolated struct IconCalloutSettings: Equatable, Sendable {
         values["imagePath"] = imagePath
         values["textColor"] = textColor
         values["imageTint"] = imageTint
+        values["title"] = title
+        values["titleColor"] = titleColor
+        values["collapsible"] = collapsible
+        values["collapsed"] = collapsible && collapsed
+        values["collapseColor"] = collapseColor
         return values
     }
 }
@@ -230,7 +248,17 @@ struct IconCalloutGlyph: View {
             } else {
                 LibraryIcon(name: settings.icon, size: 26).foregroundStyle(Color(vellixHex: settings.iconColor))
             }
-        }.frame(width: 32, height: 32).accessibilityHidden(true)
+        }
+        .shadow(color: outline, radius: 0, x: 0.6, y: 0)
+        .shadow(color: outline, radius: 0, x: -0.6, y: 0)
+        .shadow(color: outline, radius: 0, x: 0, y: 0.6)
+        .shadow(color: outline, radius: 0, x: 0, y: -0.6)
+        .frame(width: 32, height: 32).accessibilityHidden(true)
+    }
+
+    private var outline: Color {
+        if image != nil { return settings.imageTint.map { Color(vellixHex: $0) } ?? .clear }
+        return Color(vellixHex: settings.iconColor)
     }
 }
 
@@ -238,6 +266,8 @@ struct IconCalloutSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var environment: AppEnvironment
     @FocusState private var textFocused: Bool
+    @FocusState private var titleFocused: Bool
+    @ScaledMetric(relativeTo: .body) private var previewTitleSize: CGFloat = 19
     @State private var draft: IconCalloutSettings
     @State private var text: String
     @State private var photo: PhotosPickerItem?
@@ -275,11 +305,22 @@ struct IconCalloutSettingsSheet: View {
                             }
                         }.pickerStyle(.segmented)
                         if let height = draft.minimumHeight {
-                            Button("Automatic Height") { draft.minimumHeight = nil }
+                            Button("Reset Height") { draft.minimumHeight = nil }
                                 .accessibilityValue("\(height) points")
                         }
                     } else {
                         preview
+                        TextField("Title (Optional)", text: $draft.title, axis: .vertical)
+                            .textFieldStyle(.plain).focused($titleFocused)
+                            .padding(12).pennedSheetField()
+                        optionalPicker("Title Color", \.titleColor, fallback: draft.titleInk, resetTitle: "Automatic")
+                        Toggle("Collapse Mode", isOn: $draft.collapsible)
+                            .padding(12).pennedSheetField()
+                            .onChange(of: draft.collapsible) { _, enabled in if !enabled { draft.collapsed = false } }
+                        if draft.collapsible {
+                            optionalPicker("Collapse Button Color", \.collapseColor,
+                                fallback: draft.disclosureInk, resetTitle: "Automatic")
+                        }
                         Button { pickingIcon = true } label: { source("Icon Library", icon: "sparkle") }.buttonStyle(.plain)
                         PhotosPicker(selection: $photo, matching: .images) { source("Photo Library", icon: "imagesign") }.buttonStyle(.plain)
                         Button { pickingFile = true } label: { source("Choose File", icon: "folderhand") }.buttonStyle(.plain)
@@ -298,7 +339,7 @@ struct IconCalloutSettingsSheet: View {
             .disabled(busy)
             .pennedSheet(title: "Callout Settings", closeDisabled: busy, close: { dismiss() }) {
                 #if os(iOS)
-                PennedSheetKeyboardDismissButton { textFocused = false }.disabled(busy)
+                PennedSheetKeyboardDismissButton { textFocused = false; titleFocused = false }.disabled(busy)
                 #endif
                 Button("Done", action: save).disabled(busy)
             }
@@ -338,13 +379,25 @@ struct IconCalloutSettingsSheet: View {
     }
 
     private var preview: some View {
-        HStack(alignment: .top, spacing: 8) {
-            if !request.isPlain { IconCalloutGlyph(settings: draft, image: image ?? existingImage) }
-            if request.editableText != nil {
-                TextField("Callout Text", text: $text, axis: .vertical).textFieldStyle(.plain)
-                    .lineLimit(1...6).focused($textFocused)
-            } else if !request.previewText.isEmpty {
-                Text(request.previewText).lineLimit(6)
+        VStack(alignment: .leading, spacing: 4) {
+            if draft.hasTitle {
+                HStack(alignment: .center, spacing: 8) {
+                    IconCalloutGlyph(settings: draft, image: image ?? existingImage)
+                    Text(draft.title)
+                        .font(.system(size: previewTitleSize, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Color(vellixHex: draft.titleInk))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    previewDisclosure
+                }
+                if !draft.collapsed { previewBody.frame(maxWidth: .infinity, alignment: .leading) }
+            } else {
+                HStack(alignment: .top, spacing: 8) {
+                    IconCalloutGlyph(settings: draft, image: image ?? existingImage)
+                    if !draft.collapsed { previewBody.frame(maxWidth: .infinity, alignment: .leading) }
+                    else { Spacer(minLength: 0) }
+                    previewDisclosure
+                }
             }
         }
         .foregroundStyle(Color(vellixHex: draft.inkColor))
@@ -352,6 +405,26 @@ struct IconCalloutSettingsSheet: View {
         .frame(maxWidth: .infinity, minHeight: request.isPlain ? draft.minimumHeight.map { CGFloat($0) } : nil,
                alignment: .topLeading)
         .background(Color(vellixHex: draft.backgroundColor), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    @ViewBuilder private var previewDisclosure: some View {
+        if draft.collapsible {
+            Button { draft.collapsed.toggle() } label: {
+                LibraryIcon(name: draft.collapsed ? "chevdown" : "chevup", size: 20)
+                    .foregroundStyle(Color(vellixHex: draft.disclosureInk))
+                    .frame(width: 32, height: 32).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+                .accessibilityLabel(draft.collapsed ? "Expand callout" : "Collapse callout")
+        }
+    }
+
+    @ViewBuilder private var previewBody: some View {
+        if request.editableText != nil {
+            TextField("Callout Text", text: $text, axis: .vertical).textFieldStyle(.plain)
+                .lineLimit(1...6).focused($textFocused)
+        } else if !request.previewText.isEmpty {
+            Text(request.previewText).lineLimit(6)
+        }
     }
 
     private var plainPreview: some View {
@@ -404,12 +477,15 @@ struct IconCalloutSettingsSheet: View {
 
     private func optionalPicker(_ title: String, _ key: WritableKeyPath<IconCalloutSettings, String?>,
                                 fallback: String, resetTitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 12) {
             ColorPicker(title, selection: Binding(get: { Color(vellixHex: draft[keyPath: key] ?? fallback) },
                 set: { draft[keyPath: key] = $0.vellixHexString(fallback: fallback) }), supportsOpacity: false)
             if draft[keyPath: key] != nil {
-                Button(resetTitle) { draft[keyPath: key] = nil }
-                    .font(.subheadline)
+                Button { draft[keyPath: key] = nil } label: {
+                    LibraryIcon(name: "undo", size: 18).frame(width: 32, height: 32).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                    .accessibilityLabel("Reset \(title)")
+                    .accessibilityHint(resetTitle)
             }
         }.padding(12).pennedSheetField()
     }
@@ -437,6 +513,7 @@ struct IconCalloutSettingsSheet: View {
     private func save() {
         guard !busy else { return }
         textFocused = false
+        titleFocused = false
         busy = true
         Task {
             defer { busy = false }

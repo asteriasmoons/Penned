@@ -295,8 +295,19 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                         if type == "iconCallout" {
                             add(.gridCardIcon(card.icon), CGRect(x: x + 4, y: y, width: iconSize, height: iconSize),
                                 type, color: card.iconColor, imagePath: card.imagePath, imageTint: card.imageTint)
+                            if card.collapsible {
+                                add(.gridCardIcon(card.collapsed ? "chevdown" : "chevup"),
+                                    CGRect(x: x + width - 12, y: y, width: 8, height: 8),
+                                    type, color: card.disclosureInk)
+                            }
+                            if card.hasTitle {
+                                text(card.title, type: "calloutText", x: xText,
+                                     width: max(1, textWidth - (card.collapsible ? 12 : 0)),
+                                     thickness: 2.8, maxLines: 3, color: card.titleInk)
+                                y += 2
+                            }
                         }
-                        for child in children.prefix(16) {
+                        for child in children.prefix(type == "iconCallout" && card.collapsed ? 0 : 16) {
                             text(inlineText(child), type: "calloutText", x: xText, width: textWidth,
                                  thickness: 2.1, maxLines: 10,
                                  color: type == "iconCallout" ? card.inkColor : GridCardSettings.readableInk(on: background))

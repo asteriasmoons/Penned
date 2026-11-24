@@ -1,0 +1,417 @@
+2026-11-23 16:31:29.954 xcodebuild[8090:5803074] [MT] IDESchemeActionsInvocationRecord: Device <DVTiOSDeviceSimulatorPlaceholder: 0x7a8b93df40 (Any iOS Simulator Device | undefined_arch)> is missing operatingSystemVersion, operatingSystemVersionWithBuildNumber.
+/Users/asteriasmoons/Desktop/Vellix/Vellix/VellixTests/LibraryOverviewTestSupport.swift:2:18: warning: File 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import (in target 'Vellix' from project 'Vellix')
+/Users/asteriasmoons/Desktop/Vellix/Vellix/VellixTests/LibraryOverviewTestSupport.swift:2:18: warning: File 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import (in target 'Vellix' from project 'Vellix')
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 /Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift (in target 'Vellix' from project 'Vellix')
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:253:40: warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 89 | 
+ 90 |     @discardableResult
+ 91 |     static func reconcile(in db: Database) throws -> Bool {
+    |                 `- note: add '@MainActor' to make static method 'reconcile(in:)' part of global actor 'MainActor'
+ 92 |         // Older migrations can run before the reference table exists.
+ 93 |         guard try db.tableExists("documentTaskReferences") else { return false }
+    :
+251 |                 document.revision += 1
+252 |                 try document.update(db)
+253 |                 try DocumentRepository.upsertSearchIndex(document, in: db)
+    |                                        `- warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+254 |                 changed = true
+255 |             }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1073:17: note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1071 |     }
+1072 | 
+1073 |     static func upsertSearchIndex(_ record: DocumentRecord, in db: Database) throws {
+     |                 `- note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1074 |         try deleteSearchIndex(id: record.id, in: db)
+1075 |         let templateID = record.templateID ?? TemplateRepository.documentTemplateID(record.id)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:363:48: warning: main actor-isolated property 'trimmedNonEmpty' can not be referenced from a nonisolated context
+356 |     static func isDetail(_ documentID: String) -> Bool { documentID.hasPrefix("vellix-task-page:") && isManaged(documentID) }
+357 | 
+358 |     static func reconcile(sourceID: String, in db: Database) throws {
+    |                 `- note: add '@MainActor' to make static method 'reconcile(sourceID:in:)' part of global actor 'MainActor'
+359 |         guard let source = try DocumentRecord.fetchOne(db, key: sourceID) else { return }
+360 |         let texts = DocumentTaskIndex.texts(in: source.tipTapJSON)
+361 |         for context in try DocumentTaskIndex.contexts(in: source.tipTapJSON) {
+362 |             guard let task = context.metadata else { continue }
+363 |             let text = texts[context.blockID]?.trimmedNonEmpty ?? "Untitled Task"
+    |                                                `- warning: main actor-isolated property 'trimmedNonEmpty' can not be referenced from a nonisolated context
+364 |             let detail = detailID(task.id), history = historyID(task.id)
+365 |             let reference: [String: Any] = ["type": "pageReference", "attrs": ["id": task.id + "-history-link", "documentID": history]]
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1760:9: note: property declared here
+1758 | 
+1759 | extension String {
+1760 |     var trimmedNonEmpty: String? {
+     |         `- note: property declared here
+1761 |         let value = trimmingCharacters(in: .whitespacesAndNewlines)
+1762 |         return value.isEmpty ? nil : value
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:437:32: warning: call to main actor-isolated instance method 'encodedJSON()' in a synchronous nonisolated context [#ActorIsolatedCall]
+411 |     }
+412 | 
+413 |     private static func save(id: String, title: String, parentID: String, content: [[String: Any]], task: DocumentTaskMetadata, taskText: String, source: DocumentRecord, in db: Database) throws {
+    |                         `- note: add '@MainActor' to make static method 'save(id:title:parentID:content:task:taskText:source:in:)' part of global actor 'MainActor'
+414 |         let old = try DocumentRecord.fetchOne(db, key: id)
+415 |         let oldObject = old.map { TipTapContentAnalyzer.documentObject(from: $0.tipTapJSON) }
+    :
+435 |         var appearance = source.appearance
+436 |         appearance.showsCover = false
+437 |         let style = appearance.encodedJSON()
+    |                                `- warning: call to main actor-isolated instance method 'encodedJSON()' in a synchronous nonisolated context [#ActorIsolatedCall]
+438 |         let savedTitle = old.map { isDetail(id) && $0.title == (projection["sourceTitle"] as? String) ? title : $0.title } ?? title
+439 |         if let old, old.title == savedTitle, old.tipTapJSON == analysis.canonicalJSON, old.parentDocumentID == parentID,
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentAppearance.swift:412:10: note: calls to instance method 'encodedJSON()' from outside of its actor context are implicitly asynchronous
+410 |     }
+411 | 
+412 |     func encodedJSON() -> String? {
+    |          `- note: calls to instance method 'encodedJSON()' from outside of its actor context are implicitly asynchronous
+413 |         guard let data = try? JSONEncoder().encode(self) else {
+414 |             return nil
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:456:32: warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+411 |     }
+412 | 
+413 |     private static func save(id: String, title: String, parentID: String, content: [[String: Any]], task: DocumentTaskMetadata, taskText: String, source: DocumentRecord, in db: Database) throws {
+    |                         `- note: add '@MainActor' to make static method 'save(id:title:parentID:content:task:taskText:source:in:)' part of global actor 'MainActor'
+414 |         let old = try DocumentRecord.fetchOne(db, key: id)
+415 |         let oldObject = old.map { TipTapContentAnalyzer.documentObject(from: $0.tipTapJSON) }
+    :
+454 |         if old != nil { record.revision += 1 }
+455 |         try record.save(db)
+456 |         try DocumentRepository.upsertSearchIndex(record, in: db)
+    |                                `- warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+457 |     }
+458 | }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1073:17: note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1071 |     }
+1072 | 
+1073 |     static func upsertSearchIndex(_ record: DocumentRecord, in db: Database) throws {
+     |                 `- note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1074 |         try deleteSearchIndex(id: record.id, in: db)
+1075 |         let templateID = record.templateID ?? TemplateRepository.documentTemplateID(record.id)
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+error: the following command failed with exit code 0 but produced no further output
+SwiftCompile normal arm64 (in target 'Vellix' from project 'Vellix')
+/Users/asteriasmoons/Desktop/Vellix/Vellix/VellixTests/LibraryOverviewTestSupport.swift:2:18: warning: file 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import [#ModuleSelfImport]
+ 1 | import Foundation
+ 2 | @testable import Vellix
+   |                  `- warning: file 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import [#ModuleSelfImport]
+ 3 | 
+ 4 | // The library no longer materializes every top-level document in `overview.all`;
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/PadWorkspaceModel.swift:165:52: warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 68 | }
+ 69 | 
+ 70 | struct PadWorkspaceLocation: Equatable {
+    |        `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+ 71 |     var destination: PadWorkspaceDestination = .library(.allDocuments)
+ 72 |     var folderID: String?
+    :
+163 |     }
+164 | 
+165 |     func newTab(_ location: PadWorkspaceLocation = PadWorkspaceLocation(), openingTrace: PennedDocumentOpenTrace? = nil) async throws {
+    |                                                    `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+166 |         try await transition(openingTrace: openingTrace) {
+167 |             try self.validate(location)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:16:38: warning: main actor-isolated property 'userInterfaceIdiom' can not be referenced from a nonisolated context
+ 14 |     static let deviceTag: String = {
+ 15 |         #if canImport(UIKit)
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+    |                                      `- warning: main actor-isolated property 'userInterfaceIdiom' can not be referenced from a nonisolated context
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:61:52: note: property declared here
+59 | @property(nonatomic,readonly,getter=isMultitaskingSupported) BOOL multitaskingSupported API_AVAILABLE(ios(4.0));
+60 | 
+61 | @property(nonatomic,readonly) UIUserInterfaceIdiom userInterfaceIdiom API_AVAILABLE(ios(3.2));
+   |                                                    `- note: property declared here
+62 | 
+63 | - (void)playInputClick API_AVAILABLE(ios(4.2)) API_UNAVAILABLE(visionos);  // Plays a click only if an enabling input view is on-screen and user has enabled input clicks.
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:16:30: warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 14 |     static let deviceTag: String = {
+ 15 |         #if canImport(UIKit)
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+    |                              `- warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:37:49: note: class property declared here
+35 | @interface UIDevice : NSObject
+36 | 
+37 | @property(class, nonatomic, readonly) UIDevice *currentDevice;
+   |                                                 `- note: class property declared here
+38 | 
+39 | @property(nonatomic,readonly,strong) NSString    *name;              // Synonym for model. Prior to iOS 16, user-assigned device name (e.g. @"My iPhone").
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:18:44: warning: main actor-isolated property 'systemVersion' can not be referenced from a nonisolated context
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+    |                                            `- warning: main actor-isolated property 'systemVersion' can not be referenced from a nonisolated context
+ 19 |         #else
+ 20 |         return "mac"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:43:51: note: property declared here
+41 | @property(nonatomic,readonly,strong) NSString    *localizedModel;    // localized version of model
+42 | @property(nonatomic,readonly,strong) NSString    *systemName;        // e.g. @"iOS"
+43 | @property(nonatomic,readonly,strong) NSString    *systemVersion;     // e.g. @"4.0"
+   |                                                   `- note: property declared here
+44 | @property(nonatomic,readonly) UIDeviceOrientation orientation API_UNAVAILABLE(tvos, visionos);       // return current device orientation.  this will return UIDeviceOrientationUnknown unless device orientation notifications are being generated.
+45 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:18:36: warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+    |                                    `- warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 19 |         #else
+ 20 |         return "mac"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:37:49: note: class property declared here
+35 | @interface UIDevice : NSObject
+36 | 
+37 | @property(class, nonatomic, readonly) UIDevice *currentDevice;
+   |                                                 `- note: class property declared here
+38 | 
+39 | @property(nonatomic,readonly,strong) NSString    *name;              // Synonym for model. Prior to iOS 16, user-assigned device name (e.g. @"My iPhone").
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/CodeBlockTextEditor.swift:20:22: warning: 'nonisolated' cannot be applied to mutable stored properties; this is an error in the Swift 6 language mode
+ 18 |     static let shared = CodeSyntaxEngine()
+ 19 |     private let queue = DispatchQueue(label: "penned.code-syntax", qos: .userInitiated)
+ 20 |     private lazy var grammar: JSValue? = {
+    |                      `- warning: 'nonisolated' cannot be applied to mutable stored properties; this is an error in the Swift 6 language mode
+ 21 |         guard let url = CodeBlockCatalog.asset("code-syntax", extension: "js"),
+ 22 |               let script = try? String(contentsOf: url, encoding: .utf8), let context = JSContext() else { return nil }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentWordExport.swift:17:21: warning: call to main actor-isolated static method 'xml' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 15 |     private var baseSize = 30
+ 16 |     private var listDefinitions: [String] = []
+ 17 |     private let x = DocumentExportNames.xml
+    |                     `- warning: call to main actor-isolated static method 'xml' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 18 | 
+ 19 |     init(snapshot: DocumentExportSnapshot, settings: DocumentExportSettings) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentExportModels.swift:108:17: note: calls to static method 'xml' from outside of its actor context are implicitly asynchronous
+106 |         return String((name.isEmpty || name == "." || name == ".." ? "Document" : name).prefix(100))
+107 |     }
+108 |     static func xml(_ value: String) -> String {
+    |                 `- note: calls to static method 'xml' from outside of its actor context are implicitly asynchronous
+109 |         String(String.UnicodeScalarView(value.unicodeScalars.filter { scalar in
+110 |             let n = scalar.value
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#ModuleSelfImport]: <https://docs.swift.org/compiler/documentation/diagnostics/module-self-import>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/VellixTests/LibraryOverviewTestSupport.swift:2:18: warning: file 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import [#ModuleSelfImport]
+ 1 | import Foundation
+ 2 | @testable import Vellix
+   |                  `- warning: file 'LibraryOverviewTestSupport.swift' is part of module 'Vellix'; ignoring import [#ModuleSelfImport]
+ 3 | 
+ 4 | // The library no longer materializes every top-level document in `overview.all`;
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/App/PadWorkspaceModel.swift:165:52: warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 68 | }
+ 69 | 
+ 70 | struct PadWorkspaceLocation: Equatable {
+    |        `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+ 71 |     var destination: PadWorkspaceDestination = .library(.allDocuments)
+ 72 |     var folderID: String?
+    :
+163 |     }
+164 | 
+165 |     func newTab(_ location: PadWorkspaceLocation = PadWorkspaceLocation(), openingTrace: PennedDocumentOpenTrace? = nil) async throws {
+    |                                                    `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+166 |         try await transition(openingTrace: openingTrace) {
+167 |             try self.validate(location)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:16:38: warning: main actor-isolated property 'userInterfaceIdiom' can not be referenced from a nonisolated context
+ 14 |     static let deviceTag: String = {
+ 15 |         #if canImport(UIKit)
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+    |                                      `- warning: main actor-isolated property 'userInterfaceIdiom' can not be referenced from a nonisolated context
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:61:52: note: property declared here
+59 | @property(nonatomic,readonly,getter=isMultitaskingSupported) BOOL multitaskingSupported API_AVAILABLE(ios(4.0));
+60 | 
+61 | @property(nonatomic,readonly) UIUserInterfaceIdiom userInterfaceIdiom API_AVAILABLE(ios(3.2));
+   |                                                    `- note: property declared here
+62 | 
+63 | - (void)playInputClick API_AVAILABLE(ios(4.2)) API_UNAVAILABLE(visionos);  // Plays a click only if an enabling input view is on-screen and user has enabled input clicks.
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:16:30: warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 14 |     static let deviceTag: String = {
+ 15 |         #if canImport(UIKit)
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+    |                              `- warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:37:49: note: class property declared here
+35 | @interface UIDevice : NSObject
+36 | 
+37 | @property(class, nonatomic, readonly) UIDevice *currentDevice;
+   |                                                 `- note: class property declared here
+38 | 
+39 | @property(nonatomic,readonly,strong) NSString    *name;              // Synonym for model. Prior to iOS 16, user-assigned device name (e.g. @"My iPhone").
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:18:44: warning: main actor-isolated property 'systemVersion' can not be referenced from a nonisolated context
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+    |                                            `- warning: main actor-isolated property 'systemVersion' can not be referenced from a nonisolated context
+ 19 |         #else
+ 20 |         return "mac"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:43:51: note: property declared here
+41 | @property(nonatomic,readonly,strong) NSString    *localizedModel;    // localized version of model
+42 | @property(nonatomic,readonly,strong) NSString    *systemName;        // e.g. @"iOS"
+43 | @property(nonatomic,readonly,strong) NSString    *systemVersion;     // e.g. @"4.0"
+   |                                                   `- note: property declared here
+44 | @property(nonatomic,readonly) UIDeviceOrientation orientation API_UNAVAILABLE(tvos, visionos);       // return current device orientation.  this will return UIDeviceOrientationUnknown unless device orientation notifications are being generated.
+45 | 
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentPreviewDescriptor.swift:18:36: warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 16 |         let idiom = UIDevice.current.userInterfaceIdiom
+ 17 |         let kind = idiom == .pad ? "iPad" : (idiom == .phone ? "iPhone" : "iOS")
+ 18 |         return "\(kind) \(UIDevice.current.systemVersion)"
+    |                                    `- warning: main actor-isolated class property 'current' can not be referenced from a nonisolated context
+ 19 |         #else
+ 20 |         return "mac"
+
+/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.2.sdk/System/Library/Frameworks/UIKit.framework/Headers/UIDevice.h:37:49: note: class property declared here
+35 | @interface UIDevice : NSObject
+36 | 
+37 | @property(class, nonatomic, readonly) UIDevice *currentDevice;
+   |                                                 `- note: class property declared here
+38 | 
+39 | @property(nonatomic,readonly,strong) NSString    *name;              // Synonym for model. Prior to iOS 16, user-assigned device name (e.g. @"My iPhone").
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Editor/CodeBlockTextEditor.swift:20:22: warning: 'nonisolated' cannot be applied to mutable stored properties; this is an error in the Swift 6 language mode
+ 18 |     static let shared = CodeSyntaxEngine()
+ 19 |     private let queue = DispatchQueue(label: "penned.code-syntax", qos: .userInitiated)
+ 20 |     private lazy var grammar: JSValue? = {
+    |                      `- warning: 'nonisolated' cannot be applied to mutable stored properties; this is an error in the Swift 6 language mode
+ 21 |         guard let url = CodeBlockCatalog.asset("code-syntax", extension: "js"),
+ 22 |               let script = try? String(contentsOf: url, encoding: .utf8), let context = JSContext() else { return nil }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentWordExport.swift:17:21: warning: call to main actor-isolated static method 'xml' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 15 |     private var baseSize = 30
+ 16 |     private var listDefinitions: [String] = []
+ 17 |     private let x = DocumentExportNames.xml
+    |                     `- warning: call to main actor-isolated static method 'xml' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 18 | 
+ 19 |     init(snapshot: DocumentExportSnapshot, settings: DocumentExportSettings) {
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Export/DocumentExportModels.swift:108:17: note: calls to static method 'xml' from outside of its actor context are implicitly asynchronous
+106 |         return String((name.isEmpty || name == "." || name == ".." ? "Document" : name).prefix(100))
+107 |     }
+108 |     static func xml(_ value: String) -> String {
+    |                 `- note: calls to static method 'xml' from outside of its actor context are implicitly asynchronous
+109 |         String(String.UnicodeScalarView(value.unicodeScalars.filter { scalar in
+110 |             let n = scalar.value
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#ModuleSelfImport]: <https://docs.swift.org/compiler/documentation/diagnostics/module-self-import>
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:253:40: warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 89 | 
+ 90 |     @discardableResult
+ 91 |     static func reconcile(in db: Database) throws -> Bool {
+    |                 `- note: add '@MainActor' to make static method 'reconcile(in:)' part of global actor 'MainActor'
+ 92 |         // Older migrations can run before the reference table exists.
+ 93 |         guard try db.tableExists("documentTaskReferences") else { return false }
+    :
+251 |                 document.revision += 1
+252 |                 try document.update(db)
+253 |                 try DocumentRepository.upsertSearchIndex(document, in: db)
+    |                                        `- warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+254 |                 changed = true
+255 |             }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1073:17: note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1071 |     }
+1072 | 
+1073 |     static func upsertSearchIndex(_ record: DocumentRecord, in db: Database) throws {
+     |                 `- note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1074 |         try deleteSearchIndex(id: record.id, in: db)
+1075 |         let templateID = record.templateID ?? TemplateRepository.documentTemplateID(record.id)
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:363:48: warning: main actor-isolated property 'trimmedNonEmpty' can not be referenced from a nonisolated context
+356 |     static func isDetail(_ documentID: String) -> Bool { documentID.hasPrefix("vellix-task-page:") && isManaged(documentID) }
+357 | 
+358 |     static func reconcile(sourceID: String, in db: Database) throws {
+    |                 `- note: add '@MainActor' to make static method 'reconcile(sourceID:in:)' part of global actor 'MainActor'
+359 |         guard let source = try DocumentRecord.fetchOne(db, key: sourceID) else { return }
+360 |         let texts = DocumentTaskIndex.texts(in: source.tipTapJSON)
+361 |         for context in try DocumentTaskIndex.contexts(in: source.tipTapJSON) {
+362 |             guard let task = context.metadata else { continue }
+363 |             let text = texts[context.blockID]?.trimmedNonEmpty ?? "Untitled Task"
+    |                                                `- warning: main actor-isolated property 'trimmedNonEmpty' can not be referenced from a nonisolated context
+364 |             let detail = detailID(task.id), history = historyID(task.id)
+365 |             let reference: [String: Any] = ["type": "pageReference", "attrs": ["id": task.id + "-history-link", "documentID": history]]
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1760:9: note: property declared here
+1758 | 
+1759 | extension String {
+1760 |     var trimmedNonEmpty: String? {
+     |         `- note: property declared here
+1761 |         let value = trimmingCharacters(in: .whitespacesAndNewlines)
+1762 |         return value.isEmpty ? nil : value
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:437:32: warning: call to main actor-isolated instance method 'encodedJSON()' in a synchronous nonisolated context [#ActorIsolatedCall]
+411 |     }
+412 | 
+413 |     private static func save(id: String, title: String, parentID: String, content: [[String: Any]], task: DocumentTaskMetadata, taskText: String, source: DocumentRecord, in db: Database) throws {
+    |                         `- note: add '@MainActor' to make static method 'save(id:title:parentID:content:task:taskText:source:in:)' part of global actor 'MainActor'
+414 |         let old = try DocumentRecord.fetchOne(db, key: id)
+415 |         let oldObject = old.map { TipTapContentAnalyzer.documentObject(from: $0.tipTapJSON) }
+    :
+435 |         var appearance = source.appearance
+436 |         appearance.showsCover = false
+437 |         let style = appearance.encodedJSON()
+    |                                `- warning: call to main actor-isolated instance method 'encodedJSON()' in a synchronous nonisolated context [#ActorIsolatedCall]
+438 |         let savedTitle = old.map { isDetail(id) && $0.title == (projection["sourceTitle"] as? String) ? title : $0.title } ?? title
+439 |         if let old, old.title == savedTitle, old.tipTapJSON == analysis.canonicalJSON, old.parentDocumentID == parentID,
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentAppearance.swift:412:10: note: calls to instance method 'encodedJSON()' from outside of its actor context are implicitly asynchronous
+410 |     }
+411 | 
+412 |     func encodedJSON() -> String? {
+    |          `- note: calls to instance method 'encodedJSON()' from outside of its actor context are implicitly asynchronous
+413 |         guard let data = try? JSONEncoder().encode(self) else {
+414 |             return nil
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Tasks/DocumentTaskRepository.swift:456:32: warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+411 |     }
+412 | 
+413 |     private static func save(id: String, title: String, parentID: String, content: [[String: Any]], task: DocumentTaskMetadata, taskText: String, source: DocumentRecord, in db: Database) throws {
+    |                         `- note: add '@MainActor' to make static method 'save(id:title:parentID:content:task:taskText:source:in:)' part of global actor 'MainActor'
+414 |         let old = try DocumentRecord.fetchOne(db, key: id)
+415 |         let oldObject = old.map { TipTapContentAnalyzer.documentObject(from: $0.tipTapJSON) }
+    :
+454 |         if old != nil { record.revision += 1 }
+455 |         try record.save(db)
+456 |         try DocumentRepository.upsertSearchIndex(record, in: db)
+    |                                `- warning: call to main actor-isolated static method 'upsertSearchIndex(_:in:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+457 |     }
+458 | }
+
+/Users/asteriasmoons/Desktop/Vellix/Vellix/Documents/DocumentRepositories.swift:1073:17: note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1071 |     }
+1072 | 
+1073 |     static func upsertSearchIndex(_ record: DocumentRecord, in db: Database) throws {
+     |                 `- note: calls to static method 'upsertSearchIndex(_:in:)' from outside of its actor context are implicitly asynchronous
+1074 |         try deleteSearchIndex(id: record.id, in: db)
+1075 |         let templateID = record.templateID ?? TemplateRepository.documentTemplateID(record.id)
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+note: Disabling hardened runtime with ad-hoc codesigning. (in target 'Vellix' from project 'Vellix')
+note: Run script build phase 'Generate Icon Library' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'Vellix' from project 'Vellix')

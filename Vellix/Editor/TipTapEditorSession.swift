@@ -116,6 +116,16 @@ final class TipTapEditorSession: ObservableObject {
     // Duplicated/pasted page cards ask the owner to clone their page into an
     // independent copy; pairs carry {blockId, sourceDocumentID}.
     var onClonePageReferences: (([[String: String]]) -> Void)?
+    var onBlockDropTransfer: (([String: Any]) async throws -> Void)?
+    var onValidateBlockDrop: ((String, [String]) async -> Bool)?
+    #if os(iOS)
+    weak var blockDragGesture: MobileBlockDragGesture?
+    let blockReorderDidLift = PassthroughSubject<Void, Never>()
+
+    func recordBlockDrag(_ event: String, token: String, details: String = "") {
+        logger.notice("[Penned Drag] ts=\(Int(Date().timeIntervalSince1970 * 1000)) document=\(self.loadedDocumentID ?? "-", privacy: .public) token=\(token, privacy: .public) event=\(event, privacy: .public) \(details, privacy: .public)")
+    }
+    #endif
     var ownsEditorPresentation: (() -> Bool)?
     var isReturningFromDocument = false
     var acceptsEditorPresentationRequests: Bool {
@@ -1717,6 +1727,92 @@ final class TipTapEditorSession: ObservableObject {
                 return
             }
             #if os(iOS)
+            if kind == "blockDragSelectionClaimed" {
+                if let token = payload["token"] as? String { blockDragGesture?.relinquishToSelection(token: token) }
+                return
+            }
+            if kind == "blockDropValidate" {
+                guard let token = payload["token"] as? String,
+                      let destinationID = payload["destinationID"] as? String else { return }
+                let generation = loadGeneration
+                Task { [weak self] in
+                    guard let self, let webView = self.webView else { return }
+                    let allowed: Bool
+                    if self.acceptsEditorPresentationRequests && self.editingEnabled {
+                        allowed = await self.onValidateBlockDrop?(destinationID, payload["pageIDs"] as? [String] ?? []) ?? false
+                    } else { allowed = false }
+                    guard self.loadGeneration == generation else { return }
+                    self.recordBlockDrag(allowed ? "page-validation-accepted" : "page-validation-rejected", token: token)
+                    _ = try? await webView.callAsyncJavaScript(
+                        "return window.PennedBlockDragAndDrop?.native('validatePage', args);",
+                        arguments: ["args": ["token": token, "destinationID": destinationID, "allowed": allowed]],
+                        in: nil, contentWorld: .page)
+                }
+                return
+            }
+            if kind == "blockDragHaptic" {
+                if let token = payload["token"] as? String, let destination = payload["destination"] as? String {
+                    blockDragGesture?.reachedDestination(token: token, destination: destination)
+                }
+                return
+            }
+            if kind == "reminderTaskDiagnostic" {
+                let fields = ["event", "target", "dom", "row", "selected", "token"]
+                let details = fields.compactMap { field -> String? in
+                    guard let value = payload[field] as? String else { return nil }
+                    return "\(field)=\(value)"
+                }.joined(separator: " ")
+                logger.notice("⏰ [PENNED-RTASK] \(details, privacy: .public)")
+                return
+            }
+            if kind == "blockDragDiagnostic" {
+                if let event = payload["event"] as? String {
+                    // Fixed scalar allowlist: no document text, HTML, titles or arbitrary payloads.
+                    let fields = ["contactID", "browserTS", "elapsedMS", "owner", "previous", "source", "sourceID", "blockType",
+                                  "selected", "reorderable", "accepted", "reason", "count", "depth", "position", "identifier",
+                                  "dx", "userSelect", "blockUserSelect", "effective", "prevented", "holdMS", "phase", "committed", "errorType", "frames"]
+                    let details = fields.compactMap { field -> String? in
+                        guard let value = payload[field], value is String || value is NSNumber else { return nil }
+                        return "\(field)=\(value)"
+                    }.joined(separator: " ")
+                    recordBlockDrag(event, token: payload["token"] as? String ?? "-",
+                                    details: details)
+                }
+                return
+            }
+            if kind == "blockDropTransfer" {
+                guard let token = payload["token"] as? String, UUID(uuidString: token) != nil else { return }
+                let generation = loadGeneration
+                let documentID = loadedDocumentID
+                Task { [weak self] in
+                    guard let self, let webView = self.webView else { return }
+                    var response: [String: Any] = ["token": token, "success": false]
+                    do {
+                        guard self.acceptsEditorPresentationRequests, self.editingEnabled,
+                              let perform = self.onBlockDropTransfer else {
+                            throw VellixError.editorBridge("This document is no longer active.")
+                        }
+                        try await perform(payload)
+                        response["success"] = true
+                    } catch {
+                        response["message"] = error.localizedDescription
+                        self.recordBlockDrag("transfer-failed", token: token)
+                    }
+                    guard self.loadGeneration == generation, self.loadedDocumentID == documentID else { return }
+                    do {
+                        let acknowledged = try await webView.callAsyncJavaScript(
+                            "return window.PennedBlockDragAndDrop?.native('resolveTransfer', args);",
+                            arguments: ["args": response], in: nil, contentWorld: .page)
+                        if response["success"] as? Bool == true, acknowledged as? Bool != true {
+                            self.recoverCommittedBlockDrop(documentID: documentID, token: token)
+                        }
+                    } catch {
+                        self.recordBlockDrag("transfer-acknowledgment-failed", token: token)
+                        if response["success"] as? Bool == true { self.recoverCommittedBlockDrop(documentID: documentID, token: token) }
+                    }
+                }
+                return
+            }
             if kind == "blockSelectionState" {
                 guard let count = payload["count"] as? Int, let reportedMode = payload["mode"] as? String else { return }
                 let mode = count > 0 && ["single", "multi"].contains(reportedMode) ? reportedMode : "off"
@@ -1995,6 +2091,29 @@ final class TipTapEditorSession: ObservableObject {
         generator.impactOccurred()
         #endif
     }
+
+    #if os(iOS)
+    private func recoverCommittedBlockDrop(documentID: String?, token: String) {
+        guard let documentID, loadedDocumentID == documentID,
+              let saved = documentForRecovery?(), saved.id == documentID else { return }
+        // Persistence succeeded but the web process did not apply its reply.
+        // Reload the committed checkpoint, never autosave the pre-transfer body.
+        recordBlockDrag("transfer-checkpoint-recovery", token: token)
+        load(documentID: documentID, canonicalJSON: saved.json, force: true)
+    }
+
+    func applyExternalBlockDrop(_ record: DocumentRecord) async -> Bool {
+        guard loadedDocumentID == record.id, isReady, !isLoadingDocument, let webView,
+              let data = record.tipTapJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) else { return false }
+        do {
+            let result = try await webView.callAsyncJavaScript(
+                "return window.PennedBlockDragAndDrop?.applyExternal(args) ?? false;",
+                arguments: ["args": ["document": object]], in: nil, contentWorld: .page)
+            return result as? Bool == true
+        } catch { recordBlockDrag("destination-prefix-bridge-failed", token: "-"); return false }
+    }
+    #endif
 
     private func registerIconAssets(_ icons: Set<String>, completion: @escaping () -> Void) {
         let pendingIcons = Array(Set(icons.map(normalizedIconName))).filter { !registeredIconAssets.contains($0) }
@@ -2381,6 +2500,9 @@ final class DocumentEditorModel: ObservableObject {
     var onChildCreated: ((DocumentRecord) -> Void)?
     var onOpenNestedPage: ((DocumentRecord) -> Void)?
     var onDocumentSaved: ((DocumentRecord) -> Void)?
+    var prepareBlockDropDestination: ((String) async throws -> Void)?
+    var blockDropRecordSaved: ((DocumentRecord, Bool) async -> Void)?
+    private var blockDropTransfers: [String: BlockDropTransferCheckpoint] = [:]
     var prepareForSpaceChange: (() throws -> Void)?
 
     private var pendingSaveTask: Task<Void, Never>?
@@ -2487,6 +2609,18 @@ final class DocumentEditorModel: ObservableObject {
         }
         session.onClonePageReferences = { [weak self] pairs in
             Task { await self?.cloneDuplicatedPageReferences(pairs) }
+        }
+        session.onBlockDropTransfer = { [weak self] payload in
+            guard let self else { throw VellixError.editorBridge("The source editor is unavailable.") }
+            try await self.transferDroppedBlocks(payload)
+        }
+        session.onValidateBlockDrop = { [weak self] destinationID, pageIDs in
+            guard let self, !self.documentID.isEmpty else { return false }
+            let repository = self.documentRepository, sourceID = self.documentID
+            return await Task.detached(priority: .userInitiated) {
+                do { try repository.validateBlockDropTarget(sourceID: sourceID, destinationID: destinationID, movingPageIDs: pageIDs); return true }
+                catch { return false }
+            }.value
         }
         session.documentForRecovery = { [weak self] in
             guard let self, let document = self.document else { return nil }
@@ -3029,8 +3163,11 @@ final class DocumentEditorModel: ObservableObject {
         case .requestOpenPage(let documentID):
             if let taskID = DocumentTaskPages.taskID(for: documentID) {
                 do {
+                    let visibleTask = (try? DocumentTaskIndex.contexts(in: latestJSON ?? document?.tipTapJSON ?? ""))?
+                        .contains(where: { $0.metadata?.id == taskID }) == true
                     guard let task = try documentRepository.taskForHistoryPage(id: documentID),
-                          task.documentID == self.documentID || DocumentTaskPages.taskID(for: self.documentID) == taskID else { return }
+                          visibleTask || task.documentID == self.documentID ||
+                          DocumentTaskPages.taskID(for: self.documentID) == taskID else { return }
                     taskHistoryRequest = TaskHistorySheetRequest(task: task)
                 } catch { errorMessage = error.localizedDescription }
                 return
@@ -3115,6 +3252,37 @@ final class DocumentEditorModel: ObservableObject {
             } ?? NSNull()
         ])
         try await captureAndSave()
+    }
+
+    // Keep loaded editor references in sync with the authoritative persisted task.
+    // Only touch task attributes; never reload a document or replace unsaved text.
+    func refreshSharedTaskReferences() {
+        guard !isReadOnlyWarmup, let document,
+              let persisted = try? documentRepository.requireDocument(id: document.id) else { return }
+        // Most notifications come from unrelated document saves; avoid parsing a large
+        // document when its loaded JSON already matches persisted content.
+        guard persisted.tipTapJSON != (latestJSON ?? document.tipTapJSON) else { return }
+        guard persisted.tipTapJSON.contains("\"trackedTask\"") else { return }
+        let local = (try? DocumentTaskIndex.contexts(in: latestJSON ?? document.tipTapJSON)) ?? []
+        let stored = (try? DocumentTaskIndex.contexts(in: persisted.tipTapJSON)) ?? []
+        let byBlock = Dictionary(uniqueKeysWithValues: stored.map { ($0.blockID, $0) })
+        guard session.isReady && !session.isLoadingDocument else {
+            if pendingDocumentID == nil && persisted.tipTapJSON != document.tipTapJSON {
+                self.document = persisted
+                latestJSON = persisted.tipTapJSON
+                session.load(documentID: persisted.id, canonicalJSON: persisted.tipTapJSON, force: true)
+            }
+            return
+        }
+        for context in local {
+            guard let authoritative = byBlock[context.blockID],
+                  let task = authoritative.metadata, context.metadata?.id == task.id,
+                  context.metadata != task || context.checked != authoritative.checked else { continue }
+            session.taskCommand("taskComplete", context: context, values: [
+                "external": true, "expectedOccurrenceID": "",
+                "task": task.object, "checked": authoritative.checked
+            ])
+        }
     }
 
     func receiveExternalTaskChange(_ record: DocumentRecord) {
@@ -3247,6 +3415,79 @@ final class DocumentEditorModel: ObservableObject {
             refreshRelated()
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func transferDroppedBlocks(_ payload: [String: Any]) async throws {
+        guard !isReadOnlyWarmup, let source = document, session.acceptsEditorPresentationRequests,
+              let token = payload["token"] as? String, let forward = payload["forward"] as? Bool,
+              let before = payload["sourceBefore"] as? [String: Any],
+              let after = payload["sourceAfter"] as? [String: Any] else {
+            throw VellixError.editorBridge("The block drop request is no longer valid.")
+        }
+        let prior = blockDropTransfers[token]
+        guard prior != nil || (payload["destinationID"] as? String != nil && forward) else {
+            throw VellixError.editorBridge("The move's undo information is no longer available.")
+        }
+        let destinationID = prior?.destinationID ?? payload["destinationID"] as? String ?? ""
+        let operation = beginPersistentOperation()
+        defer { endPersistentOperation(operation) }
+        try await prepareBlockDropDestination?(destinationID)
+        try await captureAndSave(preservingBlockSelection: true)
+        guard documentID == source.id, session.renderedDocumentID == source.id, !session.isLoadingDocument else {
+            throw VellixError.editorBridge("The source document changed during the drop.")
+        }
+        let sourceBefore = String(decoding: try JSONSerialization.data(withJSONObject: before, options: [.sortedKeys]), as: UTF8.self)
+        let sourceAfter = String(decoding: try JSONSerialization.data(withJSONObject: after, options: [.sortedKeys]), as: UTF8.self)
+        let blocksJSON = try (payload["blocks"] as? [[String: Any]]).map {
+            String(decoding: try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]), as: UTF8.self)
+        }
+        pendingSaveTask?.cancel()
+        saveSequence += 1
+        let repository = documentRepository
+        let result: BlockDropTransferResult = try await withCheckedThrowingContinuation { continuation in
+            persistenceQueue.async {
+                do {
+                    continuation.resume(returning: try repository.transferDroppedBlocks(sourceID: source.id,
+                        sourceBefore: sourceBefore, sourceAfter: sourceAfter, destinationID: destinationID,
+                        blocksJSON: blocksJSON, checkpoint: prior, forward: forward))
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+        blockDropTransfers[token] = result.checkpoint
+        latestJSON = result.source.tipTapJSON
+        document = result.source
+        pendingDocumentID = nil
+        pageReferenceIDs = TipTapContentAnalyzer.pageReferenceIDs(in: result.source.tipTapJSON)
+        session.saveState = .saved(result.source.updatedAt)
+        session.refreshAttachments(documentID: source.id, json: result.source.tipTapJSON)
+        await blockDropRecordSaved?(result.destination, true)
+        for page in result.movedPages {
+            await blockDropRecordSaved?(page, false)
+            onDocumentSaved?(page)
+        }
+        onDocumentSaved?(result.destination)
+        onDocumentSaved?(result.source)
+        refreshRelated()
+    }
+
+    func adoptBlockDropRecord(_ record: DocumentRecord, contentChanged: Bool) async {
+        guard documentID == record.id else { return }
+        guard contentChanged else { refreshLibraryContext(currentDocument: record); return }
+        pendingSaveTask?.cancel()
+        saveSequence += 1
+        latestJSON = record.tipTapJSON
+        document = record
+        pendingDocumentID = nil
+        pageReferenceIDs = TipTapContentAnalyzer.pageReferenceIDs(in: record.tipTapJSON)
+        session.refreshAttachments(documentID: record.id, json: record.tipTapJSON)
+        var applied = false
+        #if os(iOS)
+        applied = await session.applyExternalBlockDrop(record)
+        #endif
+        // Only an uninitialized or failed retained runtime needs full hydration.
+        if !applied { session.load(documentID: record.id, canonicalJSON: record.tipTapJSON, force: true) }
+        session.saveState = .saved(record.updatedAt)
+        refreshLibraryContext(currentDocument: record)
     }
 
     private func updatePageReferences(from json: String) {

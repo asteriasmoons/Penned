@@ -466,6 +466,7 @@ fileprivate extension TipTapWebView {
 
         #if os(iOS)
         contentController.addUserScript(WKUserScript(source: MobileBlockSelection.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        contentController.addUserScript(WKUserScript(source: MobileBlockDragAndDrop.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         contentController.addUserScript(WKUserScript(source: MobileEditorInteractions.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-PennedListDiagnostics") {

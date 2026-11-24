@@ -34,6 +34,142 @@ enum MobileEditorInteractions {
   const editable = () => editor.isEditable &&
     (document.documentElement.dataset.vellixSelectionMode || "off") === "off";
 
+  let handledNestedReturn = false;
+  const clearNestedReturn = () => { handledNestedReturn = false; };
+  function nestedCalendarList() {
+    if (!editable() || editor.view.composing || !editor.view.hasFocus()) return null;
+    const { empty, $from } = editor.state.selection;
+    if (!empty || $from.depth < 3 || $from.parent.type.name !== "paragraph" ||
+        editor.storage?.vellixStructuredPlaceholders?.isProtected?.($from.parent)) return null;
+    const item = $from.node(-1), list = $from.node(-2);
+    if (!(item.type.name === "taskItem" && list.type.name === "taskList") &&
+        !(item.type.name === "listItem" && ["orderedList", "bulletList"].includes(list.type.name))) return null;
+    let callout = false, calendar = false;
+    for (let depth = $from.depth - 3; depth > 0; depth--) {
+      const node = $from.node(depth);
+      if (["plainCallout", "iconCallout", "callout", "gridCard"].includes(node.type.name)) callout = true;
+      if (node.type.name === "weekStrip") calendar = true;
+      if (node.type.name === "weekDayPanel" && !callout) return null;
+    }
+    if (!callout || !calendar) return null;
+    const rejected = reason => {
+      traceNestedReturn("nested-return.skipped", { reason, itemType: item.type.name, listType: list.type.name });
+      return null;
+    };
+    // Never run a model command against native typing that has not reconciled
+    // yet, or a WebKit caret that disagrees with ProseMirror's current caret.
+    const paragraph = editor.view.nodeDOM($from.before());
+    const native = document.getSelection();
+    if (!(paragraph instanceof HTMLElement) || paragraph.closest("[inert], [hidden]")) return rejected("paragraph-unavailable-or-hidden");
+    if (paragraph.textContent !== $from.parent.textContent) return rejected("native-text-not-reconciled");
+    if (!native?.isCollapsed || !paragraph.contains(native.anchorNode)) return rejected("native-caret-outside-paragraph");
+    try {
+      if (editor.view.posAtDOM(native.anchorNode, native.anchorOffset) !== $from.pos) return rejected("native-caret-model-mismatch");
+    } catch { return rejected("native-caret-unmappable"); }
+    return { itemType: item.type.name, listType: list.type.name };
+  }
+  function traceNestedReturn(event, details) {
+    try { editor.storage.pennedListDiagnosticRecord?.(event, details); } catch {}
+  }
+  function nestedReturnKey(event) {
+    if (event.key !== "Enter" && event.keyCode !== 13) return;
+    clearNestedReturn();
+    if (event.defaultPrevented || event.isComposing || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+    const context = nestedCalendarList();
+    if (!context) return;
+    // Use the real event and the normal ordered keymaps, including TaskItem's
+    // splitListItem command. Do not synthesize a key or change list semantics.
+    const handled = !!editor.view.someProp("handleKeyDown", handler => handler(editor.view, event));
+    if (!handled) { traceNestedReturn("nested-return.not-handled", context); return; }
+    handledNestedReturn = !event.defaultPrevented;
+    // Leave the key's native default intact for the iOS keyboard. Stop it from
+    // also arming ProseMirror's deferred iOS Enter fallback; beforeinput below
+    // consumes the native insertion for this already-handled key exactly once.
+    event.stopImmediatePropagation();
+    traceNestedReturn("nested-return.handled", { ...context, expectsNativeInput: handledNestedReturn });
+  }
+  function nestedReturnInput(event) {
+    if (!handledNestedReturn) return;
+    clearNestedReturn();
+    if (!["insertParagraph", "insertLineBreak"].includes(event.inputType) || event.isComposing || !event.cancelable || event.defaultPrevented) {
+      traceNestedReturn("nested-return.native-unhandled", { input: event.inputType, cancelable: event.cancelable });
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    traceNestedReturn("nested-return.native-suppressed", { input: event.inputType });
+  }
+  editor.view.dom.addEventListener("keydown", nestedReturnKey, true);
+  editor.view.dom.addEventListener("beforeinput", nestedReturnInput, true);
+  editor.view.dom.addEventListener("keyup", clearNestedReturn, true);
+  editor.view.dom.addEventListener("pointerdown", clearNestedReturn, true);
+  editor.view.dom.addEventListener("compositionstart", clearNestedReturn, true);
+  editor.on("destroy", () => {
+    clearNestedReturn();
+    editor.view.dom.removeEventListener("keydown", nestedReturnKey, true);
+    editor.view.dom.removeEventListener("beforeinput", nestedReturnInput, true);
+    editor.view.dom.removeEventListener("keyup", clearNestedReturn, true);
+    editor.view.dom.removeEventListener("pointerdown", clearNestedReturn, true);
+    editor.view.dom.removeEventListener("compositionstart", clearNestedReturn, true);
+  });
+
+  function focusCalendarTextAtTap(event) {
+    if (event.defaultPrevented || event.button !== 0 || event.detail !== 1 ||
+        !editable() || editor.view.composing || window.PennedBlockSelection?.consumesClick(event) ||
+        window.PennedBlockDragAndDrop?.ownsReorder || window.PennedBlockDragAndDrop?.busy) return;
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest(
+      "button, a, input, textarea, select, audio, video, iframe, [role='button'], [role='checkbox'], [contenteditable='false'], [inert], [hidden]",
+    )) return;
+    const panel = target.closest(".penned-week-day-panel[data-active]");
+    const calendar = panel?.closest(".penned-week-strip");
+    if (!calendar || calendar.dataset.collapsed === "true" ||
+        target.closest(".penned-week-strip") !== calendar) return;
+    const native = document.getSelection();
+    if (native && !native.isCollapsed) return;
+    const view = editor.view;
+    const hit = view.posAtCoords({ left: event.clientX, top: event.clientY });
+    if (!hit) return;
+    const position = view.state.doc.resolve(hit.pos);
+    if (!position.parent.isTextblock ||
+        editor.storage?.vellixStructuredPlaceholders?.isProtected?.(position.parent)) return;
+    let inPanel = false;
+    for (let depth = position.depth; depth > 0; depth--) {
+      if (position.node(depth).type.name === "weekDayPanel") {
+        inPanel = view.nodeDOM(position.before(depth)) === panel;
+        break;
+      }
+    }
+    if (!inPanel) return;
+    const textDOM = view.nodeDOM(position.before());
+    if (!(textDOM instanceof HTMLElement)) return;
+    const bounds = textDOM.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return;
+    if (!textDOM.contains(target) && (!target.contains(textDOM) ||
+        event.clientX < bounds.left || event.clientX > bounds.right ||
+        event.clientY < bounds.top || event.clientY > bounds.bottom)) return;
+    let nativeMatches = false;
+    try {
+      nativeMatches = !!native?.anchorNode && view.posAtDOM(native.anchorNode, native.anchorOffset) === hit.pos;
+    } catch { /* A stale native caret is the recovery case. */ }
+    if (view.hasFocus() && view.state.selection.empty && view.state.selection.from === hit.pos && nativeMatches) return;
+    // Change only the caret. Do not append content or reuse the last date's caret.
+    const applied = editor.chain().setTextSelection(hit.pos).command(({ tr }) => {
+      tr.setMeta("pointer", true).setMeta("addToHistory", false);
+      return true;
+    }).run();
+    if (!applied) return;
+    view.focus();
+    event.preventDefault();
+    window.webkit?.messageHandlers?.tiptap?.postMessage({ kind: "calendarDiagnostic", payload: {
+      stage: "nested-text-caret", blockID: calendar.dataset.vellixBlockId,
+      date: panel.getAttribute("data-week-date"), pos: hit.pos, type: position.parent.type.name,
+    } });
+  }
+  const calendarCaretRoot = editor.view.dom;
+  calendarCaretRoot.addEventListener("click", focusCalendarTextAtTap);
+  editor.on("destroy", () => calendarCaretRoot.removeEventListener("click", focusCalendarTextAtTap));
+
   function publishHistory(force = false) {
     const canUndo = editor.can().undo(), canRedo = editor.can().redo();
     const signature = `${canUndo}:${canRedo}`;
@@ -284,6 +420,8 @@ enum MobileEditorInteractions {
   const root = editor.view.dom;
   const originalCommand = window.tiptapCommand;
   let count = 0, frame = null, pending = null, selectionBudget = 0;
+  let returnSequence = 0, activeReturn = null, returnTimer = null;
+  const listType = name => ["orderedList", "bulletList", "taskList"].includes(name);
   const safe = fn => { try { return fn(); } catch { return null; } };
   const rect = element => {
     const r = element?.getBoundingClientRect();
@@ -294,12 +432,28 @@ enum MobileEditorInteractions {
     indent: node.attrs.indent ?? null, align: node.attrs.textAlign ?? null,
     placeholder: node.attrs.placeholderEnabled === true,
     projection: node.attrs.placeholderProjection === true,
+    clipSource: !!node.attrs.clipSource,
   } : null;
   function path(position) {
     return Array.from({ length: Math.min(position.depth + 1, 12) }, (_, depth) => ({
       ...brief(position.node(depth)), index: position.index(depth),
     }));
   }
+  function domPath(node) {
+    const result = [];
+    let element = node instanceof Element ? node : node?.parentElement;
+    for (; element && result.length < 16; element = element.parentElement) {
+      result.push({ tag: element.tagName, classes: [...element.classList].slice(0, 6),
+        editable: element.getAttribute("contenteditable"), inert: element.hasAttribute("inert"),
+        active: element.hasAttribute("data-active"), collapsed: element.getAttribute("data-collapsed") });
+      if (element === root) break;
+    }
+    return result;
+  }
+  const inlineInfo = child => ({ type: child.type.name, size: child.nodeSize,
+    textLength: child.isText ? child.text.length : 0,
+    newlineOnly: child.isText ? /^[\r\n]+$/.test(child.text) : false,
+    endsWithNewline: child.isText ? /[\r\n]$/.test(child.text) : false });
   function elementInfo(element) {
     if (!(element instanceof Element)) return null;
     const style = getComputedStyle(element), before = getComputedStyle(element, "::before");
@@ -317,7 +471,7 @@ enum MobileEditorInteractions {
     const selection = window.getSelection();
     const describe = (node, offset) => node ? {
       node: node.nodeName, parent: node.parentElement?.tagName ?? null, offset,
-      pos: safe(() => editor.view.posAtDOM(node, offset)),
+      pos: safe(() => editor.view.posAtDOM(node, offset)), ancestors: domPath(node),
     } : null;
     return selection ? {
       anchor: describe(selection.anchorNode, selection.anchorOffset),
@@ -339,16 +493,27 @@ enum MobileEditorInteractions {
       }
       const inline = [];
       for (let i = 0; i < Math.min(position.parent.childCount, 6); i++) {
-        const child = position.parent.child(i);
-        inline.push({ type: child.type.name, size: child.nodeSize,
-          textLength: child.isText ? child.text.length : 0,
-          newlineOnly: child.isText ? /^[\r\n]+$/.test(child.text) : false });
+        inline.push(inlineInfo(position.parent.child(i)));
       }
+      const inlineTail = [];
+      for (let i = Math.max(0, position.parent.childCount - 6); i < position.parent.childCount; i++) {
+        inlineTail.push(inlineInfo(position.parent.child(i)));
+      }
+      const calendar = element?.closest?.(".penned-week-strip");
+      const dayPanel = element?.closest?.(".penned-week-day-panel");
       window.webkit?.messageHandlers?.tiptap?.postMessage({ kind: "listCaretDiagnostic", payload: {
-        version: "list-caret-v1", sequence: ++count, event,
+        version: "list-caret-v1", revision: "nested-list-return-v2", sequence: ++count, event,
+        timestamp: Date.now(), returnID: activeReturn?.id ?? null,
+        returnElapsedMS: activeReturn ? Math.round(performance.now() - activeReturn.started) : null,
         selection: selection.toJSON(), offset: position.parentOffset,
-        path: path(position), block: brief(position.parent), inline, neighbors,
-        numbered: editor.isActive("orderedList"), focused: editor.view.hasFocus(),
+        path: path(position), block: brief(position.parent), inline, inlineTail, neighbors,
+        ancestors: domPath(element), calendar: calendar ? {
+          inChrome: !!element.closest(".penned-week-strip-chrome"),
+          collapsed: calendar.dataset.collapsed === "true", panelActive: dayPanel?.hasAttribute("data-active") ?? false,
+          matchesVisibleDate: !!dayPanel && dayPanel.getAttribute("data-week-date") === calendar.dataset.activeDate,
+        } : null,
+        numbered: editor.isActive("orderedList"), bulleted: editor.isActive("bulletList"),
+        checklist: editor.isActive("taskList"), focused: editor.view.hasFocus(),
         composing: editor.view.composing, authoring: root.classList.contains("vellix-placeholder-authoring"),
         dom: elementInfo(element), item: elementInfo(element?.closest("li")),
         caret: safe(() => {
@@ -361,25 +526,27 @@ enum MobileEditorInteractions {
     }
   }
   function after(event, extra = {}) {
-    pending = { event, extra };
+    if (pending && event === "selection.after" && pending.event !== "selection.after") return;
+    pending = { event, extra, trace: activeReturn };
     if (frame !== null) return;
     frame = requestAnimationFrame(() => {
       frame = null;
       const next = pending;
       pending = null;
-      if (next) write(next.event, next.extra);
+      if (next) write(next.event, { ...next.extra, returnID: next.trace?.id ?? null,
+        returnElapsedMS: next.trace ? Math.round(performance.now() - next.trace.started) : null });
     });
   }
   function nearbyList(position = editor.state.selection.$from) {
     for (let depth = position.depth; depth > 0; depth--) {
-      if (position.node(depth).type.name === "orderedList") return true;
+      if (listType(position.node(depth).type.name)) return true;
     }
-    return !!safe(() => position.doc.resolve(position.before()).nodeBefore?.type.name === "orderedList");
+    return !!safe(() => listType(position.doc.resolve(position.before()).nodeBefore?.type.name));
   }
   function pointer(event) {
     if (!(event.target instanceof Element) || !root.contains(event.target)) return;
     const hit = safe(() => editor.view.posAtCoords({ left: event.clientX, top: event.clientY }));
-    if (!event.target.closest("ol") && !nearbyList() && !(hit && nearbyList(editor.state.doc.resolve(hit.pos)))) return;
+    if (!event.target.closest("ol, ul") && !nearbyList() && !(hit && nearbyList(editor.state.doc.resolve(hit.pos)))) return;
     selectionBudget = 4;
     const extra = { point: [event.clientX, event.clientY], target: event.target.tagName,
       hit: hit ? { ...hit, path: path(editor.state.doc.resolve(hit.pos)) } : null };
@@ -387,16 +554,58 @@ enum MobileEditorInteractions {
     after("tap.after", extra);
   }
   function key(event) {
-    if (!["Enter", "Backspace"].includes(event.key) || !nearbyList()) return;
+    const keyName = event.keyCode === 13 ? "Enter" : event.key;
+    if (!["Enter", "Backspace"].includes(keyName) || !nearbyList()) return;
+    if (keyName === "Enter") beginReturn("key");
     selectionBudget = 4;
-    write("key.before", { key: event.key });
-    after("key.after", { key: event.key });
+    const extra = { key: keyName, nativeKey: event.key, shift: event.shiftKey, alt: event.altKey,
+      control: event.ctrlKey, meta: event.metaKey, composing: event.isComposing,
+      defaultPrevented: event.defaultPrevented };
+    write("key.before", extra);
+    after("key.after", extra);
   }
   function input(event) {
-    if (!["insertParagraph", "deleteContentBackward"].includes(event.inputType) || !nearbyList()) return;
+    if (!["insertParagraph", "insertLineBreak", "deleteContentBackward"].includes(event.inputType) || !nearbyList()) return;
+    if (event.inputType === "insertParagraph" || event.inputType === "insertLineBreak") beginReturn("input");
     selectionBudget = 4;
-    write("input.before", { input: event.inputType, cancelable: event.cancelable });
+    write("input.before", { input: event.inputType, cancelable: event.cancelable,
+      composing: event.isComposing, defaultPrevented: event.defaultPrevented });
     after("input.after", { input: event.inputType });
+  }
+  function beginReturn(source) {
+    const now = performance.now();
+    if (source === "key" || !activeReturn || activeReturn.inputSeen || now - activeReturn.started > 500) {
+      activeReturn = { id: ++returnSequence, started: now, inputSeen: false,
+        beforePath: path(editor.state.selection.$from), remaining: 4, steps: [] };
+    }
+    if (source === "input") activeReturn.inputSeen = true;
+    const trace = activeReturn;
+    if (returnTimer !== null) clearTimeout(returnTimer);
+    // ProseMirror deliberately defers iOS Return handling. Observe its settled
+    // result as well as the first frame, without dispatching or changing input.
+    returnTimer = setTimeout(() => {
+      returnTimer = null;
+      if (activeReturn !== trace || editor.isDestroyed) return;
+      write("return.settled", { beforePath: trace.beforePath, steps: trace.steps });
+      activeReturn = null;
+    }, 350);
+  }
+  function returned({ transaction }) {
+    try {
+      const trace = activeReturn;
+      if (!trace || !transaction.docChanged || !trace.remaining ||
+          performance.now() - trace.started > 1000 || editor.isDestroyed) return;
+      trace.remaining--;
+      for (const step of transaction.steps.slice(0, 6)) {
+        if (trace.steps.length >= 12) break;
+        trace.steps.push({ kind: step.constructor.name, from: step.from ?? null, to: step.to ?? null,
+          openStart: step.slice?.openStart ?? null, openEnd: step.slice?.openEnd ?? null,
+          insertedTypes: step.slice?.content?.content?.slice(0, 6).map(node => node.type.name) ?? [] });
+      }
+      after("return.transaction", { beforePath: trace.beforePath, steps: trace.steps.slice() });
+    } catch {
+      // This observer must not affect the transaction or input handlers.
+    }
   }
   function changed() {
     if (!selectionBudget) return;
@@ -404,18 +613,19 @@ enum MobileEditorInteractions {
     after("selection.after");
   }
   function command(name, args) {
-    if (name !== "formatCurrentSelection" || args?.action !== "numberList") return originalCommand(name, args);
+    const category = { numberList: "number", bulletList: "bullet", checkList: "checklist" }[args?.action];
+    if (name !== "formatCurrentSelection" || !category) return originalCommand(name, args);
     const oldDoc = editor.state.doc, oldSelection = editor.state.selection;
     selectionBudget = 4;
-    write("number.before");
+    write(category + ".before");
     const finish = result => {
       const extra = { result: typeof result === "boolean" ? result : typeof result,
         documentChanged: editor.state.doc !== oldDoc, selectionChanged: !editor.state.selection.eq(oldSelection) };
-      write("number.after", extra);
-      after("number.frame", extra);
+      write(category + ".after", extra);
+      after(category + ".frame", extra);
       return result;
     };
-    const fail = error => { write("number.error", { error: error?.name || "Error" }); throw error; };
+    const fail = error => { write(category + ".error", { error: error?.name || "Error" }); throw error; };
     try {
       const result = originalCommand(name, args);
       return result && typeof result.then === "function" ? result.then(finish, fail) : finish(result);
@@ -426,14 +636,20 @@ enum MobileEditorInteractions {
   document.addEventListener("keydown", key, true);
   document.addEventListener("beforeinput", input, true);
   editor.on("selectionUpdate", changed);
+  editor.on("transaction", returned);
+  editor.storage.pennedListDiagnosticRecord = write;
   editor.on("destroy", () => {
     if (frame !== null) cancelAnimationFrame(frame);
+    if (returnTimer !== null) clearTimeout(returnTimer);
+    activeReturn = null; pending = null;
     document.removeEventListener("pointerup", pointer, true);
     document.removeEventListener("keydown", key, true);
     document.removeEventListener("beforeinput", input, true);
     editor.off("selectionUpdate", changed);
+    editor.off("transaction", returned);
     if (window.tiptapCommand === command) window.tiptapCommand = originalCommand;
     delete editor.storage.pennedListDiagnostics;
+    delete editor.storage.pennedListDiagnosticRecord;
   });
   write("installed");
 })();
