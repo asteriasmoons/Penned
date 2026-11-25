@@ -122,7 +122,7 @@ nonisolated struct IconCalloutSettingsRequest: Identifiable, Equatable, Sendable
 
 // Imported art keeps its own color and alpha; it never goes through the library's tint/cache path.
 nonisolated enum CustomCalloutIconImage {
-    static func prepare(_ data: Data) throws -> Data {
+    static func prepare(_ data: Data, removeHairlines: Bool = true) throws -> Data {
         guard data.count <= 20_000_000,
               let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
@@ -136,7 +136,8 @@ nonisolated enum CustomCalloutIconImage {
         guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else {
             throw VellixError.attachmentImport("The icon could not be prepared.")
         }
-        CGImageDestinationAddImage(destination, removeOuterHairlines(image) ?? image, nil)
+        let prepared = removeHairlines ? removeOuterHairlines(image) ?? image : image
+        CGImageDestinationAddImage(destination, prepared, nil)
         guard CGImageDestinationFinalize(destination) else {
             throw VellixError.attachmentImport("The icon could not be prepared.")
         }
@@ -159,6 +160,28 @@ nonisolated enum CustomCalloutIconImage {
         context.setBlendMode(.destinationIn)
         context.draw(image, in: rect)
         return context.makeImage()
+    }
+
+    // A bounded, transient representation; the original attachment is never changed.
+    static func tintedPNG(at url: URL, hex: String) throws -> Data {
+        guard hex.range(of: "^#[0-9a-fA-F]{6}$", options: .regularExpression) != nil,
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 192,
+              ] as CFDictionary), let rendered = tinted(image, hex: hex) else {
+            throw VellixError.attachmentImport("The icon image could not be rendered.")
+        }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else {
+            throw VellixError.attachmentImport("The icon image could not be encoded.")
+        }
+        CGImageDestinationAddImage(destination, rendered, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw VellixError.attachmentImport("The icon image could not be encoded.")
+        }
+        return output as Data
     }
 
     static func readFile(_ url: URL) throws -> Data {
@@ -235,6 +258,8 @@ nonisolated enum CustomCalloutIconImage {
 struct IconCalloutGlyph: View {
     let settings: IconCalloutSettings
     var image: CGImage?
+    var size: CGFloat = 32
+    var originalLibraryColors = false
 
     var body: some View {
         Group {
@@ -245,20 +270,24 @@ struct IconCalloutGlyph: View {
                 } else {
                     Image(decorative: image, scale: 1).resizable().scaledToFit()
                 }
+            } else if originalLibraryColors {
+                let icon = VellixAssetIcon(name: settings.icon)
+                (icon.systemName.map { Image(systemName: $0) } ?? Image(settings.icon))
+                    .renderingMode(.original).resizable().scaledToFit()
             } else {
-                LibraryIcon(name: settings.icon, size: 26).foregroundStyle(Color(vellixHex: settings.iconColor))
+                LibraryIcon(name: settings.icon, size: size * 26 / 32).foregroundStyle(Color(vellixHex: settings.iconColor))
             }
         }
         .shadow(color: outline, radius: 0, x: 0.6, y: 0)
         .shadow(color: outline, radius: 0, x: -0.6, y: 0)
         .shadow(color: outline, radius: 0, x: 0, y: 0.6)
         .shadow(color: outline, radius: 0, x: 0, y: -0.6)
-        .frame(width: 32, height: 32).accessibilityHidden(true)
+        .frame(width: size, height: size).accessibilityHidden(true)
     }
 
     private var outline: Color {
         if image != nil { return settings.imageTint.map { Color(vellixHex: $0) } ?? .clear }
-        return Color(vellixHex: settings.iconColor)
+        return originalLibraryColors ? .clear : Color(vellixHex: settings.iconColor)
     }
 }
 

@@ -7,6 +7,9 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
         case line, container, bullet, number(Int), checkbox(checked: Bool, crossed: Bool)
         case toggle(open: Bool), image, chip, washiTape
         case gridCardIcon(String)
+        case moodBar(MoodBarSettings)
+        case countdown(CountdownSettings)
+        case calculator(CalculatorSettings, CalculatorState)
         case headingLabel(String, level: Int, settings: HeadingLabelSettings)
         case listGridSurface(border: String?, radius: CGFloat, borderWidth: CGFloat)
         case listGridText(String, alignment: String?, fontSize: CGFloat, isGuidance: Bool)
@@ -178,6 +181,24 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
             marks.insert(Mark(shape: .container, rect: CGRect(x: x, y: top, width: width, height: y - top),
                               blockType: "gridCard", colorHex: card.backgroundColor), at: insertion)
             y += 4
+        }
+
+        mutating func widget(_ node: [String: Any], x: CGFloat, width: CGFloat) {
+            let attrs = node["attrs"] as? [String: Any] ?? [:]
+            let half = DocumentWidgetSize.isHalf(node)
+            let height = DocumentWidgetLayout.height(half ? "half" : "full") / 4
+            if node["type"] as? String == "moodBar" {
+                add(.moodBar(MoodBarSettings(attrs)), CGRect(x: x, y: y, width: width, height: height), "moodBar")
+                y += height + 4
+            } else if node["type"] as? String == "calculator" {
+                add(.calculator(CalculatorSettings(attrs), CalculatorState(attrs["state"] as? [String: Any] ?? [:])),
+                    CGRect(x: x, y: y, width: width, height: height), "calculator")
+                y += height + 4
+            } else {
+                let settings = CountdownSettings(attrs)
+                add(.countdown(settings), CGRect(x: x, y: y, width: width, height: height), "countdown")
+                y += height + 4
+            }
         }
 
         mutating func blocks(_ nodes: [[String: Any]], x: CGFloat, width: CGFloat, depth: Int = 0,
@@ -377,6 +398,17 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                     y += 21
                 case "inlineProperty":
                     property(attrs["property"], x: x, width: width)
+                case "moodBar", "countdown", "calculator":
+                    let half = DocumentWidgetSize.isHalf(node), cell = half ? (width - 3) / 2 : width
+                    let top = y
+                    widget(node, x: x, width: cell)
+                    if half, nodes.indices.contains(index + 1), DocumentWidgetSize.isHalf(nodes[index + 1]) {
+                        let firstBottom = y
+                        y = top
+                        widget(nodes[index + 1], x: x + cell + 3, width: cell)
+                        y = max(y, firstBottom)
+                        pairedIndex = index + 1
+                    }
                 case "templateComponent":
                     if let definition = TemplateComponentDefinition.decode(attrs["definition"]) {
                         if !definition.label.isEmpty { text(definition.label, type: type, x: x, width: width, thickness: 3) }

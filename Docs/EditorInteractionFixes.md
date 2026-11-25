@@ -1356,3 +1356,214 @@ by a device trace; this is a scoped correction of invalid/mismatched placement.
 No editor source/bundle, Calendar screen, database, persistence, preview, or
 navigation changes were made. No builds, compilation checks, tests, simulators
 or app launches were run. Runtime cursor behavior still needs device confirmation.
+
+## Protected Keyboard Boundaries and Template Authoring Taps
+
+### Previous Behavior and Source Findings
+
+- The mobile deletion guard protected washi tape and one information-card edge,
+  not custom blocks generally. Other Backspace/Delete paths could fall through
+  to ProseMirror's join, lift or node-selection commands at structural boundaries.
+- `backspaceIntoQuote` deliberately deleted the empty paragraph after a quote
+  and moved the caret into that quote. `backspacePastDivider` deleted an empty
+  paragraph and searched elsewhere for a caret, with a select-all fallback.
+- `focusBelowDivider` creates/focuses an insertion paragraph below a divider.
+  This and the shared caret-slot helper's gap insertion are intentional document
+  editing behavior and must remain available beside custom blocks and page breaks.
+- Creating a template uses the regular document editor (`createTemplate` creates
+  a template-owned document); there is no separate template text editor. Its
+  editable text had no equivalent of the calendar's direct tap reconciliation.
+  Native caret placement and generic blank-surface insertion handled those taps.
+  This identifies a focus-path weakness, not runtime proof of why a particular
+  device attempt required four taps.
+
+### Implemented Changes
+
+- `Vellix/Editor/MobileEditorInteractions.swift`: ordinary keyboard-editable
+  blocks are paragraphs, captions, non-label text headings, and regular bullet,
+  numbered and task lists/items containing those types. At a protected adjacent
+  block or custom-container edge, keyboard deletion is consumed and web input
+  is blurred; native caret ranges are cleared. This applies to hardware deletion
+  keys and cancellable iOS character/word/line deletion events. Native selections
+  that cross protected containers or contain complete protected blocks are also
+  guarded. Text editing within an existing container remains available; these
+  protections are for structural boundaries, not the container's ordinary text.
+- Remove the two special Backspace divider/quote helpers above. Keyboard boundary
+  protection no longer deletes an empty paragraph to move the caret somewhere
+  else, enters a preceding quote, or falls back to selecting the document.
+- Preserve tap-to-create editing positions in any editable area above, below,
+  and between blocks, including dividers, page breaks and custom blocks.
+  The added mobile gap-boundary
+  policy and rejected-tap consumption were reversed at the user's request.
+  `focusBelowDivider` is restored exactly to its previous implementation.
+  Keyboard deletion protection remains separate from intentional tap insertion.
+  Custom blocks can still be removed through explicit block selection and Delete.
+- Template authoring observes the existing `setTemplateEditing` command. A
+  stationary single click in real, visible editable text is mapped through
+  `posAtCoords`, reconciled with `setTextSelection`, then focused synchronously
+  without requesting a scroll or inserting content. A new template's sole empty
+  paragraph can be focused from its blank editor surface. This runs before the
+  generic gap-click handler can retarget that tap. Controls, links, locked
+  placeholders, native text ranges, composition, block selection and active
+  reordering are excluded. Calendar recovery retains its editor-root listener.
+- `penned-editor/src/caret-slots.js`, `penned-editor/src/editor.js`, and the
+  shipping `Vellix/VellixEditor.bundle/tiptap.bundle.js` have their previous gap
+  insertion behavior restored. No editor build was run.
+
+### Preservation and Verification Limits
+
+No drag/selection recognizers, range-selection calculations, drag destinations,
+auto-scrolling, 1.5-second move-hold duration, Enter/newline handling, document
+loading/readiness, navigation, template placeholder protections, autosave,
+database or preview behavior were changed. Existing blur cleanup still removes
+unused temporary caret slots; the new boundary guard itself does not delete
+stored blocks or replace document content.
+
+Expected behavior: regular text/list editing remains available; deletion at a
+protected structural edge dismisses the caret instead of consuming that block;
+intentional taps in editable areas above, below and between blocks can create
+editable paragraphs as before; template authoring
+can acquire its tapped text position on the first tap.
+Physical-device confirmation is still required, particularly template focus and
+nested list/container boundaries. Only source/diff and generated-artifact scope
+inspection were performed. No builds, tests, compilation checks, simulators or
+app launches were run.
+
+API reference: [Tiptap setTextSelection](https://tiptap.dev/docs/editor/api/commands/selection/set-text-selection).
+
+## Preserve Keyboard Focus Across App Switching
+
+The iOS document editor's `UIApplication.willResignActiveNotification` handler
+explicitly called `suspendWebInput()`. That method resigns the WebView responder,
+blurs the JavaScript editor, removes its native selection ranges, and clears the
+session's editing/caret state. The handler also set `isTitleFocused` to `false`.
+Those actions turned a temporary app switch into a deliberate editing dismissal.
+
+`Vellix/Editor/DocumentEditorView.swift` now cancels pending paste requests without
+calling `suspendWebInput` or clearing title focus. It still stops selection
+auto-scrolling, cancels an in-progress block drag, pauses render observation,
+and clears a pending caret-reveal scroll. The app's background save flush is
+unchanged. Manual keyboard dismissal, settings-sheet dismissal, document-exit
+cleanup, editor locking, selection, and document loading are unchanged.
+
+No foreground `focus()` or `becomeFirstResponder()` call was added. Returning
+to Penned does not intentionally activate editing when it was previously inactive
+or move the caret to the end. For an editor that was already focused, Penned no
+longer explicitly destroys that focus/selection just because the app becomes
+inactive. iOS still controls keyboard visibility while another app is active;
+this change does not promise keyboard restoration after process termination,
+WebKit process loss, or navigation away from the document.
+
+Apple documents inactive transitions as including temporary interruptions as well
+as backgrounding, with guidance to pause ongoing work rather than requiring an
+editing dismissal: [UIScene willDeactivateNotification](https://developer.apple.com/documentation/uikit/uiscene/willdeactivatenotification).
+
+Only source and diff checks were performed. No builds, tests, compilation checks,
+simulators, or app launches were run. Focus continuity on the physical iPhone
+still requires confirmation.
+
+## Shared First-Tap Text Caret Recovery
+
+### Source Findings and Research
+
+The existing mobile `focusTextAtTap` recovery returned immediately unless the
+document was being edited as a template or the tapped text was in a calendar
+date panel. Template recovery ran in window capture, while calendar recovery
+ran later at the editor root. Ordinary document paragraphs, headings, and nested
+editable text had no equivalent explicit model/native-caret synchronization.
+They depended on WebKit's default touch/mouse focus and ProseMirror's subsequent
+DOM-selection tracking. This was a confirmed coverage/order inconsistency, not
+runtime proof of which handler consumed a specific failed physical-device tap.
+
+The existing reorder controller also sets `TEXT_GUARD_MS = 120`: a pending
+stationary contact can add `user-select: none` before a normal deliberate tap
+finishes, much earlier than its 1.5-second move hold. Releasing the hold removes
+that suppression but does not explicitly replay native caret placement. Combined
+with the missing ordinary-text recovery, this supplies a concrete source-level
+path for a received tap to finish without a usable caret. It does not prove that
+every reported failure used this path. The hold threshold, text guard, ownership
+controller, and working selection engine are intentionally not modified here.
+
+The installed source inspected for this change is Tiptap `3.29.2` and
+`prosemirror-view` `1.42.2`. Its `EditorView.focus()` synchronizes the editor's
+selection to the DOM synchronously; its native focus handler also schedules a
+later selection reconciliation. Simply knowing that the editor has focus is not
+proof that its native caret and document selection agree at the tapped position.
+
+Research references:
+
+- [Tiptap setTextSelection](https://tiptap.dev/docs/editor/api/commands/selection/set-text-selection)
+  provides explicit position/range selection. The recovery sets a real text
+  position, not a generic focus-to-end command.
+- [Tiptap focus](https://tiptap.dev/docs/editor/api/commands/selection/focus)
+  documents focus and cursor position as distinct controls. The recovery uses
+  the underlying view's synchronous focus after setting the exact position,
+  rather than scheduling a delayed generic focus call.
+- [WebKit focus/keyboard report 195884](https://bugs.webkit.org/show_bug.cgi?id=195884)
+  documents user-gesture and embedding-client focus distinctions, including a
+  later linked-SDK-dependent change. It is not evidence that all modern
+  WKWebViews reject programmatic focus. This correction stays within the user's
+  actual tap rather than relying on native-to-JavaScript focus timing.
+- [ProseMirror first-focus regression discussion](https://discuss.prosemirror.net/t/prosemirror-view-1-43-0-beta1/9127)
+  demonstrates that model selection and Safari's visible caret can disagree on
+  the first click. That report concerns the `1.43` beta, not Penned's installed
+  `1.42.2`, so it is not claimed as Penned's confirmed root cause. No dependency
+  upgrade or upstream beta selection implementation was introduced.
+
+### Implemented Correction
+
+`Vellix/Editor/MobileEditorInteractions.swift` now uses one window-capture click
+handler for existing editable text throughout the document, including templates
+and nested calendar text. It resolves the tap's coordinates with `posAtCoords`,
+requires the actual visible text block to contain both the tap and target, sets
+the text position, and calls `view.focus()` in the same event. It consumes that
+click only after successfully reconciling a mismatched caret, so later generic
+gap/click handlers cannot retarget the recovered position. Already-correct
+focus/model/native placement is left alone.
+
+Passive contact observations distinguish short stationary taps from movement,
+cancelled contacts, and holds; they do not prevent touch defaults, claim gesture
+ownership, dispatch on touchstart, or change selection/drag recognizers. The
+existing block-selection mode, consumed-selection-click, active reorder/transfer,
+composition, native text-range, multi-click, noneditable control, hidden-content,
+placeholder protection, and calendar-panel checks remain in effect.
+
+Taps in empty editable areas above, below, and between blocks continue through
+the existing paragraph/caret-slot insertion path. Nothing in this change removes
+that behavior. No paragraph is added by the text recovery itself, and no
+document content, marks, undo history, Enter behavior, autosave, navigation,
+readiness, selection range math, drag destinations, or move-hold duration is
+changed. No WebView reload, private WebKit API, timed refocus loop, or automatic
+foreground focus is used.
+
+### Automatic Device Diagnostics
+
+`Vellix/Editor/TipTapWebView.swift` enables the small caret diagnostic flag in
+normal DEBUG builds and forwards messages to Xcode under **`[Penned Caret]`**.
+No scheme argument, environment variable, setting, or Web Inspector action is
+required. Diagnostics run around taps, not keystrokes or continuous movement,
+and contain timestamps, local tap IDs, block types/positions, focus/editability,
+native-range state, selection mode, document ID, and explicit skip reasons.
+The `holdSuppression` field records whether the reorder arming class is present
+at each event, including contact end before later click processing.
+Document text, titles, and image data are not logged.
+
+- `contact-ended` without `tap-received`: a stationary contact reached the DOM,
+  but no matching click reached the recovery handler.
+- `contact-cancelled`: native/browser gesture delivery cancelled the contact.
+- `tap-received`: the click reached the handler before generic click processing.
+- `tap-skipped`: includes the exact exclusion, such as `native-text-range`,
+  `read-only-or-block-selection`, `selection-gesture-click`, `long-press`,
+  `control-or-noneditable-content`, or a nontext/gap target.
+- `tap-already-ready`: focus, native caret, and model position already matched.
+- `tap-reconciled`: the requested text position and focus were applied.
+- `tap-verified` / `tap-not-ready`: a single next-frame observation checks
+  focus, model caret, and native caret against the requested position. It never
+  retries or moves the caret again. Verification is abandoned if a new tap,
+  document edit, or editor destruction supersedes it.
+
+Only source/diff inspection was performed. No builds, tests, compilation checks,
+simulators, or app launches were run. First-tap success and preservation of
+physical-device text-selection, scrolling, and keyboard behavior remain to be
+confirmed on the iPhone; the instrumentation makes remaining failures attributable
+instead of treating a focus callback as proof of a visible cursor.

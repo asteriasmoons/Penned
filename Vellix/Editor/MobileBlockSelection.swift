@@ -203,6 +203,10 @@ enum MobileBlockSelection {
   }
   function blockedTarget(target, block) {
     if (!(target instanceof Element)) return true;
+    // Widget content is a whole-widget swipe surface, despite being a settings
+    // button. Only its live slider owns contacts outside selection mode.
+    const widget = target.closest(".penned-document-widget");
+    if (widget === block) return value()?.mode === "off" && !!target.closest(".penned-mood-range");
     // Tabs: a swipe on the editable panel content selects text as usual; a swipe
     // on the bar, header, tab buttons or padding selects the whole tabs block.
     const tabsHost = target.closest(".penned-tabs");

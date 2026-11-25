@@ -230,7 +230,7 @@ struct HeadingLabelSettingsSheet: View {
     }
 }
 
-private struct HeadingLabelDropdown<Value: Hashable>: View {
+struct HeadingLabelDropdown<Value: Hashable>: View {
     let title: String
     @Binding var selection: Value
     let choices: [(Value, String)]

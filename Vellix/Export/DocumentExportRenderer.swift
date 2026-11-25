@@ -245,7 +245,10 @@ final class DocumentExportRenderer: NSObject, WKScriptMessageHandler, WKNavigati
             guard url.host == "file", let path = query("path"),
                   let file = snapshot.files.first(where: { $0.record.relativePath == path }),
                   let source = snapshot.assets[path] else { return nil }
-            if query("preview") == "thumbnail" {
+            if query("preview") == "icon" {
+                guard file.media.kind == .image, let tint = query("tint") else { return nil }
+                result = Asset(data: try CustomCalloutIconImage.tintedPNG(at: source, hex: tint), mime: "image/png")
+            } else if query("preview") == "thumbnail" {
                 guard let path = file.record.thumbnailRelativePath, let thumbnail = snapshot.assets[path] else { return nil }
                 result = Asset(data: try Data(contentsOf: thumbnail), mime: "image/png")
             } else if query("preview") == "pdf" && file.media.kind == .pdf {

@@ -7,24 +7,27 @@ struct PageCardPreviewGroup {
     var gridCards = false
     var richLinkCards = false
     var plainCallouts = false
+    var documentWidgets = false
 
     static func groups(_ nodes: [[String: Any]], documents: [DocumentRecord], includeRichLinkCards: Bool = false,
-                       includePlainCallouts: Bool = false) -> [Self] {
+                       includePlainCallouts: Bool = false, includeWidgets: Bool = false) -> [Self] {
         let records = Dictionary(uniqueKeysWithValues: documents.map { ($0.id, $0) })
         var groups: [Self] = []
         for node in nodes {
             let id = (node["attrs"] as? [String: Any])?["documentID"] as? String ?? ""
             let small = node["type"] as? String == "pageReference" && records[id]?.cardStyle?.size.fillsDocumentWidth == false
             let grid = GridCardSettings.isHalf(node)
+            let widget = includeWidgets && DocumentWidgetSize.isHalf(node)
             let attrs = node["attrs"] as? [String: Any]
             let halfCallout = includePlainCallouts && node["type"] as? String == "plainCallout"
                 && !(attrs?["clipSource"] is [String: Any]) && attrs?["widthPercent"] as? Double == 50
             let linkCard = includeRichLinkCards && node["type"] as? String == "richLink"
                 && (node["attrs"] as? [String: Any])?["layout"] as? String == RichLinkLayout.card.rawValue
             if (small && groups.last?.smallCards == true) || (grid && groups.last?.gridCards == true)
-                || (linkCard && groups.last?.richLinkCards == true) || (halfCallout && groups.last?.plainCallouts == true) {
+                || (linkCard && groups.last?.richLinkCards == true) || (halfCallout && groups.last?.plainCallouts == true)
+                || (widget && groups.last?.documentWidgets == true) {
                 groups[groups.count - 1].nodes.append(node)
-            } else { groups.append(Self(nodes: [node], smallCards: small, gridCards: grid, richLinkCards: linkCard, plainCallouts: halfCallout)) }
+            } else { groups.append(Self(nodes: [node], smallCards: small, gridCards: grid, richLinkCards: linkCard, plainCallouts: halfCallout, documentWidgets: widget)) }
         }
         return groups
     }

@@ -50,6 +50,10 @@ enum TipTapEditorEvent: Equatable {
     case requestCodeBlockEditor(CodeBlockEditorRequest)
     case requestTabsSettings(TipTapTabsSettings)
     case requestWeekStripSettings(WeekStripSettingsRequest)
+    case requestMoodBarSettings(MoodBarSettingsRequest)
+    case requestCountdownSettings(CountdownSettingsRequest)
+    case requestCalculatorSettings(CalculatorSettingsRequest)
+    case calculatorAction(blockID: String, action: String, settings: CalculatorSettings, value: String?)
     case requestExistingEventPicker
     case openLinkedCalendarEvent(eventID: String, identity: CalendarEventIdentity, start: Date)
     case requestMinimalFieldsSettings(TipTapMinimalFieldsSettings)
@@ -341,6 +345,24 @@ enum TipTapEditorEvent: Equatable {
             self = .openLinkedCalendarEvent(eventID: eventID, identity: identity, start: start)
         case "existingEventPickerRequest":
             self = .requestExistingEventPicker
+        case "moodBarSettings":
+            guard let blockID = payload["blockId"] as? String, !blockID.isEmpty else { self = .unknown(kind); return }
+            self = .requestMoodBarSettings(MoodBarSettingsRequest(blockID: blockID,
+                settings: MoodBarSettings(payload["settings"] as? [String: Any] ?? [:])))
+        case "countdownSettings":
+            guard let blockID = payload["blockId"] as? String, !blockID.isEmpty else { self = .unknown(kind); return }
+            self = .requestCountdownSettings(CountdownSettingsRequest(blockID: blockID,
+                settings: CountdownSettings(payload["settings"] as? [String: Any] ?? [:])))
+        case "calculatorSettings":
+            guard let blockID = payload["blockId"] as? String, !blockID.isEmpty else { self = .unknown(kind); return }
+            self = .requestCalculatorSettings(CalculatorSettingsRequest(blockID: blockID,
+                settings: CalculatorSettings(payload["settings"] as? [String: Any] ?? [:]),
+                state: CalculatorState(payload["state"] as? [String: Any] ?? [:])))
+        case "calculatorAction":
+            guard let blockID = payload["blockID"] as? String, !blockID.isEmpty,
+                  let action = payload["action"] as? String, ["press", "copy"].contains(action) else { self = .unknown(kind); return }
+            self = .calculatorAction(blockID: blockID, action: action,
+                settings: CalculatorSettings(payload["settings"] as? [String: Any] ?? [:]), value: payload["value"] as? String)
         case "weekStripSettings":
             guard let blockID = payload["blockId"] as? String, !blockID.isEmpty else {
                 self = .unknown(kind)
@@ -692,6 +714,9 @@ nonisolated struct TipTapSelectedBlockSettings: Equatable {
         case "plainCallout": "Callout Settings"
         case "blockquote": "Blockquote Color"
         case "listGrid": "List Grid Settings"
+        case "moodBar": "Mood Bar Settings"
+        case "countdown": "Countdown Settings"
+        case "calculator": "Calculator Settings"
         case "gridCard": "Grid Card Settings"
         case "iconCallout": "Icon Callout Settings"
         case "codeBlock": "Code Block Settings"

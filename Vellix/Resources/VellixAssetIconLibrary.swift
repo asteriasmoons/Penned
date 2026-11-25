@@ -821,6 +821,13 @@ enum VellixAssetIconLibrary {
             VellixAssetIcon(name: "CardIMG5"),
             VellixAssetIcon(name: "CardIMG6"),
             VellixAssetIcon(name: "CardIMG7"),
+            VellixAssetIcon(name: "content"),
+            VellixAssetIcon(name: "ecstatic"),
+            VellixAssetIcon(name: "happy"),
+            VellixAssetIcon(name: "low"),
+            VellixAssetIcon(name: "miserable"),
+            VellixAssetIcon(name: "neutral"),
+            VellixAssetIcon(name: "upset"),
         ]),
     ]
 

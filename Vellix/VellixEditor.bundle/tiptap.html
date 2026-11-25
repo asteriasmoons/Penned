@@ -1066,16 +1066,16 @@
         overflow-wrap: anywhere;
       }
 
-      :where(.tiptap-editor, .tiptap-editor *):not(.penned-callout-row-content):has(> :is(.penned-grid-card[data-grid-width="half"], .penned-rich-link[data-link-layout="card"], .penned-plain-callout[data-callout-width="50"])) {
+      :where(.tiptap-editor, .tiptap-editor *):not(.penned-callout-row-content):has(> :is(.penned-grid-card[data-grid-width="half"], .penned-rich-link[data-link-layout="card"], .penned-plain-callout[data-callout-width="50"], .penned-document-widget[data-widget-size="half"])) {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         column-gap: 12px;
         align-items: start;
       }
-      :where(.tiptap-editor, .tiptap-editor *):not(.penned-callout-row-content):has(> :is(.penned-grid-card[data-grid-width="half"], .penned-rich-link[data-link-layout="card"], .penned-plain-callout[data-callout-width="50"])) > * {
+      :where(.tiptap-editor, .tiptap-editor *):not(.penned-callout-row-content):has(> :is(.penned-grid-card[data-grid-width="half"], .penned-rich-link[data-link-layout="card"], .penned-plain-callout[data-callout-width="50"], .penned-document-widget[data-widget-size="half"])) > * {
         grid-column: 1 / -1;
       }
-      .tiptap-editor :is(.penned-grid-card[data-grid-width="half"], .penned-rich-link[data-link-layout="card"], .penned-plain-callout[data-callout-width="50"]) {
+      .tiptap-editor :is(.penned-grid-card[data-grid-width="half"], .penned-rich-link[data-link-layout="card"], .penned-plain-callout[data-callout-width="50"], .penned-document-widget[data-widget-size="half"]) {
         grid-column: auto;
       }
       /* Each family pairs only with consecutive cards of the same kind. */
@@ -1087,12 +1087,12 @@
       .tiptap-editor :not(.penned-rich-link[data-link-layout="card"]) + .penned-rich-link[data-link-layout="card"] {
         grid-column: 1;
       }
-      :is(.tiptap-editor, .tiptap-editor *):has(> :is(.penned-grid-card[data-grid-width="half"], .penned-rich-link[data-link-layout="card"], .penned-plain-callout[data-callout-width="50"])) > .vellix-page-reference.vellix-page-card-inline {
+      :is(.tiptap-editor, .tiptap-editor *):has(> :is(.penned-grid-card[data-grid-width="half"], .penned-rich-link[data-link-layout="card"], .penned-plain-callout[data-callout-width="50"], .penned-document-widget[data-widget-size="half"])) > .vellix-page-reference.vellix-page-card-inline {
         grid-column: auto;
         width: 100%;
         margin-inline-end: 0;
       }
-      :is(.tiptap-editor, .tiptap-editor *):has(> :is(.penned-grid-card[data-grid-width="half"], .penned-rich-link[data-link-layout="card"], .penned-plain-callout[data-callout-width="50"])) > .vellix-page-card-inline.vellix-page-card-row-start {
+      :is(.tiptap-editor, .tiptap-editor *):has(> :is(.penned-grid-card[data-grid-width="half"], .penned-rich-link[data-link-layout="card"], .penned-plain-callout[data-callout-width="50"], .penned-document-widget[data-widget-size="half"])) > .vellix-page-card-inline.vellix-page-card-row-start {
         grid-column: 1;
       }
       .tiptap-editor.penned-mobile-block-layout > .vellix-callout.penned-grid-card[data-grid-width="half"] {
@@ -2876,6 +2876,11 @@
     <script src="./vellix-tables.js"></script>
     <script src="./vendor/table-library.js"></script>
     <script src="./code-syntax.js"></script>
+    <script type="application/json" id="penned-widget-layout">{"version":1,"types":["moodBar","countdown","calculator"],"halfWidth":154,"fullWidth":320,"halfHeight":192,"fullHeight":192,"padding":6,"spacing":4,"pairGap":12}</script>
+    <script src="./document-widgets.js"></script>
+    <script src="./mood-bar.js"></script>
+    <script src="./countdown-widget.js"></script>
+    <script src="./calculator-widget.js"></script>
     <script src="./tiptap.bundle.js"></script>
   </body>
 </html>

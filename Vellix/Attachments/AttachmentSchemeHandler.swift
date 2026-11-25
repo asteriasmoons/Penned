@@ -19,6 +19,10 @@ final class AttachmentSchemeHandler: NSObject, WKURLSchemeHandler {
             urlSchemeTask.didFailWithError(URLError(.noPermissionsToReadFile)); return
         }
         let variant = parts.queryItems?.first(where: { $0.name == "preview" })?.value
+        let iconTint = parts.queryItems?.first(where: { $0.name == "tint" })?.value
+        if variant == "icon", file.media.kind != .image || iconTint?.range(of: "^#[0-9a-fA-F]{6}$", options: .regularExpression) == nil {
+            urlSchemeTask.didFailWithError(URLError(.badURL)); return
+        }
         let thumbnail = variant == "thumbnail" ? file.record.thumbnailRelativePath : nil
         if variant == "thumbnail", thumbnail == nil { urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist)); return }
         let source: URL
@@ -30,9 +34,13 @@ final class AttachmentSchemeHandler: NSObject, WKURLSchemeHandler {
         tasks[key] = Task { [weak self] in
             defer { self?.tasks[key] = nil }
             do {
-                let derived = variant == "pdf" && file.media.kind == .pdf || variant == "image" && file.media.kind == .image
+                let derived = variant == "pdf" && file.media.kind == .pdf || variant == "image" && file.media.kind == .image || variant == "icon"
                 let data: Data?
-                if derived {
+                if variant == "icon", let iconTint {
+                    data = try await Task.detached(priority: .userInitiated) {
+                        try CustomCalloutIconImage.tintedPNG(at: source, hex: iconTint)
+                    }.value
+                } else if derived {
                     data = try await Task.detached(priority: .userInitiated) { try store.previewPNG(relativePath: path, pdf: variant == "pdf") }.value
                 } else { data = nil }
                 let size: Int64

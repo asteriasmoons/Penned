@@ -207,14 +207,14 @@ private struct ImmediatePreviewBlocks: View {
 
     var body: some View {
         let groups = PageCardPreviewGroup.groups(Array(nodes.prefix(96)), documents: referencedDocuments,
-                                                includeRichLinkCards: true, includePlainCallouts: true)
+                                                includeRichLinkCards: true, includePlainCallouts: true, includeWidgets: true)
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
                 let node = group.nodes[0]
                 let consecutiveProperties = index > 0 && node["type"] as? String == "inlineProperty"
                     && groups[index - 1].nodes.last?["type"] as? String == "inlineProperty"
                 Group {
-                    if group.smallCards || group.gridCards || group.richLinkCards || group.plainCallouts {
+                    if group.smallCards || group.gridCards || group.richLinkCards || group.plainCallouts || group.documentWidgets {
                         PageCardFlowLayout(smallCards: group.nodes.map { _ in true }) {
                             ForEach(Array(group.nodes.enumerated()), id: \.offset) { _, item in
                                 ImmediatePreviewBlock(node: item, appearance: appearance, depth: depth,
@@ -295,6 +295,13 @@ private struct ImmediatePreviewBlock: View {
 
     @ViewBuilder private var content: some View {
         switch type {
+        case "moodBar":
+            MoodBarPreview(settings: MoodBarSettings(attrs))
+        case "countdown":
+            CountdownWidgetPreview(settings: CountdownSettings(attrs),
+                iconImage: WashiTapePreview.documentImage(path: attrs["imagePath"], attachments: environment.attachments, store: environment.attachmentStore))
+        case "calculator":
+            CalculatorWidgetPreview(settings: CalculatorSettings(attrs), state: CalculatorState(attrs["state"] as? [String: Any] ?? [:]))
         case "attachment":
             if let file = attrs["file"] as? [String: Any], let path = file["relativePath"] as? String,
                let resolved = try? environment.attachments.editorAttachment(relativePath: path) {

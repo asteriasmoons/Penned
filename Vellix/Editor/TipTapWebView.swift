@@ -150,7 +150,7 @@ nonisolated enum TipTapEditorAssetCache {
         }
         // loadHTMLString cannot reliably read sibling file scripts on its first
         // navigation. Keep every required dependency inline, in its original order.
-        for path in ["vendor/formula-parser.min.js", "table-formulas.js", "vellix-tables.js", "vendor/table-library.js", "tiptap.bundle.js"] {
+        for path in ["vendor/formula-parser.min.js", "table-formulas.js", "vellix-tables.js", "vendor/table-library.js", "document-widgets.js", "mood-bar.js", "countdown-widget.js", "calculator-widget.js", "tiptap.bundle.js"] {
             let bundleJS = try String(contentsOf: bundleURL.appendingPathComponent(path), encoding: .utf8)
             let safeJS = bundleJS.replacingOccurrences(of: "</script>", with: "<\\/script>")
             html = html.replacingOccurrences(
@@ -465,6 +465,9 @@ fileprivate extension TipTapWebView {
         contentController.addUserScript(WKUserScript(source: TextBlockConversion.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
 
         #if os(iOS)
+        #if DEBUG
+        contentController.addUserScript(WKUserScript(source: "window.PENNED_CARET_DIAGNOSTICS = true;", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        #endif
         contentController.addUserScript(WKUserScript(source: MobileBlockSelection.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         contentController.addUserScript(WKUserScript(source: MobileBlockDragAndDrop.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         contentController.addUserScript(WKUserScript(source: MobileEditorInteractions.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
@@ -625,6 +628,15 @@ final class Coordinator:
         let body = message.body
         #if DEBUG && os(iOS)
         if PennedKeyboardTrace.receive(message, body: body, session: session) { return }
+        if message.frameInfo.isMainFrame, let dictionary = body as? [String: Any],
+           dictionary["kind"] as? String == "caretTapDiagnostic" {
+            if let payload = dictionary["payload"] as? [String: Any],
+               JSONSerialization.isValidJSONObject(payload),
+               let data = try? JSONSerialization.data(withJSONObject: payload, options: .sortedKeys), data.count <= 4_096 {
+                logInfo("[Penned Caret] document=\(session.renderedDocumentID ?? "-") loading=\(session.isLoadingDocument) presented=\(session.isPresentationReady) \(String(decoding: data, as: UTF8.self))")
+            }
+            return
+        }
         #endif
 
         #if DEBUG && os(iOS)
@@ -923,6 +935,13 @@ extension Coordinator: UIScrollViewDelegate {
 #endif
 
 enum TipTapEditorIconRenderer {
+    private static let originalPNGCache: NSCache<NSString, NSData> = {
+        let cache = NSCache<NSString, NSData>()
+        cache.countLimit = 28
+        cache.totalCostLimit = 8 * 1024 * 1024
+        return cache
+    }()
+
     static func dataURL(for icon: String, tintHex: String = "#ffffff", pointSize: CGFloat = 96) -> String? {
         let usesPersistentPrecompute = tintHex.lowercased() == "#ffffff" && pointSize == 96
 
@@ -945,9 +964,24 @@ enum TipTapEditorIconRenderer {
 
     static func pngData(for icon: String, tintHex: String = "#ffffff", pointSize: CGFloat = 96) -> Data? {
         #if os(iOS)
+        let originalKey = "\(icon):\(pointSize):\(UIScreen.main.scale)" as NSString
+        if tintHex == "original", let cached = originalPNGCache.object(forKey: originalKey) { return cached as Data }
         let symbol = VellixAssetIcon(name: icon).systemName
         guard let image = (symbol.flatMap { UIImage(systemName: $0) } ?? UIImage(named: icon))?.withRenderingMode(.alwaysOriginal) else {
             return nil
+        }
+
+        if tintHex == "original" {
+            let width = min(320, max(32, pointSize))
+            let size = CGSize(width: width, height: width * image.size.height / max(1, image.size.width))
+            let format = UIGraphicsImageRendererFormat()
+            format.opaque = false
+            format.scale = UIScreen.main.scale
+            let data = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                image.draw(in: CGRect(origin: .zero, size: size))
+            }.pngData()
+            if let data { originalPNGCache.setObject(data as NSData, forKey: originalKey, cost: data.count) }
+            return data
         }
 
         let source = croppedTransparentPadding(from: image) ?? image

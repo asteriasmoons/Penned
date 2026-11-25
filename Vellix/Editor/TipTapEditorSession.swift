@@ -1336,6 +1336,43 @@ final class TipTapEditorSession: ObservableObject {
         send(TipTapEditorCommand("weekStripSetAttr", args: ["blockId": blockID, "key": key, "value": value]))
     }
 
+    func moodBarSetAttr(blockID: String, key: String, value: Any) {
+        guard isReady, !isLoadingDocument, editingEnabled, acceptsEditorPresentationRequests else { return }
+        send(TipTapEditorCommand("moodBarSetAttr", args: ["blockID": blockID, "key": key, "value": value]))
+    }
+
+    func commitCountdown(_ request: CountdownSettingsRequest, settings: CountdownSettings, documentID: String) async throws -> String {
+        guard isReady, !isLoadingDocument, editingEnabled, loadedDocumentID == documentID,
+              acceptsEditorPresentationRequests, let webView else { throw CancellationError() }
+        let generation = loadGeneration
+        let args: [String: Any] = ["blockID": request.blockID, "original": request.settings.payload, "settings": settings.payload]
+        let result = try await webView.callAsyncJavaScript("return await window.tiptapCommand('countdownUpdate', args);",
+            arguments: ["args": args], in: nil, contentWorld: .page)
+        guard loadGeneration == generation, loadedDocumentID == documentID else { throw CancellationError() }
+        guard let snapshot = result as? [String: Any] else { throw VellixError.editorBridge("The countdown changed while settings were open. Reopen its settings and try again.") }
+        return try TipTapContentAnalyzer.normalizePayloadToJSON(snapshot)
+    }
+
+    func commitCalculator(_ request: CalculatorSettingsRequest, settings: CalculatorSettings, documentID: String) async throws -> String {
+        guard isReady, !isLoadingDocument, editingEnabled, loadedDocumentID == documentID,
+              acceptsEditorPresentationRequests, let webView else { throw CancellationError() }
+        let generation = loadGeneration
+        let result = try await webView.callAsyncJavaScript("return await window.tiptapCommand('calculatorUpdate', args);",
+            arguments: ["args": ["blockID": request.blockID, "original": request.settings.payload, "settings": settings.payload]], in: nil, contentWorld: .page)
+        guard loadGeneration == generation, loadedDocumentID == documentID else { throw CancellationError() }
+        guard let snapshot = result as? [String: Any] else { throw VellixError.editorBridge("The calculator changed while settings were open. Reopen its settings and try again.") }
+        return try TipTapContentAnalyzer.normalizePayloadToJSON(snapshot)
+    }
+
+    func previewCalculator(state: CalculatorState, key: String) async throws -> CalculatorState {
+        guard isReady, !isLoadingDocument, acceptsEditorPresentationRequests, let webView else { throw CancellationError() }
+        let generation = loadGeneration
+        let result = try await webView.callAsyncJavaScript("return window.PennedCalculator.press(state, key);",
+            arguments: ["state": state.payload, "key": key], in: nil, contentWorld: .page)
+        guard generation == loadGeneration, let values = result as? [String: Any] else { throw CancellationError() }
+        return CalculatorState(values)
+    }
+
     func tabsSetAttr(blockID: String, key: String, value: Any) {
         send(TipTapEditorCommand("tabsSetAttr", args: ["blockId": blockID, "key": key, "value": value]))
     }
@@ -2033,7 +2070,7 @@ final class TipTapEditorSession: ObservableObject {
              .requestPageCardSettings, .requestBlockquoteColorPicker,
              .requestTemplates, .requestAttachment, .requestAttachmentActions, .requestCollection,
              .requestTemplateComponent, .requestInlinePropertyEditor, .requestNestedPage, .requestPageCard,
-             .requestBlockDeletion, .requestPlaceholderConversion, .requestListGridSettings, .requestTabsSettings, .requestWeekStripSettings, .requestExistingEventPicker, .openLinkedCalendarEvent,
+             .requestBlockDeletion, .requestPlaceholderConversion, .requestListGridSettings, .requestTabsSettings, .requestWeekStripSettings, .requestMoodBarSettings, .requestCountdownSettings, .requestCalculatorSettings, .requestExistingEventPicker, .openLinkedCalendarEvent,
              .requestMinimalFieldsSettings, .requestInformationCardSettings, .requestCodeBlockEditor,
              .requestTableCreation, .requestTableMenu, .requestTaskMenu:
             guard acceptsEditorPresentationRequests, editingEnabled else { return }
@@ -2045,6 +2082,15 @@ final class TipTapEditorSession: ObservableObject {
 
         case .requestCalloutColorPicker:
             break
+
+        case .calculatorAction(_, let action, let settings, let value):
+            guard acceptsEditorPresentationRequests, editingEnabled, isReady, !isLoadingDocument, selectionMode == "off" else { return }
+            if action == "copy", let value, CalculatorState.isNumber(value) { CalculatorButtonFeedback.copy(CalculatorState(["result": value])) }
+            if settings.soundEnabled {
+                do { try CalculatorButtonFeedback.shared.play(CalculatorSound(rawValue: settings.sound) ?? .soft, volume: settings.volume) }
+                catch { logger.error("[Penned Calculator] button sound unavailable: \((error as NSError).domain, privacy: .public) code=\((error as NSError).code)") }
+            }
+            CalculatorButtonFeedback.haptic(enabled: settings.hapticsEnabled)
 
         case .attachmentClipboard, .importAttachments:
             onEvent?(event)
@@ -2481,6 +2527,9 @@ final class DocumentEditorModel: ObservableObject {
     @Published var codeBlockEditorRequest: CodeBlockEditorRequest?
     @Published var tabsSettingsRequest: TipTapTabsSettings?
     @Published var weekStripSettingsRequest: WeekStripSettingsRequest?
+    @Published var moodBarSettingsRequest: MoodBarSettingsRequest?
+    @Published var countdownSettingsRequest: CountdownSettingsRequest?
+    @Published var calculatorSettingsRequest: CalculatorSettingsRequest?
     @Published var existingEventPickerRequest: ExistingEventPickerRequest?
     @Published var linkedCalendarEventRequest: LinkedCalendarEventRequest?
     @Published var minimalFieldsSettingsRequest: TipTapMinimalFieldsSettings?
@@ -2735,6 +2784,9 @@ final class DocumentEditorModel: ObservableObject {
         attachmentEditorRequest = nil
         attachmentActionRequest = nil
         templateComponentRequest = nil
+        moodBarSettingsRequest = nil
+        countdownSettingsRequest = nil
+        calculatorSettingsRequest = nil
         templateInsertionRequest = nil
         placeholderConversionToken = nil
         templateNeedsSave = record.templateID != nil
@@ -2902,6 +2954,41 @@ final class DocumentEditorModel: ObservableObject {
             session.refreshAttachments(documentID: id, json: latestJSON ?? document?.tipTapJSON ?? "")
         }
         latestJSON = try await session.commitIconCallout(request, settings: draft, text: text, documentID: id)
+        try saveCurrentContent()
+    }
+
+    func saveCountdown(_ request: CountdownSettingsRequest, settings: CountdownSettings, data: Data?) async throws {
+        let operation = beginPersistentOperation()
+        defer { endPersistentOperation(operation) }
+        let id = documentID
+        guard !isReadOnlyWarmup, !id.isEmpty, countdownSettingsRequest?.id == request.id,
+              session.editingEnabled, session.isReady, !session.isLoadingDocument else {
+            throw VellixError.editorBridge("This document is no longer open for editing.")
+        }
+        var draft = settings
+        if let data {
+            guard let attachmentStore else { throw VellixError.attachmentImport("The icon image store is unavailable.") }
+            let repository = documentRepository.attachmentRepository(store: attachmentStore)
+            let file = try await Task.detached(priority: .userInitiated) {
+                try repository.importData(data, originalFileName: "Countdown Icon.png", mimeType: "image/png", documentID: id)
+            }.value
+            guard documentID == id, countdownSettingsRequest?.id == request.id,
+                  session.editingEnabled, session.isReady, !session.isLoadingDocument else { throw CancellationError() }
+            draft.imagePath = file.relativePath
+            session.refreshAttachments(documentID: id, json: latestJSON ?? document?.tipTapJSON ?? "")
+        }
+        latestJSON = try await session.commitCountdown(request, settings: draft, documentID: id)
+        try saveCurrentContent()
+    }
+
+    func saveCalculator(_ request: CalculatorSettingsRequest, settings: CalculatorSettings) async throws {
+        let operation = beginPersistentOperation()
+        defer { endPersistentOperation(operation) }
+        guard !isReadOnlyWarmup, calculatorSettingsRequest?.id == request.id,
+              session.editingEnabled, session.isReady, !session.isLoadingDocument else {
+            throw VellixError.editorBridge("This document is no longer open for editing.")
+        }
+        latestJSON = try await session.commitCalculator(request, settings: settings, documentID: documentID)
         try saveCurrentContent()
     }
 
@@ -3082,7 +3169,7 @@ final class DocumentEditorModel: ObservableObject {
         case .documentChanged(let json):
             // EditorAttachment.paths parses and walks the entire document. Skip that
             // whole-document work when the payload cannot reference an attachment.
-            if json.contains("attachment") || json.contains("clipSource") || json.contains("\"iconCallout\""),
+            if json.contains("attachment") || json.contains("clipSource") || json.contains("\"iconCallout\"") || json.contains("\"countdown\""),
                !EditorAttachment.paths(in: json).isSubset(of: Set(session.attachmentFiles.map { $0.record.relativePath })) {
                 session.refreshAttachments(documentID: documentID, json: json)
             }
@@ -3202,6 +3289,21 @@ final class DocumentEditorModel: ObservableObject {
             guard existingEventPickerRequest == nil else { return }
             session.endWebEditingForSettings()
             existingEventPickerRequest = ExistingEventPickerRequest()
+        case .requestMoodBarSettings(let request):
+            guard moodBarSettingsRequest == nil, session.editingEnabled, session.selectionMode == "off",
+                  session.renderedDocumentID == documentID else { return }
+            session.endWebEditingForSettings()
+            moodBarSettingsRequest = request
+        case .requestCountdownSettings(let request):
+            guard countdownSettingsRequest == nil, session.editingEnabled, session.selectionMode == "off",
+                  session.renderedDocumentID == documentID else { return }
+            session.endWebEditingForSettings()
+            countdownSettingsRequest = request
+        case .requestCalculatorSettings(let request):
+            guard calculatorSettingsRequest == nil, session.editingEnabled, session.selectionMode == "off",
+                  session.renderedDocumentID == documentID else { return }
+            session.endWebEditingForSettings()
+            calculatorSettingsRequest = request
         case .requestWeekStripSettings(let request):
             guard weekStripSettingsRequest == nil else { return }
             session.endWebEditingForSettings()
@@ -3340,6 +3442,9 @@ final class DocumentEditorModel: ObservableObject {
         clear(\.codeBlockEditorRequest)
         clear(\.tabsSettingsRequest)
         clear(\.weekStripSettingsRequest)
+        clear(\.moodBarSettingsRequest)
+        clear(\.countdownSettingsRequest)
+        clear(\.calculatorSettingsRequest)
         clear(\.existingEventPickerRequest)
         clear(\.linkedCalendarEventRequest)
         clear(\.minimalFieldsSettingsRequest)

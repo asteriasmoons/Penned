@@ -30,6 +30,7 @@ enum MobileEditorInteractions {
   editor.on("destroy", () => spacing.remove());
   const command = window.tiptapCommand;
   let historySignature = null;
+  let templateEditing = false;
 
   const editable = () => editor.isEditable &&
     (document.documentElement.dataset.vellixSelectionMode || "off") === "off";
@@ -113,62 +114,147 @@ enum MobileEditorInteractions {
     editor.view.dom.removeEventListener("compositionstart", clearNestedReturn, true);
   });
 
-  function focusCalendarTextAtTap(event) {
-    if (event.defaultPrevented || event.button !== 0 || event.detail !== 1 ||
-        !editable() || editor.view.composing || window.PennedBlockSelection?.consumesClick(event) ||
-        window.PennedBlockDragAndDrop?.ownsReorder || window.PennedBlockDragAndDrop?.busy) return;
-    const target = event.target;
-    if (!(target instanceof Element) || target.closest(
-      "button, a, input, textarea, select, audio, video, iframe, [role='button'], [role='checkbox'], [contenteditable='false'], [inert], [hidden]",
-    )) return;
-    const panel = target.closest(".penned-week-day-panel[data-active]");
-    const calendar = panel?.closest(".penned-week-strip");
-    if (!calendar || calendar.dataset.collapsed === "true" ||
-        target.closest(".penned-week-strip") !== calendar) return;
-    const native = document.getSelection();
-    if (native && !native.isCollapsed) return;
-    const view = editor.view;
+  function textAtTap(event, allowEmptyTemplate = false) {
+    const { view } = editor;
     const hit = view.posAtCoords({ left: event.clientX, top: event.clientY });
-    if (!hit) return;
+    if (!hit) return null;
     const position = view.state.doc.resolve(hit.pos);
     if (!position.parent.isTextblock ||
-        editor.storage?.vellixStructuredPlaceholders?.isProtected?.(position.parent)) return;
-    let inPanel = false;
-    for (let depth = position.depth; depth > 0; depth--) {
-      if (position.node(depth).type.name === "weekDayPanel") {
-        inPanel = view.nodeDOM(position.before(depth)) === panel;
-        break;
-      }
-    }
-    if (!inPanel) return;
+        editor.storage?.vellixStructuredPlaceholders?.isProtected?.(position.parent)) return null;
     const textDOM = view.nodeDOM(position.before());
-    if (!(textDOM instanceof HTMLElement)) return;
+    if (!(textDOM instanceof HTMLElement) || textDOM.closest("[inert], [hidden]")) return null;
     const bounds = textDOM.getBoundingClientRect();
-    if (bounds.width <= 0 || bounds.height <= 0) return;
-    if (!textDOM.contains(target) && (!target.contains(textDOM) ||
-        event.clientX < bounds.left || event.clientX > bounds.right ||
-        event.clientY < bounds.top || event.clientY > bounds.bottom)) return;
+    if (bounds.width <= 0 || bounds.height <= 0) return null;
+    const emptyTemplate = allowEmptyTemplate && view.state.doc.childCount === 1 &&
+      position.parent.type.name === "paragraph" && view.state.doc.firstChild === position.parent && !position.parent.content.size;
+    if (!emptyTemplate && (event.clientX < bounds.left || event.clientX > bounds.right ||
+        event.clientY < bounds.top || event.clientY > bounds.bottom ||
+        (!textDOM.contains(event.target) && !event.target.contains(textDOM)))) return null;
+    return { hit, position };
+  }
+
+  let caretContact = null, completedCaretContact = null, caretTapSequence = 0;
+  const caretListeners = new AbortController();
+  const trackCaretContact = (type, handler) => window.addEventListener(type, handler,
+    { capture: true, passive: true, signal: caretListeners.signal });
+  trackCaretContact("touchstart", event => {
+    completedCaretContact = null;
+    const touch = event.touches[0];
+    caretContact = event.touches.length === 1 && editor.view.dom.contains(event.target)
+      ? { tap: ++caretTapSequence, id: touch.identifier, x: touch.clientX, y: touch.clientY, started: performance.now(), moved: false } : null;
+  });
+  trackCaretContact("touchmove", event => {
+    if (!caretContact) return;
+    const touch = [...event.touches].find(item => item.identifier === caretContact.id);
+    if (event.touches.length !== 1 || !touch || Math.hypot(touch.clientX - caretContact.x, touch.clientY - caretContact.y) > 8) {
+      caretContact.moved = true;
+    }
+  });
+  const finishCaretContact = event => {
+    if (!caretContact || ![...event.changedTouches].some(item => item.identifier === caretContact.id)) return;
+    completedCaretContact = { ...caretContact, ended: performance.now(), cancelled: event.type === "touchcancel" };
+    caretContact = null;
+    if (!completedCaretContact.moved) caretDiagnostic(completedCaretContact.cancelled ? "contact-cancelled" : "contact-ended",
+      completedCaretContact.tap, { durationMS: Math.round(completedCaretContact.ended - completedCaretContact.started) });
+  };
+  trackCaretContact("touchend", finishCaretContact);
+  trackCaretContact("touchcancel", finishCaretContact);
+
+  function caretDiagnostic(event, tap, details = {}) {
+    if (window.PENNED_CARET_DIAGNOSTICS !== true) return;
+    const native = document.getSelection(), selection = editor.state.selection;
+    try { window.webkit?.messageHandlers?.tiptap?.postMessage({ kind: "caretTapDiagnostic", payload: {
+      ts: Date.now(), tap, event, focused: editor.view.hasFocus(), editable: editor.isEditable,
+      composing: editor.view.composing, from: selection.from, to: selection.to,
+      holdSuppression: editor.view.dom.classList.contains("penned-reorder-arming"),
+      nativeCollapsed: native?.isCollapsed ?? true,
+      nativeInside: !!native?.anchorNode && editor.view.dom.contains(native.anchorNode),
+      mode: document.documentElement.dataset.vellixSelectionMode || "off", ...details,
+    } }); } catch {}
+  }
+
+  function focusTextAtTap(event) {
+    const target = event.target;
+    if (!(target instanceof Element) || !editor.view.dom.contains(target)) return;
+    const contact = completedCaretContact && performance.now() - completedCaretContact.ended < 700 ? completedCaretContact : null;
+    const tap = contact?.tap ?? ++caretTapSequence;
+    const skipped = reason => caretDiagnostic("tap-skipped", tap, { reason, target: target.tagName });
+    caretDiagnostic("tap-received", tap, { target: target.tagName, detail: event.detail });
+    if (event.defaultPrevented || event.button !== 0 || event.detail !== 1 ||
+        !editable() || editor.view.composing || window.PennedBlockSelection?.consumesClick(event) ||
+        window.PennedBlockDragAndDrop?.ownsReorder || window.PennedBlockDragAndDrop?.busy) {
+      skipped(event.defaultPrevented ? "event-consumed" : event.button !== 0 ? "non-primary-button" : event.detail !== 1 ? "native-multitap"
+        : !editable() ? "read-only-or-block-selection" : editor.view.composing ? "composition"
+        : window.PennedBlockSelection?.consumesClick(event) ? "selection-gesture-click" : "reorder-or-transfer");
+      return;
+    }
+    if (contact && (contact.cancelled || contact.moved || contact.ended - contact.started > 320)) {
+      skipped(contact.cancelled ? "cancelled-contact" : contact.moved ? "scroll-or-drag" : "long-press"); return;
+    }
+    if (target.closest(
+      "button, a, input, textarea, select, audio, video, iframe, [role='button'], [role='checkbox'], [contenteditable='false'], [inert], [hidden]",
+    )) { skipped("control-or-noneditable-content"); return; }
+    const panel = target.closest(".penned-week-day-panel[data-active]");
+    const calendar = panel?.closest(".penned-week-strip");
+    if (calendar && (calendar.dataset.collapsed === "true" ||
+        target.closest(".penned-week-strip") !== calendar)) { skipped("inactive-calendar-panel"); return; }
+    const native = document.getSelection();
+    if (native && !native.isCollapsed) { skipped("native-text-range"); return; }
+    const view = editor.view;
+    const text = textAtTap(event, templateEditing);
+    if (!text) { skipped("not-visible-editable-text-use-existing-gap-handler"); return; }
+    const { hit, position } = text;
+    if (calendar) {
+      let inPanel = false;
+      for (let depth = position.depth; depth > 0; depth--) {
+        if (position.node(depth).type.name === "weekDayPanel") {
+          inPanel = view.nodeDOM(position.before(depth)) === panel;
+          break;
+        }
+      }
+      if (!inPanel) { skipped("calendar-panel-mismatch"); return; }
+    }
     let nativeMatches = false;
     try {
       nativeMatches = !!native?.anchorNode && view.posAtDOM(native.anchorNode, native.anchorOffset) === hit.pos;
     } catch { /* A stale native caret is the recovery case. */ }
-    if (view.hasFocus() && view.state.selection.empty && view.state.selection.from === hit.pos && nativeMatches) return;
+    if (view.hasFocus() && view.state.selection.empty && view.state.selection.from === hit.pos && nativeMatches) {
+      caretDiagnostic("tap-already-ready", tap, { expected: hit.pos, type: position.parent.type.name }); return;
+    }
     // Change only the caret. Do not append content or reuse the last date's caret.
     const applied = editor.chain().setTextSelection(hit.pos).command(({ tr }) => {
       tr.setMeta("pointer", true).setMeta("addToHistory", false);
       return true;
     }).run();
-    if (!applied) return;
+    if (!applied) { skipped("selection-command-rejected"); return; }
     view.focus();
     event.preventDefault();
-    window.webkit?.messageHandlers?.tiptap?.postMessage({ kind: "calendarDiagnostic", payload: {
+    // Run before generic gap/click handlers, which must not retarget a caret
+    // already placed in existing text during this same user activation.
+    event.stopImmediatePropagation();
+    caretDiagnostic("tap-reconciled", tap, { expected: hit.pos, type: position.parent.type.name,
+      context: templateEditing ? "template" : calendar ? "calendar" : "document" });
+    if (window.PENNED_CARET_DIAGNOSTICS === true) {
+      const expectedDoc = view.state.doc;
+      requestAnimationFrame(() => {
+        if (editor.isDestroyed || view.state.doc !== expectedDoc || caretTapSequence !== tap) return;
+        const range = document.getSelection();
+        let nativePosition = -1;
+        try { if (range?.isCollapsed && view.dom.contains(range.anchorNode)) nativePosition = view.posAtDOM(range.anchorNode, range.anchorOffset); } catch {}
+        const ready = view.hasFocus() && view.state.selection.empty && view.state.selection.from === hit.pos && nativePosition === hit.pos;
+        caretDiagnostic(ready ? "tap-verified" : "tap-not-ready", tap, { expected: hit.pos, nativePosition });
+      });
+    }
+    if (calendar) window.webkit?.messageHandlers?.tiptap?.postMessage({ kind: "calendarDiagnostic", payload: {
       stage: "nested-text-caret", blockID: calendar.dataset.vellixBlockId,
       date: panel.getAttribute("data-week-date"), pos: hit.pos, type: position.parent.type.name,
     } });
   }
-  const calendarCaretRoot = editor.view.dom;
-  calendarCaretRoot.addEventListener("click", focusCalendarTextAtTap);
-  editor.on("destroy", () => calendarCaretRoot.removeEventListener("click", focusCalendarTextAtTap));
+  window.addEventListener("click", focusTextAtTap, true);
+  editor.on("destroy", () => {
+    window.removeEventListener("click", focusTextAtTap, true);
+    caretListeners.abort(); caretContact = null; completedCaretContact = null;
+  });
 
   function publishHistory(force = false) {
     const canUndo = editor.can().undo(), canRedo = editor.can().redo();
@@ -212,83 +298,77 @@ enum MobileEditorInteractions {
     }).run();
   }
 
-  // iOS WebKit delivers software-keyboard deletion through beforeinput.
-  // Keep washi tape and the final editable information-card body block intact.
+  function ordinaryTextBlock(node) {
+    return !!node && (["paragraph", "caption"].includes(node.type.name) ||
+      (node.type.name === "heading" && node.attrs.label?.presentation !== "label"));
+  }
+
+  function ordinaryKeyboardBlock(node) {
+    if (ordinaryTextBlock(node)) return true;
+    if (!node || !["bulletList", "orderedList", "taskList", "listItem", "taskItem"].includes(node.type.name)) return false;
+    let ordinary = true;
+    node.forEach(child => { if (!ordinaryKeyboardBlock(child)) ordinary = false; });
+    return ordinary;
+  }
+
+  function dismissProtectedCaret() {
+    editor.view.dom.blur();
+    const native = document.getSelection();
+    if (native && (editor.view.dom.contains(native.anchorNode) || editor.view.dom.contains(native.focusNode))) {
+      native.removeAllRanges();
+    }
+  }
+
+  function protectedOwners(position) {
+    const owners = [];
+    for (let depth = 1; depth <= position.depth; depth++) {
+      const node = position.node(depth);
+      if (!ordinaryTextBlock(node) && !["bulletList", "orderedList", "taskList", "listItem", "taskItem"].includes(node.type.name)) {
+        owners.push(position.before(depth));
+      }
+    }
+    return owners;
+  }
+
+  // Guard both hardware keys and iOS beforeinput before join/select-node
+  // commands can consume an adjacent custom block. Explicit block deletion
+  // uses Penned's selection commands and does not pass through this guard.
   function protectedMobileDeletion(direction) {
-    if (!editable() || editor.view.composing) return false;
+    if (!editable() || editor.view.composing) return null;
     const { selection, doc } = editor.state;
     const { $from, $to, empty } = selection;
     if (!empty) {
-      let protectedTape = false;
-      doc.nodesBetween(selection.from, selection.to, node => {
-        if (node.type.name === "divider" && node.attrs.style === "washiTape") protectedTape = true;
+      if (selection.node && !ordinaryKeyboardBlock(selection.node)) return "protected-node-selection";
+      const fromOwners = protectedOwners($from), toOwners = protectedOwners($to);
+      if (fromOwners.length !== toOwners.length || fromOwners.some((pos, index) => pos !== toOwners[index])) {
+        return "selection-crosses-container-boundary";
+      }
+      let protectedBlock = null;
+      doc.nodesBetween(selection.from, selection.to, (node, pos) => {
+        if (!node.isText && !node.isInline && !ordinaryKeyboardBlock(node) &&
+            selection.from <= pos && selection.to >= pos + node.nodeSize) protectedBlock = node.type.name;
+        return !protectedBlock;
       });
-      return protectedTape;
+      return protectedBlock ? "selection-contains-" + protectedBlock : null;
     }
-    if (!$from.parent.isTextblock) return false;
+    if (!$from.parent.isTextblock) return "non-text-caret";
     const atEdge = direction === "backward"
       ? $from.parentOffset === 0
       : $from.parentOffset === $from.parent.content.size;
-    if (!atEdge) return false;
-    for (let depth = $from.depth; depth > 0; depth--) {
-      if ($from.node(depth).type.name !== "informationCardBody") continue;
-      const body = $from.node(depth);
-      if (body.childCount === 1 && $from.parent.content.size === 0) return true;
-      break;
+    if (!atEdge) return null;
+    if (!ordinaryTextBlock($from.parent)) return "protected-text-block-boundary";
+    for (let depth = $from.depth - 1; depth >= 0; depth--) {
+      const parent = $from.node(depth);
+      const index = $from.index(depth) + (direction === "forward" ? 1 : 0);
+      const adjacent = direction === "backward" ? parent.maybeChild(index - 1) : parent.maybeChild(index);
+      if (adjacent) return ordinaryKeyboardBlock(adjacent) ? null : "adjacent-" + adjacent.type.name;
+      // No sibling remains in this direction. Crossing the edge of a custom
+      // container must not lift its last paragraph out or delete its shell.
+      if (depth > 0 && !["bulletList", "orderedList", "taskList", "listItem", "taskItem"].includes(parent.type.name)) {
+        return "container-edge-" + parent.type.name;
+      }
     }
-    const boundary = doc.resolve(direction === "backward" ? $from.before() : $from.after());
-    const adjacent = direction === "backward" ? boundary.nodeBefore : boundary.nodeAfter;
-    return adjacent?.type.name === "divider" && adjacent.attrs.style === "washiTape";
-  }
-
-  function backspacePastDivider() {
-    if (!editable() || editor.view.composing) return false;
-    const { state } = editor;
-    const { empty, $from, $cursor } = state.selection;
-    if (!empty || !$cursor || !$from.parent.isTextblock ||
-        $from.parent.content.size !== 0 || $from.parentOffset !== 0) return false;
-    const start = $from.before();
-    const boundary = state.doc.resolve(start);
-    const divider = boundary.nodeBefore;
-    if (!divider || !["divider", "horizontalRule"].includes(divider.type.name) ||
-        !boundary.parent.canReplace(boundary.index(), boundary.index() + 1)) return false;
-
-    const end = $from.after();
-    const TextSelection = state.selection.constructor;
-    window.PennedKeyboardTrace?.record("mobile.divider.blur", { source: "backspace-divider" }, true);
-    editor.view.dom.blur();
-    const handled = editor.chain().command(({ tr, commands }) => {
-      tr.delete(start, end);
-      const position = tr.doc.resolve(Math.min(start, tr.doc.content.size));
-      const caret = TextSelection.findFrom(position, -1, true) || TextSelection.findFrom(position, 1, true);
-      // Keep a valid unfocused selection without selecting an atomic divider or inserting content.
-      if (caret) tr.setSelection(caret);
-      else commands.selectAll();
-      return true;
-    }).blur().run();
-    window.getSelection()?.removeAllRanges();
-    return handled;
-  }
-
-  function backspaceIntoQuote() {
-    if (!editable() || editor.view.composing) return false;
-    const { state } = editor;
-    const { empty, $from, $cursor } = state.selection;
-    if (!empty || !$cursor || $from.parent.type.name !== "paragraph" ||
-        $from.parent.content.size !== 0 || $from.parentOffset !== 0) return false;
-    const start = $from.before();
-    const quote = state.doc.resolve(start).nodeBefore;
-    if (quote?.type.name !== "blockquote") return false;
-    let target = null;
-    quote.descendants((node, position) => {
-      if (node.isTextblock) target = start - quote.nodeSize + position + 2 + node.content.size;
-    });
-    if (target === null) return false;
-    // Delete only the empty paragraph and select text inside the quote in one undoable transaction.
-    const tr = state.tr.delete(start, $from.after());
-    tr.setSelection(state.selection.constructor.create(tr.doc, target));
-    editor.view.dispatch(tr.scrollIntoView());
-    return true;
+    return null;
   }
 
   function focusBelowDivider(event) {
@@ -351,29 +431,37 @@ enum MobileEditorInteractions {
   }, true);
 
   editor.view.dom.addEventListener("keydown", event => {
-    if (!["Backspace", "Delete"].includes(event.key) || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (!["Backspace", "Delete"].includes(event.key) || event.isComposing) return;
+    if (event.target.closest?.("input, textarea, select, button, .penned-week-strip-chrome, .penned-tabs-header, .penned-tabs-bar")) return;
     const backward = event.key === "Backspace";
-    const protectedDeletion = protectedMobileDeletion(backward ? "backward" : "forward");
-    const handled = protectedDeletion || (backward && (backspacePastDivider() || backspaceIntoQuote()));
-    if (handled) {
+    const reason = protectedMobileDeletion(backward ? "backward" : "forward");
+    if (reason) {
       event.preventDefault();
       event.stopImmediatePropagation();
+      dismissProtectedCaret();
     }
   }, true);
   editor.view.dom.addEventListener("beforeinput", event => {
-    if (!["deleteContentBackward", "deleteContentForward"].includes(event.inputType)) return;
-    const backward = event.inputType === "deleteContentBackward";
+    if (!["deleteContentBackward", "deleteContentForward", "deleteWordBackward", "deleteWordForward", "deleteSoftLineBackward", "deleteSoftLineForward", "deleteHardLineBackward", "deleteHardLineForward"].includes(event.inputType)) return;
+    if (event.target.closest?.("input, textarea, select, button, .penned-week-strip-chrome, .penned-tabs-header, .penned-tabs-bar")) return;
+    const backward = event.inputType.endsWith("Backward");
     if (event.isComposing || !event.cancelable) return;
-    const protectedDeletion = protectedMobileDeletion(backward ? "backward" : "forward");
-    const handled = protectedDeletion || (backward && (backspacePastDivider() || backspaceIntoQuote()));
-    if (handled) {
+    const reason = protectedMobileDeletion(backward ? "backward" : "forward");
+    if (reason) {
       event.preventDefault();
       event.stopImmediatePropagation();
+      dismissProtectedCaret();
     }
   }, true);
 
   editor.storage.pennedMobileInsertDivider = insertDivider;
   window.tiptapCommand = function (name, args = {}) {
+    if (name === "setTemplateEditing") {
+      return Promise.resolve(command(name, args)).then(result => {
+        if (result !== false) templateEditing = args.enabled === true;
+        return result;
+      });
+    }
     if (name === "mobileSuspendInput") {
       editor.view.dom.blur();
       const selection = window.getSelection();

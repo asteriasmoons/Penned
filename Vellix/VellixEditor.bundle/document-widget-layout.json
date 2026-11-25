@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "types": ["moodBar", "countdown", "calculator"],
+  "halfWidth": 154,
+  "fullWidth": 320,
+  "halfHeight": 192,
+  "fullHeight": 192,
+  "padding": 6,
+  "spacing": 4,
+  "pairGap": 12
+}

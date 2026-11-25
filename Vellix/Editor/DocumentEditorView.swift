@@ -389,8 +389,9 @@ struct DocumentEditorView: View {
             model.session.blockDragGesture?.cancelForLifecycle()
             guard environment.selectedDocumentID == model.documentID else { return }
             model.session.renderRecovery.deactivate(reason: "application-inactive")
-            model.session.suspendWebInput()
-            if isTitleFocused { isTitleFocused = false }
+            // App switching is not an editing dismissal. Keep responder/caret
+            // and title focus intact without forcing focus when returning.
+            model.session.cancelPendingPaste()
             documentScrollProxy.pendingCaretRevision = nil
         }
         .onReceive(model.session.caretUpdates) { update in
@@ -670,6 +671,29 @@ struct DocumentEditorView: View {
             WeekStripSettingsSheet(request: request, session: model.session)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(item: editorPresentation($model.moodBarSettingsRequest)) { request in
+            MoodBarSettingsSheet(request: request, session: model.session)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(item: editorPresentation($model.countdownSettingsRequest)) { request in
+            CountdownSettingsSheet(request: request) { settings, data in
+                guard environment.selectedDocumentID == model.documentID, !isEditorLocked else {
+                    throw VellixError.editorBridge("This document is no longer open for editing.")
+                }
+                try await model.saveCountdown(request, settings: settings, data: data)
+            }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(item: editorPresentation($model.calculatorSettingsRequest)) { request in
+            CalculatorSettingsSheet(request: request, session: model.session) { settings in
+                guard environment.selectedDocumentID == model.documentID, !isEditorLocked else {
+                    throw VellixError.editorBridge("This document is no longer open for editing.")
+                }
+                try await model.saveCalculator(request, settings: settings)
+            }.presentationDetents([.large]).presentationDragIndicator(.visible)
         }
         .sheet(item: editorPresentation($model.tabsSettingsRequest)) { settings in
             TabsSettingsSheet(settings: settings, documentID: model.documentID, session: model.session)
@@ -1811,7 +1835,7 @@ struct DocumentEditorView: View {
     #if canImport(UIKit)
     private var isBlockKeyboardSheetPresented: Bool {
         // These sheets own their keyboard; there is no web caret to reveal.
-        model.tabsSettingsRequest != nil || model.weekStripSettingsRequest != nil || model.existingEventPickerRequest != nil || model.listGridSettingsRequest != nil ||
+        model.tabsSettingsRequest != nil || model.weekStripSettingsRequest != nil || model.moodBarSettingsRequest != nil || model.countdownSettingsRequest != nil || model.calculatorSettingsRequest != nil || model.existingEventPickerRequest != nil || model.listGridSettingsRequest != nil ||
             model.headingLabelSettingsRequest != nil || model.minimalFieldsSettingsRequest != nil ||
             model.informationCardSettingsRequest != nil ||
             model.gridCardSettingsRequest != nil || model.iconCalloutSettingsRequest != nil ||
@@ -3314,6 +3338,11 @@ private struct EditorInsertMenu: View {
                 Button("Card") { insertBlockAction("pageCard") }
             }
             Button("Code Block") { insertBlockAction("codeBlock") }
+            Menu("Widgets") {
+                Button("Mood Bar") { insertBlockAction("moodBar") }
+                Button("Countdown") { insertBlockAction("countdown") }
+                Button("Calculator") { insertBlockAction("calculator") }
+            }
             Menu("Other Blocks") {
                 Button("List Grids") { insertBlockAction("listGrid") }
                 Button("Fields") { insertBlockAction("fields") }

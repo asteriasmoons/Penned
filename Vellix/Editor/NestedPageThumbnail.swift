@@ -67,6 +67,25 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
                             .fixedSize()
                             .tag(index)
                     }
+                    if case .calculator(let settings, let state) = mark.shape {
+                        CalculatorWidgetPreview(settings: settings, state: state)
+                            .frame(width: mark.rect.width * 4)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .tag(index)
+                    }
+                    if case .moodBar(let settings) = mark.shape {
+                        MoodBarPreview(settings: settings)
+                            .frame(width: mark.rect.width * 4)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .tag(index)
+                    }
+                    if case .countdown(let settings) = mark.shape {
+                        CountdownWidgetPreview(settings: settings,
+                            iconImage: settings.imagePath.flatMap { CardImageLoader.image(path: $0, store: attachmentStore) })
+                            .frame(width: mark.rect.width * 4)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .tag(index)
+                    }
                 }
             }
         }
@@ -273,6 +292,15 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
             context.stroke(path, with: .color(ink.opacity(0.65)), lineWidth: 1)
         case .chip:
             context.fill(rounded, with: .color(tint.opacity(0.5)))
+        case .calculator, .moodBar, .countdown:
+            if let symbol = context.resolveSymbol(id: index), symbol.size.width > 0, symbol.size.height > 0 {
+                context.drawLayer { layer in
+                    layer.clip(to: Path(rect))
+                    layer.translateBy(x: rect.minX, y: rect.minY)
+                    layer.scaleBy(x: rect.width / symbol.size.width, y: rect.height / symbol.size.height)
+                    layer.draw(symbol, at: .zero, anchor: .topLeading)
+                }
+            }
         case .gridCardIcon(let name):
             if let path = mark.imagePath, AttachmentStore.validRelativePath(path),
                let image = CardImageLoader.image(path: path, store: attachmentStore) {
