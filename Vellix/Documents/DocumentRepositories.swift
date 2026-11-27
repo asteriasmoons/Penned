@@ -141,8 +141,9 @@ final class DocumentRepository: @unchecked Sendable {
     }
 
     func savePageCard(parentID: String, documentID: String?, style: PageCardStyle,
-                      imageData: Data?, attachmentStore: AttachmentStore) throws -> DocumentRecord {
+                      imageData: Data?, spineImageData: Data? = nil, attachmentStore: AttachmentStore) throws -> DocumentRecord {
         var importedPath: String?
+        var spineImportedPath: String?
         do {
             return try database.write { db in
                 let parent = try SpaceOwnership.document(parentID, scope: self.spaceID, in: db)
@@ -176,6 +177,20 @@ final class DocumentRepository: @unchecked Sendable {
                     savedStyle.imagePath = attachment.relativePath
                 }
                 if savedStyle.remotePhoto != nil { savedStyle.imagePath = nil }
+                if savedStyle.spineBackdrop == .photo, savedStyle.spineRemotePhoto == nil, let spineImageData {
+                    guard CardImageLoader.image(data: spineImageData) != nil,
+                          let source = CGImageSourceCreateWithData(spineImageData as CFData, nil),
+                          let identifier = CGImageSourceGetType(source), let type = UTType(identifier as String) else {
+                        throw VellixError.impossibleMove("Choose a supported image smaller than 20 MB.")
+                    }
+                    let attachment = try attachmentStore.importData(spineImageData,
+                        originalFileName: "Book Spine.\(type.preferredFilenameExtension ?? "jpg")",
+                        mimeType: type.preferredMIMEType, documentID: record.id)
+                    spineImportedPath = attachment.relativePath
+                    try attachment.insert(db)
+                    savedStyle.spineImagePath = attachment.relativePath
+                }
+                if savedStyle.spineRemotePhoto != nil { savedStyle.spineImagePath = nil }
                 record.cardStyleJSON = savedStyle.encodedJSON()
                 record.updatedAt = Date()
                 try record.update(db)
@@ -184,11 +199,16 @@ final class DocumentRepository: @unchecked Sendable {
             }
         } catch {
             if let importedPath { try? attachmentStore.removeFile(relativePath: importedPath) }
+            if let spineImportedPath { try? attachmentStore.removeFile(relativePath: spineImportedPath) }
             throw error
         }
     }
 
     func setNestedPageCardPresentation(parentID: String, documentIDs: [String], asCard: Bool) throws -> [DocumentRecord] {
+        try setNestedPagePresentation(parentID: parentID, documentIDs: documentIDs, presentation: asCard ? .card : .page)
+    }
+
+    func setNestedPagePresentation(parentID: String, documentIDs: [String], presentation: NestedPagePresentation) throws -> [DocumentRecord] {
         try database.write { db in
             let parent = try SpaceOwnership.document(parentID, scope: self.spaceID, in: db)
             guard !parent.isTrashed, !parent.isArchived else { throw VellixError.documentNotFound(parentID) }
@@ -197,7 +217,18 @@ final class DocumentRepository: @unchecked Sendable {
                 guard page.parentDocumentID == parentID, !page.isTrashed, !page.isArchived else {
                     throw VellixError.documentNotFound(id)
                 }
-                page.cardStyleJSON = asCard ? (page.cardStyleJSON ?? PageCardStyle().encodedJSON()) : nil
+                switch presentation {
+                case .page:
+                    page.cardStyleJSON = nil
+                case .card:
+                    var style = page.cardStyle ?? PageCardStyle()
+                    style.isBook = false
+                    page.cardStyleJSON = style.encodedJSON()
+                case .book:
+                    var style = page.cardStyle ?? { var fresh = PageCardStyle(); fresh.size = .portrait; return fresh }()
+                    style.isBook = true
+                    page.cardStyleJSON = style.encodedJSON()
+                }
                 page.updatedAt = Date()
                 try page.update(db)
                 try Self.upsertSearchIndex(page, in: db)

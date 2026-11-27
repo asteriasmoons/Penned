@@ -1,5 +1,21 @@
 import SwiftUI
 
+private struct ResolvedNestedPageThumbnail: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let thumbnail: NestedPageThumbnail
+    let document: DocumentRecord
+    @ObservedObject var previews: DocumentPreviewCache
+
+    var body: some View {
+        var page = thumbnail
+        page.document = nil
+        page.previews = nil
+        page.snapshot = previews.cachedPresentationImage(for: document, colorScheme: colorScheme)
+            ?? previews.cardSnapshot(for: document, colorScheme: colorScheme, allowsNativeFallback: false)
+        return page
+    }
+}
+
 nonisolated struct NestedPageThumbnail: View, Equatable {
     @Environment(\.colorScheme) private var colorScheme
     var json: String
@@ -12,22 +28,30 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
     var attachmentStore: AttachmentStore? = nil
     var includesCover = true
     var snapshot: CGImage? = nil
+    var document: DocumentRecord? = nil
+    var previews: DocumentPreviewCache? = nil
     @MainActor private var displayedAppearance: DocumentAppearance { appearance.resolved(for: colorScheme) }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.json == rhs.json && lhs.title == rhs.title && lhs.appearance == rhs.appearance &&
         lhs.size == rhs.size && lhs.isCardSheet == rhs.isCardSheet && lhs.isStylePreview == rhs.isStylePreview &&
         lhs.cover == rhs.cover && lhs.attachmentStore === rhs.attachmentStore && lhs.includesCover == rhs.includesCover &&
-        lhs.snapshot === rhs.snapshot
+        lhs.snapshot === rhs.snapshot && lhs.document == rhs.document && lhs.previews === rhs.previews
     }
 
     @MainActor var body: some View {
+        if let document, let previews, !isStylePreview, snapshot == nil, document.tipTapJSON == json {
+            ResolvedNestedPageThumbnail(thumbnail: self, document: document, previews: previews)
+        } else { page }
+    }
+
+    @MainActor private var page: some View {
         let showsCover = snapshot == nil && includesCover && !isStylePreview && displayedAppearance.displaysCover
         let layout: DocumentThumbnailLayout? = isStylePreview || snapshot != nil ? nil : DocumentThumbnailLayout(json: json,
             title: title, monospaced: displayedAppearance.fontStyle == .mono, showsCover: showsCover)
         let image = showsCover ? (CardImageLoader.image(path: cover, store: attachmentStore)
             ?? NestedPageThemeCovers.image(for: displayedAppearance.resolvedCoverTheme)) : nil
-        Canvas { context, size in
+        return Canvas { context, size in
             context.scaleBy(x: size.width / DocumentThumbnailLayout.size.width,
                             y: size.height / DocumentThumbnailLayout.size.height)
             let face = isCardSheet ? drawCardSheet(in: &context) : drawPage(in: &context)
@@ -248,12 +272,12 @@ nonisolated struct NestedPageThumbnail: View, Equatable {
         switch mark.shape {
         case .line:
             let customDivider = mark.blockType == "divider" && mark.colorHex != nil
-            let lineInk = customDivider || ["gridCardTitle", "gridCardText", "calloutText"].contains(mark.blockType) ? tint : ink
+            let lineInk = tint
             context.fill(Path(roundedRect: rect, cornerRadius: rect.height / 2),
                          with: .color((mark.blockType == "clipSourceTitle" ? Color(vellixHex: "#D5D5D5") : lineInk)
-                            .opacity(customDivider ? 1 : ["heading", "title", "gridCardTitle"].contains(mark.blockType) ? 0.7 : 0.46)))
+                            .opacity(customDivider || mark.colorHex != nil ? 1 : ["heading", "title", "gridCardTitle"].contains(mark.blockType) ? 0.7 : 0.46)))
         case .container:
-            if ["clipSource", "clipSourceLink", "gridCard", "iconCallout", "plainCallout"].contains(mark.blockType) {
+            if ["clipSource", "clipSourceLink", "gridCard", "iconCallout", "plainCallout", "weekStrip", "informationCard"].contains(mark.blockType) {
                 context.fill(rounded, with: .color(tint))
                 return
             }

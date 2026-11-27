@@ -40,7 +40,7 @@ struct DailyNotesSettingsView: View {
                         HStack(spacing: 12) {
                             if let document = environment.overview.templateDocuments[template.id] {
                                 NestedPageThumbnail(json: document.tipTapJSON, title: document.title, appearance: document.appearance,
-                                    size: CGSize(width: 31, height: 40), cover: document.cover, attachmentStore: environment.attachmentStore)
+                                    size: CGSize(width: 31, height: 40), cover: document.cover, attachmentStore: environment.attachmentStore, document: document, previews: environment.documentPreviews)
                             }
                             Text(template.title).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
                             if selectedID == template.id {

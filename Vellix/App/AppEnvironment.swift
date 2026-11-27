@@ -321,7 +321,8 @@ final class AppEnvironment: ObservableObject {
         }
         documentPreviews.cardFallbackRenderer = { [weak self] document, scheme, hidesPageSurfaces in
             guard let self else { return nil }
-            let renderer = ImageRenderer(content: ImmediateDocumentPreview(document: document, showsPageSurfaces: !hidesPageSurfaces, showsDocumentTitle: false)
+            let renderer = ImageRenderer(content: ImmediateDocumentPreview(document: document, showsPageSurfaces: !hidesPageSurfaces,
+                showsDocumentTitle: false, showsDocumentHeader: document.cardStyle?.isBook != true)
                 .environmentObject(self).environment(\.colorScheme, scheme)
                 .frame(width: document.isThemed ? 376 : 360, height: 740, alignment: .topLeading))
             renderer.scale = 2

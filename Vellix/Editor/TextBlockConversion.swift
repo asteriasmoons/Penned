@@ -60,6 +60,7 @@ struct EditorTextConversionMenu: View {
             Menu("Nested Content") {
                 option("Page", target: "nestedPage", selection: selection)
                 option("Card", target: "pageCard", selection: selection)
+                option("Book", target: "pageBook", selection: selection)
             }
             option("Code Block", target: "codeBlock", selection: selection)
             Menu("Other Blocks") {
@@ -199,7 +200,7 @@ enum TextBlockConversion {
 
   function supportedTargets() {
     const targets = ['paragraph', 'caption', 'plainCallout', 'iconCallout', 'quote', 'table',
-      'link', 'file', 'nestedPage', 'pageCard', 'codeBlock', 'listGrid', 'fields', 'tabs',
+      'link', 'file', 'nestedPage', 'pageCard', 'pageBook', 'codeBlock', 'listGrid', 'fields', 'tabs',
       'informationCard', 'gridCard', 'weekStrip', 'existingEvent', 'collection', 'toggleListItem', 'checkListItem',
       'bulletListItem', 'numberedListItem', 'pageBreak'];
     for (let level = 1; level <= 4; level++) targets.push('heading' + level, 'textHeading' + level,
@@ -352,7 +353,7 @@ enum TextBlockConversion {
   }
   function convertAny(records, target, apply = true, payload = {}) {
     if (!records.length) return false;
-    if (['nestedPage', 'pageCard'].includes(target)) {
+    if (['nestedPage', 'pageCard', 'pageBook'].includes(target)) {
       if (!apply) return true;
       if (records.every(block => block.node.type.name === 'pageReference' && block.node.attrs.documentID)) {
         postConversion({ target, token: crypto.randomUUID(), documentIDs: records.map(block => block.node.attrs.documentID) });

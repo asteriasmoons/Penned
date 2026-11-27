@@ -12,6 +12,7 @@ import SwiftUI
     @Published var startupError: String?
     private var activation: Task<Void, Never>?
     private var activatedKey: String?
+    private var cloudAccountObservation:AnyCancellable?
 
     init() {
         verificationMode = CommandLine.arguments.contains("--penned-mac-ui-test")
@@ -32,11 +33,20 @@ import SwiftUI
         library.currentOwner = { [weak accounts] in
             accounts?.currentUser?.remoteAuthDeleted == false ? accounts?.currentAccountIdentity?.libraryOwnerKey : nil
         }
+        library.railwayAccount = accounts.railwayAccount
+        library.prepareMigrationWindows = { [weak self] in
+            guard let self else{throw LibraryError.staleWorkspace}
+            try await self.windows.flushAll()
+            guard self.windows.workspaces.allSatisfy({ !$0.isBusy && $0.environment.librarySyncProtection(alsoProtecting:$0.activeTab.location.documentID).isEmpty }) else{throw RailwayError.staleCheckpoint}
+        }
         library.beforeLibraryChange = { [weak self] in try await self?.windows.closeLibraries() }
         library.resumeImportsOn = windows.editorChanges.eraseToAnyPublisher()
         library.importIntoWindows = { [weak self] apply, root in
             guard let self else { throw LibraryError.staleWorkspace }
             return try await self.windows.importChanges(apply, root: root)
+        }
+        cloudAccountObservation=accounts.railwayAccount.$connectedLibraryID.removeDuplicates().sink{[weak self] libraryID in
+            Task{@MainActor in await self?.library.cloudSessionChanged(libraryID)}
         }
         MacApplicationDelegate.application = self
         PennedSyncNotifications.synchronize = { [weak self] in await self?.library.synchronize() }
@@ -61,6 +71,7 @@ import SwiftUI
     func prepareAccountChange() async throws { try await windows.flushAll() }
     func foreground() {
         guard !verificationMode else { return }
+        accounts.setCloudForeground(true)
         accounts.bootstrap(force: true)
         for workspace in windows.workspaces {
             workspace.environment.calendar.refresh()
@@ -124,7 +135,7 @@ struct MacLibraryWindowRoot: View {
         .fontDesign(.rounded).foregroundStyle(VellixSurface.ink).tint(VellixSurface.violet)
         .task { if !app.verificationMode { await accounts.bootstrap()?.value }; await app.activate() }
         .task(id: app.activationKey) { await app.activate() }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { app.foreground() } }
+        .onChange(of: scenePhase, initial:true) { _, phase in if phase == .active { app.foreground() } }
         .onOpenURL { url in if url.scheme?.lowercased() == "penned" { pendingDocumentLink = url } }
         .onReceive(NotificationCenter.default.publisher(for: ASAuthorizationAppleIDProvider.credentialRevokedNotification)) { _ in
             Task { await accounts.handleAppleCredentialRevoked() }

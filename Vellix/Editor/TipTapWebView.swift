@@ -483,6 +483,8 @@ fileprivate extension TipTapWebView {
         #endif
         #endif
 
+        contentController.addUserScript(WKUserScript(source: BookPageInteractions.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = contentController
         configuration.setURLSchemeHandler(DocumentFontSchemeHandler(), forURLScheme: DocumentFontResources.scheme)

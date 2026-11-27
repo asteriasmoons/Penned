@@ -91,7 +91,7 @@ struct TemplateResultRow: View {
             HStack(spacing: VellixSpacing.md) {
                 NestedPageThumbnail(json: document?.tipTapJSON ?? template.tipTapJSON,
                     title: template.title, appearance: document?.appearance ?? .plain,
-                    cover: document?.cover, attachmentStore: environment.attachmentStore)
+                    cover: document?.cover, attachmentStore: environment.attachmentStore, document: document, previews: environment.documentPreviews)
                     .equatable()
                 VStack(alignment: .leading, spacing: 5) {
                     Text(template.title)

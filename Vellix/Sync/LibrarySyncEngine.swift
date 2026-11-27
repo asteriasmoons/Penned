@@ -302,6 +302,15 @@ final class LibrarySyncEngine: CKSyncEngineDelegate {
         }
     }
 
+    // Migration cannot interpret a scheduled CloudKit retry as a successful
+    // final pass. Verify that a fetch/send completed and the inbox is drained.
+    func flushForRailwayMigration() async throws {
+        try await synchronize(fetch:true)
+        try validateWorkspace()
+        guard retryTask==nil,callbackFailure==nil,engine != nil,!requiresInitialFetch,passPhase=="send",
+              try store.pending().isEmpty,try await !store.hasIncomingChanges() else{throw RailwayError.staleCheckpoint}
+    }
+
     private func runPass(fetch: Bool, send: Bool, onlyWhenLocalWorkExists: Bool) async throws {
         passPhase = "validateWorkspace"
         try validateWorkspace()

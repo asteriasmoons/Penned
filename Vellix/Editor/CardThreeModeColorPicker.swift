@@ -7,6 +7,7 @@ struct CardThreeModeColorPicker: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var selection: Color
     var title: String
+    var showsKeyboardDismiss = false
 
     var body: some View {
         Group {
@@ -16,7 +17,11 @@ struct CardThreeModeColorPicker: View {
             Form { ColorPicker(title, selection: $selection, supportsOpacity: false).pennedSheetRows() }
             #endif
         }
-        .pennedSheet(title: title, close: { dismiss() })
+        .pennedSheet(title: title, close: { dismiss() }) {
+            #if os(iOS)
+            if showsKeyboardDismiss { PennedSheetKeyboardDismissButton {} }
+            #endif
+        }
     }
 }
 

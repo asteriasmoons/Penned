@@ -42,6 +42,7 @@ enum TipTapEditorEvent: Equatable {
     case requestPropertyURL(String)
     case requestNestedPage(blockID: String)
     case requestPageCard(blockID: String)
+    case requestPageBook(blockID: String)
     case requestOpenPage(documentID: String)
     case requestPageActions(documentID: String)
     case requestPageCardSettings(documentID: String)
@@ -291,6 +292,9 @@ enum TipTapEditorEvent: Equatable {
 
         case "pageCardRequest":
             self = .requestPageCard(blockID: payload["blockId"] as? String ?? "")
+
+        case "pageBookRequest":
+            self = .requestPageBook(blockID: payload["blockId"] as? String ?? "")
 
         case "pageOpenRequest":
             self = .requestOpenPage(documentID: payload["documentId"] as? String ?? "")

@@ -4,7 +4,16 @@ import UniformTypeIdentifiers
 
 struct CardBackdropSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @Binding var style: PageCardStyle
+    @Binding var backdrop: PageCardBackdrop
+    @Binding var startColor: String
+    @Binding var endColor: String
+    @Binding var imagePath: String?
+    @Binding var remotePhoto: CardRemotePhoto?
+    var textColorHex: String
+    var title: String = "Backdrop"
+    var allowedModes: [PageCardBackdrop] = PageCardBackdrop.allCases
+    var opacity: Binding<Double>? = nil
+    var showsKeyboardDismiss = false
     var imageSelected: (Data) -> Void
     @State private var colorTarget: CardColorTarget?
     @State private var photoItem: PhotosPickerItem?
@@ -19,8 +28,15 @@ struct CardBackdropSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             modes
+            if let opacity {
+                HStack {
+                    Text("Opacity")
+                    Slider(value: opacity, in: 0...1)
+                    Text("\(Int((opacity.wrappedValue * 100).rounded()))%").monospacedDigit().frame(width: 48, alignment: .trailing)
+                }
+            }
             ScrollView {
-                switch style.backdrop {
+                switch backdrop {
                 case .none: EmptyView()
                 case .solid: solidColors
                 case .gradient: gradientColors
@@ -29,9 +45,14 @@ struct CardBackdropSheet: View {
             }.scrollIndicators(.hidden)
         }
         .padding(18).frame(maxWidth: 550, maxHeight: .infinity, alignment: .topLeading)
-        .pennedSheet(title: "Backdrop", close: { dismiss() })
+        .pennedSheet(title: title, close: { dismiss() }) {
+            #if os(iOS)
+            if showsKeyboardDismiss { PennedSheetKeyboardDismissButton {} }
+            #endif
+        }
         .sheet(item: $colorTarget) { target in
-            CardThreeModeColorPicker(selection: colorBinding(target), title: target == .start && style.backdrop != .gradient ? "Select Color" : target.title)
+            CardThreeModeColorPicker(selection: colorBinding(target), title: target == .start && backdrop != .gradient ? "Select Color" : target.title,
+                showsKeyboardDismiss: showsKeyboardDismiss)
                 .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showUnsplash) {
@@ -44,7 +65,7 @@ struct CardBackdropSheet: View {
                 try select(data)
             } catch { errorMessage = error.localizedDescription }
         }
-        .task(id: style.backdrop) { if style.backdrop == .photo && photos.isEmpty { await loadPhotos() } }
+        .task(id: backdrop) { if backdrop == .photo && photos.isEmpty { await loadPhotos() } }
         .fileImporter(isPresented: $showFiles, allowedContentTypes: [.image], allowsMultipleSelection: false) { result in
             Task {
                 do {
@@ -65,18 +86,18 @@ struct CardBackdropSheet: View {
 
     private var modes: some View {
         HStack(spacing: 0) {
-            ForEach(PageCardBackdrop.allCases) { mode in
-                Button { style.backdrop = mode } label: {
+            ForEach(allowedModes) { mode in
+                Button { backdrop = mode } label: {
                     Group {
                         switch mode {
                         case .none: Image("eyeslash").renderingMode(.template).resizable().scaledToFit().frame(width: 20, height: 20)
                         case .photo: Image("imagesign").renderingMode(.template).resizable().scaledToFit().frame(width: 20, height: 20)
-                        case .solid: RoundedRectangle(cornerRadius: 3).fill(Color(vellixHex: style.startColor)).frame(width: 17, height: 17).overlay(RoundedRectangle(cornerRadius: 3).stroke(.white, lineWidth: 1))
-                        case .gradient: RoundedRectangle(cornerRadius: 3).fill(LinearGradient(colors: [Color(vellixHex: style.startColor), Color(vellixHex: style.endColor)], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(width: 17, height: 17).overlay(RoundedRectangle(cornerRadius: 3).stroke(.white, lineWidth: 1))
+                        case .solid: RoundedRectangle(cornerRadius: 3).fill(Color(vellixHex: startColor)).frame(width: 17, height: 17).overlay(RoundedRectangle(cornerRadius: 3).stroke(.white, lineWidth: 1))
+                        case .gradient: RoundedRectangle(cornerRadius: 3).fill(LinearGradient(colors: [Color(vellixHex: startColor), Color(vellixHex: endColor)], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(width: 17, height: 17).overlay(RoundedRectangle(cornerRadius: 3).stroke(.white, lineWidth: 1))
                         }
                     }
                     .frame(maxWidth: .infinity).frame(height: 34)
-                    .background(mode == style.backdrop ? VellixSurface.activeTab : Color.clear, in: Capsule())
+                    .background(mode == backdrop ? VellixSurface.activeTab : Color.clear, in: Capsule())
                 }.buttonStyle(.plain).accessibilityLabel(mode.title)
             }
         }.padding(3).pennedSheetField(cornerRadius: 22)
@@ -85,16 +106,16 @@ struct CardBackdropSheet: View {
     private var solidColors: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 6), spacing: 10) {
             ForEach(palette, id: \.self) { hex in
-                Button { style.startColor = hex } label: {
+                Button { startColor = hex } label: {
                     Circle().fill(Color(vellixHex: hex)).frame(width: 36, height: 36)
-                        .overlay(Circle().stroke(style.startColor == hex ? .white : .clear, lineWidth: 2).padding(-3))
+                        .overlay(Circle().stroke(startColor == hex ? .white : .clear, lineWidth: 2).padding(-3))
                         .frame(width: 44, height: 44)
                 }.buttonStyle(.plain).accessibilityLabel("Color \(hex)")
             }
             Button { colorTarget = .start } label: {
-                Circle().fill(Color(vellixHex: style.startColor)).frame(width: 36, height: 36)
+                Circle().fill(Color(vellixHex: startColor)).frame(width: 36, height: 36)
                     .overlay(Circle().stroke(AngularGradient(colors: [.pink, .yellow, .green, .cyan, .blue, .purple, .pink], center: .center), lineWidth: 3))
-                    .overlay(Image("colorpicker").renderingMode(.template).resizable().scaledToFit().frame(width: 14, height: 14).foregroundStyle(Color(vellixHex: style.textColor)))
+                    .overlay(Image("colorpicker").renderingMode(.template).resizable().scaledToFit().frame(width: 14, height: 14).foregroundStyle(Color(vellixHex: textColorHex)))
                     .frame(width: 44, height: 44)
             }.buttonStyle(.plain).accessibilityLabel("Custom Color")
         }
@@ -105,10 +126,10 @@ struct CardBackdropSheet: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 6), spacing: 10) {
                 ForEach(gradients.indices, id: \.self) { index in
                     let colors = gradients[index]
-                    Button { style.startColor = colors.0; style.endColor = colors.1 } label: {
+                    Button { startColor = colors.0; endColor = colors.1 } label: {
                         Circle().fill(LinearGradient(colors: [Color(vellixHex: colors.0), Color(vellixHex: colors.1)], startPoint: .leading, endPoint: .trailing))
                             .frame(width: 36, height: 36)
-                            .overlay(Circle().stroke(style.startColor == colors.0 && style.endColor == colors.1 ? .white : .clear, lineWidth: 2).padding(-3))
+                            .overlay(Circle().stroke(startColor == colors.0 && endColor == colors.1 ? .white : .clear, lineWidth: 2).padding(-3))
                             .frame(width: 44, height: 44)
                     }.buttonStyle(.plain).accessibilityLabel("Gradient \(index + 1)")
                 }
@@ -124,7 +145,7 @@ struct CardBackdropSheet: View {
             HStack {
                 Text(target.title)
                 Spacer()
-                RoundedRectangle(cornerRadius: 9).fill(Color(vellixHex: target == .start ? style.startColor : style.endColor)).frame(width: 48, height: 40)
+                RoundedRectangle(cornerRadius: 9).fill(Color(vellixHex: target == .start ? startColor : endColor)).frame(width: 48, height: 40)
             }.foregroundStyle(.primary).padding(.horizontal, 12).pennedSheetField()
         }.buttonStyle(.plain)
     }
@@ -140,7 +161,7 @@ struct CardBackdropSheet: View {
                                 AsyncImage(url: URL(string: photo.thumbURL)) { image in image.resizable().scaledToFill() } placeholder: { Color.white.opacity(0.05) }
                                     .frame(width: proxy.size.width, height: 72).clipped()
                             }.frame(height: 72).clipShape(RoundedRectangle(cornerRadius: 8))
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(style.remotePhoto?.id == photo.id ? Color(vellixHex: "#2EC5F4") : .clear, lineWidth: 2))
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(remotePhoto?.id == photo.id ? Color(vellixHex: "#2EC5F4") : .clear, lineWidth: 2))
                         }.buttonStyle(.plain).accessibilityLabel("Photo by \(photo.photographer)")
                         CardPhotoCredit(photo: photo, compact: true)
                     }
@@ -152,7 +173,7 @@ struct CardBackdropSheet: View {
                 PhotosPicker(selection: $photoItem, matching: .images) { sourceLabel("Photo Library", asset: "imagesign") }.buttonStyle(.plain)
                 sourceButton("Files", asset: "folderhand") { showFiles = true }
             }
-            if let photo = style.remotePhoto { CardPhotoCredit(photo: photo) }
+            if let photo = remotePhoto { CardPhotoCredit(photo: photo) }
         }
     }
 
@@ -167,15 +188,15 @@ struct CardBackdropSheet: View {
             .pennedSheetField()
     }
     private func colorBinding(_ target: CardColorTarget) -> Binding<Color> {
-        Binding(get: { Color(vellixHex: target == .start ? style.startColor : style.endColor) }, set: {
-            if target == .start { style.startColor = $0.vellixHexString(fallback: style.startColor) }
-            else { style.endColor = $0.vellixHexString(fallback: style.endColor) }
+        Binding(get: { Color(vellixHex: target == .start ? startColor : endColor) }, set: {
+            if target == .start { startColor = $0.vellixHexString(fallback: startColor) }
+            else { endColor = $0.vellixHexString(fallback: endColor) }
         })
     }
-    private func select(_ photo: CardRemotePhoto) { style.remotePhoto = photo; style.imagePath = nil; style.backdrop = .photo }
+    private func select(_ photo: CardRemotePhoto) { remotePhoto = photo; imagePath = nil; backdrop = .photo }
     private func select(_ data: Data) throws {
         guard CardImageLoader.image(data: data) != nil else { throw NSError(domain: "VellixCard", code: 1, userInfo: [NSLocalizedDescriptionKey: "Choose a supported image up to 20 MB."]) }
-        style.remotePhoto = nil; style.imagePath = nil; style.backdrop = .photo
+        remotePhoto = nil; imagePath = nil; backdrop = .photo
         imageSelected(data)
     }
     private func loadPhotos(shuffle: Bool = false) async {

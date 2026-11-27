@@ -10,7 +10,7 @@ struct NestedPageRow: View {
         Button(action: open) {
             HStack(spacing: 10) {
                 NestedPageThumbnail(json: document.tipTapJSON, title: document.title, appearance: document.appearance,
-                    cover: document.cover, attachmentStore: environment.attachmentStore)
+                    cover: document.cover, attachmentStore: environment.attachmentStore, document: document, previews: environment.documentPreviews)
                     .equatable()
                     .shadow(color: .black.opacity(0.48), radius: 6, x: 0, y: 4)
                     .shadow(color: .black.opacity(0.30), radius: 1, x: 0, y: 1)

@@ -115,10 +115,15 @@ struct VellixApp: App {
                 if case .checking = accounts.status { return }
                 guard !Task.isCancelled else { return }
                 startup.currentOwner = { accounts.currentUser?.remoteAuthDeleted == false ? accounts.currentAccountIdentity?.libraryOwnerKey : nil }
+                startup.railwayAccount = accounts.railwayAccount
                 PennedSyncNotifications.synchronize = { await startup.synchronize() }
                 await startup.activate(accounts.currentAccountIdentity)
             }
-            .onChange(of: scenePhase) { _, phase in
+            .onReceive(accounts.railwayAccount.$connectedLibraryID.removeDuplicates()) { libraryID in
+                Task { await startup.cloudSessionChanged(libraryID) }
+            }
+            .onChange(of: scenePhase, initial:true) { _, phase in
+                accounts.setCloudForeground(phase == .active)
                 if phase == .active {
                     // Initial activation is owned by the startup task. On a
                     // real foreground return, revalidate and resume services.

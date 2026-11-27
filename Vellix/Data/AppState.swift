@@ -7,6 +7,9 @@ import Foundation
 import Combine
 import SwiftData
 import AuthenticationServices
+#if os(iOS)
+import UIKit
+#endif
 
 @MainActor
 final class AppState: ObservableObject {
@@ -18,8 +21,26 @@ final class AppState: ObservableObject {
         case deletionPending(AuthUser)
     }
     
+    let railwayAccount = RailwayNativeAccountBinding()
+    private let cloudAuthenticationEnabled:Bool
+    private var cloudAuthenticationTask:Task<Void,Never>?
+    private var cloudAuthenticationOwner:String?
+    private var pendingCloudAppleProof:PennedCloudAppleProof?
+    private var cloudApplePromptAttempted=false
+    private var cloudForeground=false
+
     @Published private(set) var status: SessionStatus = .checking {
         didSet {
+            let selected:String?
+            if case .signedIn(let user)=status,!user.remoteAuthDeleted {selected=user.identity?.libraryOwnerKey}
+            else{selected=nil}
+            if cloudAuthenticationOwner != selected {
+                cloudAuthenticationTask?.cancel();cloudAuthenticationTask=nil
+                cloudAuthenticationOwner=selected;cloudApplePromptAttempted=false
+                if pendingCloudAppleProof?.ownerKey != selected{pendingCloudAppleProof=nil}
+            }
+            railwayAccount.select(ownerKey:selected)
+            startCloudAuthentication()
             #if os(iOS)
             func owner(_ value: SessionStatus) -> AccountIdentity? {
                 if case .signedIn(let user) = value, !user.remoteAuthDeleted { return user.identity }
@@ -51,6 +72,7 @@ final class AppState: ObservableObject {
 
     init(container: ModelContainer? = nil, auth: AuthService? = nil,
          cloud: (any AccountCloudStoring)? = nil, deferStorageOpen: Bool = false) {
+        cloudAuthenticationEnabled = container == nil && auth == nil && cloud == nil
         self.auth = auth ?? .shared
         self.cloud = cloud ?? AccountCloudStore()
         if deferStorageOpen && container == nil {
@@ -188,9 +210,76 @@ final class AppState: ObservableObject {
         refreshProfile()
     }
 
-    func signInWithApple(credential: ASAuthorizationAppleIDCredential, existingUsers: [AuthUser], modelContext: ModelContext, nonce: PublishingAppleNonce? = nil) throws {
+    func signInWithApple(credential: ASAuthorizationAppleIDCredential, existingUsers: [AuthUser], modelContext: ModelContext, nonce: PublishingAppleNonce? = nil, cloudChallenge:RailwayAppleChallenge?=nil) throws {
         let user = try auth.signInWithApple(credential: credential, existingUsers: existingUsers, modelContext: modelContext, nonce: nonce)
+        if let cloudChallenge,let token=credential.identityToken,nonce?.rawValue==cloudChallenge.nonce {
+            pendingCloudAppleProof = .init(ownerKey:"apple:"+credential.user,challenge:cloudChallenge,token:token,createdAt:Date())
+        }
         setSignedIn(user)
+    }
+
+    // Called at scene activation. Local account restoration and library opening
+    // never await this task. Each selected account gets its own lifecycle.
+    func setCloudForeground(_ active:Bool) {
+        cloudForeground=active
+        startCloudAuthentication()
+    }
+
+    private func startCloudAuthentication() {
+        guard cloudAuthenticationEnabled,cloudAuthenticationTask==nil,let owner=cloudAuthenticationOwner else{return}
+        cloudAuthenticationTask=Task(priority:.utility){[weak self] in
+            while !Task.isCancelled{
+                guard let self,self.cloudAuthenticationOwner==owner else{return}
+                if !self.isWorking{
+                    do{try await self.establishCloudSession(owner:owner)}
+                    catch is CancellationError{}
+                    catch{/* Local account and queued edits remain available. */}
+                }
+                do{try await Task.sleep(for:.seconds(30))}catch{return}
+            }
+        }
+    }
+
+    private func establishCloudSession(owner:String)async throws {
+        guard !Task.isCancelled,cloudAuthenticationOwner==owner,
+              let identity=currentAccountIdentity,identity.libraryOwnerKey==owner,
+              currentUser?.remoteAuthDeleted==false else{throw CancellationError()}
+        if try await railwayAccount.restoreOnline(){
+            cloudApplePromptAttempted=false;pendingCloudAppleProof=nil;return
+        }
+        let client=try railwayAccount.client()
+        #if os(macOS)
+        let platform="macos"
+        #else
+        let platform=await MainActor.run {UIDevice.current.userInterfaceIdiom == .pad ? "ipados":"ios"}
+        #endif
+        let device=RailwayDevice(name:nil,platform:platform)
+        switch identity {
+        case .email:
+            let token=try await auth.publishingAccessToken(for:identity)
+            guard !Task.isCancelled,!isWorking,cloudAuthenticationOwner==owner,currentAccountIdentity==identity else{throw CancellationError()}
+            _ = try await client.signInSupabase(accessToken:token,device:device,expectedOwner:owner)
+        case .apple(let subject):
+            if pendingCloudAppleProof?.isFresh != true {pendingCloudAppleProof=nil}
+            if pendingCloudAppleProof==nil {
+                guard cloudForeground,!cloudApplePromptAttempted,PennedCloudAppleAuthorization.activeAnchor != nil else{return}
+                let challenge=try await client.appleChallenge()
+                guard !Task.isCancelled,!isWorking,cloudAuthenticationOwner==owner,currentAccountIdentity==identity,cloudForeground else{throw CancellationError()}
+                cloudApplePromptAttempted=true
+                let token=try await PennedCloudAppleAuthorization().authorize(subject:subject,challenge:challenge)
+                guard !Task.isCancelled,cloudAuthenticationOwner==owner,currentAccountIdentity==identity else{throw CancellationError()}
+                pendingCloudAppleProof = .init(ownerKey:owner,challenge:challenge,token:token,createdAt:Date())
+            }
+            guard let proof=pendingCloudAppleProof,proof.ownerKey==owner,proof.isFresh,
+                  !isWorking,!Task.isCancelled,cloudAuthenticationOwner==owner else{throw CancellationError()}
+            do{
+                _ = try await client.signInApple(identityToken:proof.token,challenge:proof.challenge,device:device,expectedOwner:owner)
+                pendingCloudAppleProof=nil
+            }catch RailwayError.http(401,_,_){pendingCloudAppleProof=nil;throw RailwayError.signedOut}
+        }
+        guard !Task.isCancelled,cloudAuthenticationOwner==owner,currentAccountIdentity==identity else{throw CancellationError()}
+        _ = try await railwayAccount.verify(client,ownerKey:owner)
+        cloudApplePromptAttempted=false
     }
 
     func publishingAccessToken() async throws -> String {
@@ -227,12 +316,16 @@ final class AppState: ObservableObject {
         try? ClipperShared.disconnect()
         #endif
         isWorking = true
-        defer { isWorking = false }
+        defer { isWorking = false;startCloudAuthentication() }
+        cloudAuthenticationTask?.cancel();cloudAuthenticationTask=nil;pendingCloudAppleProof=nil
         bootstrapTask?.cancel()
         syncRequest = UUID()
         syncTask?.cancel()
         do {
             try await auth.signOutActive()
+            // Do not block legacy sign-out on a Railway network failure. The
+            // device revocation is retained in the account-specific keychain.
+            try? await railwayAccount.disconnect()
             hasBootstrapped = true
             status = .signedOut
             syncState = ""

@@ -36,8 +36,8 @@ struct MacEditorPresentations: ViewModifier {
             }
             .sheet(item: $model.templateComponentRequest) { TemplateComponentEditorSheet(request: $0, session: model.session).frame(width: 540, height: 650) }
             .sheet(item: $model.cardEditorRequest, onDismiss: { model.cancelCardInsertion() }) { request in
-                PageCardEditorSheet(request: request, store: environment.attachmentStore, previews: environment.documentPreviews) { style, data in
-                    try await model.savePageCard(request: request, style: style, imageData: data)
+                PageCardEditorSheet(request: request, store: environment.attachmentStore, previews: environment.documentPreviews) { style, data, spineData in
+                    try await model.savePageCard(request: request, style: style, imageData: data, spineImageData: spineData)
                 }.frame(width: 650, height: 650)
             }
             .sheet(item: $model.washiTapeRequest) { request in

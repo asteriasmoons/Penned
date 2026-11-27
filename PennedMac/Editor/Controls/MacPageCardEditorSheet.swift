@@ -4,17 +4,21 @@ import SwiftUI
 
 struct PageCardEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     var request: PageCardEditorRequest
     var store: AttachmentStore
     @ObservedObject var previews: DocumentPreviewCache
-    var save: (PageCardStyle, Data?) async throws -> Void
+    var save: (PageCardStyle, Data?, Data?) async throws -> Void
     @State private var style: PageCardStyle
     @State private var pendingImage: Data?
+    @State private var pendingSpineImage: Data?
     @State private var showBackdrop = false
+    @State private var showSpine = false
+    @State private var bookColorTarget: BookColorPart?
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    init(request: PageCardEditorRequest, store: AttachmentStore, previews: DocumentPreviewCache, save: @escaping (PageCardStyle, Data?) async throws -> Void) {
+    init(request: PageCardEditorRequest, store: AttachmentStore, previews: DocumentPreviewCache, save: @escaping (PageCardStyle, Data?, Data?) async throws -> Void) {
         self.request = request
         self.store = store
         self.previews = previews
@@ -31,12 +35,13 @@ struct PageCardEditorSheet: View {
         }
         .padding(.top, 8)
         .buttonStyle(.plain)
-        .pennedSheet(title: "Card", closeDisabled: isSaving, close: { dismiss() }) {
+        .pennedSheet(title: style.isBook ? "Book" : "Card", closeDisabled: isSaving, close: { dismiss() }) {
             Button(isSaving ? "Saving..." : "Done") {
                 isSaving = true
                 Task {
                     do {
-                        try await save(style, style.backdrop == .photo && style.remotePhoto == nil ? pendingImage : nil)
+                        try await save(style, style.backdrop == .photo && style.remotePhoto == nil ? pendingImage : nil,
+                            style.isBook && style.spineBackdrop == .photo && style.spineRemotePhoto == nil ? pendingSpineImage : nil)
                         dismiss()
                     } catch { errorMessage = error.localizedDescription; isSaving = false }
                 }
@@ -44,16 +49,39 @@ struct PageCardEditorSheet: View {
         }
         .interactiveDismissDisabled(isSaving)
         .sheet(isPresented: $showBackdrop) {
-            CardBackdropSheet(style: $style) { data in pendingImage = data }
+            CardBackdropSheet(backdrop: $style.backdrop, startColor: $style.startColor, endColor: $style.endColor,
+                imagePath: $style.imagePath, remotePhoto: $style.remotePhoto, textColorHex: style.textColor,
+                title: style.isBook ? "Face" : "Backdrop",
+                allowedModes: style.isBook ? [.solid, .gradient, .photo] : PageCardBackdrop.allCases) { data in pendingImage = data }
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showSpine) {
+            CardBackdropSheet(backdrop: $style.spineBackdrop, startColor: $style.spineStartColor, endColor: $style.spineEndColor,
+                imagePath: $style.spineImagePath, remotePhoto: $style.spineRemotePhoto, textColorHex: "#FFFFFF",
+                title: "Spine", allowedModes: [.solid, .gradient, .photo]) { pendingSpineImage = $0 }
+        }
+        .sheet(item: $bookColorTarget) { part in
+            BookColorEditorSheet(part: part, paint: Binding(get: { style.bookPaint(part, appearance: request.document.appearance.resolved(for: colorScheme)) },
+                set: { style.bookColors[part.rawValue] = $0 }))
         }
         .macAlert("Card", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(errorMessage ?? "") }
     }
 
-    private var carousel: some View {
+    @ViewBuilder private var carousel: some View {
+        if style.isBook {
+            let scale = min(1, 196 / style.renderSize.height)
+            PageCardView(document: request.document, style: style, photo: currentPhoto, spinePhoto: currentSpinePhoto,
+                attachmentStore: store, previews: previews)
+                .scaleEffect(scale)
+                .frame(width: style.renderSize.width * scale, height: style.renderSize.height * scale)
+                .frame(maxWidth: .infinity, minHeight: 216)
+        } else { sizeCarousel }
+    }
+
+    private var sizeCarousel: some View {
         VStack(spacing: 6) {
             GeometryReader { proxy in
                 #if os(iOS)
@@ -111,6 +139,12 @@ struct PageCardEditorSheet: View {
         return CardImageLoader.image(path: style.imagePath, store: store)
     }
 
+    private var currentSpinePhoto: CGImage? {
+        guard style.spineBackdrop == .photo, style.spineRemotePhoto == nil else { return nil }
+        if let pendingSpineImage { return CardImageLoader.image(data: pendingSpineImage) }
+        return CardImageLoader.image(path: style.spineImagePath, store: store)
+    }
+
     private func sampleStyle(_ size: PageCardSize) -> PageCardStyle {
         var sample = style
         sample.size = size
@@ -119,8 +153,15 @@ struct PageCardEditorSheet: View {
 
     private var stylePanel: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Card Style").font(.system(size: 18, weight: .semibold))
+            Text(style.isBook ? "Book Style" : "Card Style").font(.system(size: 18, weight: .semibold))
             PennedSheetFieldDivider()
+            if style.isBook {
+                ScrollView {
+                    BookAppearanceControls(style: $style, appearance: request.document.appearance.resolved(for: colorScheme),
+                        editSurface: { if $0 == .face { showBackdrop = true } else { showSpine = true } },
+                        editColor: { bookColorTarget = $0 })
+                }
+            } else {
             Text("PREVIEWS").font(.caption.weight(.medium)).foregroundStyle(.secondary)
             PageCardPreviewOptions(style: $style, appearance: paperOptionAppearance)
             Text("CUSTOM BACKGROUND").font(.caption.weight(.medium)).foregroundStyle(.secondary)
@@ -137,6 +178,7 @@ struct PageCardEditorSheet: View {
                 }.foregroundStyle(.primary).padding(.horizontal, 12).frame(minHeight: 44).pennedSheetField()
             }.buttonStyle(.plain)
             if style.backdrop == .photo, let photo = style.remotePhoto { CardPhotoCredit(photo: photo) }
+            }
             Spacer(minLength: 12)
         }
         .padding(18).frame(maxWidth: 550, maxHeight: .infinity, alignment: .topLeading)

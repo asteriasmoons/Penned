@@ -31,7 +31,7 @@ struct DocumentPreviewContent: Equatable {
 
     // The preview-cache version token embedded in every preview cache key. Changing
     // it invalidates all cached previews, which then regenerate lazily on demand.
-    static let previewCacheVersion = "library-preview-v18-descriptor"
+    static let previewCacheVersion = "library-preview-v19-block-coverage"
 
     var entryContext: (CollectionSnapshot, CollectionEntrySummary)? {
         for collection in collections {
@@ -100,7 +100,7 @@ struct DocumentPreviewContent: Equatable {
         let inlineRevision = ([document] + children).contains { has($0, .inlineProperties) }
             ? ["inline-property-presentation-v1", Locale.current.identifier, TimeZone.current.identifier] : []
         let calloutRevision = ([document] + children).contains { has($0, .callouts) }
-            ? ["callout-presentation-v7-solid-fill"] : []
+            ? ["callout-presentation-v8-disclosure-alpha-mask"] : []
         let listGridRevision = ([document] + children).contains { has($0, .listGrids) }
             ? ["list-grid-preview-v2-borderless-fill"] : []
         let codeBlockRevision = ([document] + children).contains { has($0, .codeBlock) }
@@ -134,6 +134,8 @@ struct DocumentPreviewContent: Equatable {
             ? ["open-page-flow-preview-v2-visible-snapshots"] : []
         let cardTitleRevision = ([document] + children).contains { $0.cardStyle?.showsPages == true }
             ? ["card-miniature-no-title-v1", "card-paper-depth-v1"] : []
+        let bookRevision = ([document] + children).contains { $0.cardStyle?.isBook == true }
+            ? ["book-presentation-v10-adaptive-description"] : []
         let dividerRevision = ([document] + children).contains { has($0, .fourDotDivider) }
             ? ["four-dot-presentation-v3-4px"] : []
         let componentRevision = ([document] + children).contains { has($0, .templateComponent) }
@@ -147,7 +149,7 @@ struct DocumentPreviewContent: Equatable {
             ? ["hachi-font-presentation-v2"] : []
         let sourceRevision = ([document] + children).contains { has($0, .clipSources) }
             ? ["clip-source-presentation-v1", String(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)] : []
-        let inputs = [[previewCacheVersion, metadata.base64EncodedString()] + cardPreviewKeys.sorted { $0.key < $1.key }.flatMap { [$0.key, $0.value] } + content(document) + inlineRevision + calloutRevision + stickyRevision + openPageRevision + cardTitleRevision + dividerRevision + componentRevision + attachmentRevision + tagRevision + toggleRevision + collectionIconRevision + fontRevision + sourceRevision]
+        let inputs = [[previewCacheVersion, metadata.base64EncodedString()] + cardPreviewKeys.sorted { $0.key < $1.key }.flatMap { [$0.key, $0.value] } + content(document) + inlineRevision + calloutRevision + stickyRevision + openPageRevision + cardTitleRevision + bookRevision + dividerRevision + componentRevision + attachmentRevision + tagRevision + toggleRevision + collectionIconRevision + fontRevision + sourceRevision]
             + blockRevisions
             + (tabsRevision.isEmpty ? [] : [tabsRevision])
             + (minimalFieldsRevision.isEmpty ? [] : [minimalFieldsRevision])
@@ -172,7 +174,7 @@ extension CollectionRepository {
         var cardKeys: [String: String] = [:]
         let visited = ancestors.union([document.id])
         if includeCardPreviews && cardDepth < 3 {
-            for child in children where child.cardStyle?.showsPages == true && !visited.contains(child.id) {
+            for child in children where child.cardStyle.map({ $0.isBook || $0.showsPages }) == true && !visited.contains(child.id) {
                 cardKeys[child.id] = try previewContent(for: child, documents: documents, cardDepth: cardDepth + 1, ancestors: visited).cacheKey
             }
         }
@@ -218,7 +220,7 @@ extension CollectionRepository {
         var cardKeys: [String: String] = [:]
         let visited = ancestors.union([summary.id])
         if cardDepth < 3 {
-            for child in children where child.cardStyle?.showsPages == true && !visited.contains(child.id) {
+            for child in children where child.cardStyle.map({ $0.isBook || $0.showsPages }) == true && !visited.contains(child.id) {
                 // Nested card keys use the base key (no scheme suffix), as the record path does.
                 let nested = try resolveSummaryKeyInputs(child, documents: documents, cardDepth: cardDepth + 1, ancestors: visited)
                 cardKeys[child.id] = DocumentPreviewContent.cacheKey(child, children: nested.children, descriptors: nested.descriptors,

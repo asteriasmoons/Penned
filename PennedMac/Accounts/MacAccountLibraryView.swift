@@ -33,9 +33,11 @@ struct AccountLibrarySheet: View {
                     }.foregroundStyle(VellixSurface.violet)
                 }.padding(VellixSpacing.md).pennedSheetField()
 
-                Text("iCloud Sync").font(.headline)
+                Text(workspace.syncProviderTitle).font(.headline)
                 if workspace.usesLocalLibrary {
                     Text("This library stays on this device.").font(.footnote).foregroundStyle(.secondary)
+                } else if workspace.syncRoute == .blocked {
+                    Text("Migration verification is required before synchronization can resume.").font(.footnote).foregroundStyle(.secondary)
                 } else if workspace.syncEnabled {
                     action(workspace.syncNeedsRetry ? "Retry Sync" : "Sync Now", icon: "cloudie") { await workspace.synchronize(retry: workspace.syncNeedsRetry) }
                     action("Pause Sync", icon: "cloudie") { try await workspace.pauseSync() }
@@ -46,8 +48,8 @@ struct AccountLibrarySheet: View {
                             .font(.footnote).foregroundStyle(VellixSurface.violet)
                     }
                 } else {
-                    Button { enabling = true } label: {
-                        Label { Text("Enable iCloud Sync") } icon: { LibraryIcon(name: "cloudie", size: 22) }
+                    Button { if workspace.syncRoute == .railway { perform { try await workspace.enableSync(identity:identity) } } else { enabling = true } } label: {
+                        Label { Text(workspace.syncRoute == .railway ? "Resume Penned Cloud Sync" : "Enable iCloud Sync") } icon: { LibraryIcon(name: "cloudie", size: 22) }
                             .frame(maxWidth: .infinity, alignment: .leading).padding(VellixSpacing.md).pennedSheetField()
                     }.buttonStyle(.plain).foregroundStyle(VellixSurface.violet)
                 }
@@ -55,8 +57,9 @@ struct AccountLibrarySheet: View {
                     Text(workspace.syncMessage).font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
                 }
 
+
                 let localSpaces = workspace.localSpaces
-                if !localSpaces.isEmpty {
+                if !localSpaces.isEmpty && workspace.syncRoute == .legacy {
                     Text("Adopt Local Spaces").font(.headline)
                     ForEach(localSpaces) { space in
                         Button {
@@ -74,7 +77,7 @@ struct AccountLibrarySheet: View {
                         .foregroundStyle(VellixSurface.violet).disabled(selectedSpaces.isEmpty)
                 }
 
-                if !revisions.isEmpty {
+                if !revisions.isEmpty && workspace.syncRoute == .legacy {
                     Text("Recovery Revisions").font(.headline)
                     ForEach(revisions) { revision in
                         VStack(alignment: .leading, spacing: VellixSpacing.sm) {

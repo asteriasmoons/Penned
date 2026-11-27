@@ -1,0 +1,273 @@
+import SwiftUI
+import ImageIO
+
+struct PageCardPreviewGroup {
+    var nodes: [[String: Any]]
+    let smallCards: Bool
+    var gridCards = false
+    var richLinkCards = false
+    var plainCallouts = false
+    var documentWidgets = false
+
+    static func groups(_ nodes: [[String: Any]], documents: [DocumentRecord], includeRichLinkCards: Bool = false,
+                       includePlainCallouts: Bool = false, includeWidgets: Bool = false) -> [Self] {
+        let records = Dictionary(uniqueKeysWithValues: documents.map { ($0.id, $0) })
+        var groups: [Self] = []
+        for node in nodes {
+            let id = (node["attrs"] as? [String: Any])?["documentID"] as? String ?? ""
+            let small = node["type"] as? String == "pageReference" && records[id]?.cardStyle?.size.fillsDocumentWidth == false
+            let grid = GridCardSettings.isHalf(node)
+            let widget = includeWidgets && DocumentWidgetSize.isHalf(node)
+            let attrs = node["attrs"] as? [String: Any]
+            let halfCallout = includePlainCallouts && node["type"] as? String == "plainCallout"
+                && !(attrs?["clipSource"] is [String: Any]) && attrs?["widthPercent"] as? Double == 50
+            let linkCard = includeRichLinkCards && node["type"] as? String == "richLink"
+                && (node["attrs"] as? [String: Any])?["layout"] as? String == RichLinkLayout.card.rawValue
+            if (small && groups.last?.smallCards == true) || (grid && groups.last?.gridCards == true)
+                || (linkCard && groups.last?.richLinkCards == true) || (halfCallout && groups.last?.plainCallouts == true)
+                || (widget && groups.last?.documentWidgets == true) {
+                groups[groups.count - 1].nodes.append(node)
+            } else { groups.append(Self(nodes: [node], smallCards: small, gridCards: grid, richLinkCards: linkCard, plainCallouts: halfCallout, documentWidgets: widget)) }
+        }
+        return groups
+    }
+}
+
+struct PageCardFlowLayout: Layout {
+    let smallCards: [Bool]
+
+    private func frames(width: CGFloat, subviews: Subviews) -> [CGRect] {
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+        return subviews.enumerated().map { index, subview in
+            let small = smallCards.indices.contains(index) && smallCards[index]
+            let itemWidth = small ? max(0, (width - 12) / 2) : width
+            let gap: CGFloat = 12
+            if x > 0 && (!small || x + gap + itemWidth > width + 0.5) {
+                x = 0; y += rowHeight + 12; rowHeight = 0
+            }
+            let left = x > 0 ? x + gap : 0
+            let size = subview.sizeThatFits(ProposedViewSize(width: itemWidth, height: nil))
+            let rect = CGRect(x: left, y: y, width: itemWidth, height: size.height)
+            x = rect.maxX
+            rowHeight = max(rowHeight, size.height)
+            return rect
+        }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = max(0, proposal.width ?? subviews.map { $0.sizeThatFits(.unspecified).width }.max() ?? 0)
+        return CGSize(width: width, height: frames(width: width, subviews: subviews).map(\.maxY).max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for (subview, frame) in zip(subviews, frames(width: bounds.width, subviews: subviews)) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), anchor: .topLeading,
+                proposal: ProposedViewSize(width: frame.width, height: frame.height))
+        }
+    }
+}
+
+struct PageCardView: View {
+    var document: DocumentRecord
+    var style: PageCardStyle
+    var photo: CGImage?
+    var includeBackdrop = true
+    var isStylePreview = false
+    var fillsDocumentWidth = false
+    var fillsCardSlot = false
+    var attachmentStore: AttachmentStore? = nil
+    var containingFontStyle: DocumentFontStyle? = nil
+    var previews: DocumentPreviewCache? = nil
+    @Environment(\.colorScheme) private var colorScheme
+    private var textFont: DocumentFontStyle {
+        containingFontStyle == .hachiMaruPop ? .hachiMaruPop : document.appearance.fontStyle
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if fillsCardSlot || (fillsDocumentWidth && style.size.fillsDocumentWidth) {
+            GeometryReader { proxy in
+                cardFace.scaleEffect(proxy.size.width / style.size.size.width, anchor: .topLeading)
+            }
+            .aspectRatio(style.size.size.width / style.size.size.height, contentMode: .fit)
+        } else {
+            cardFace
+        }
+    }
+
+    private var cardFace: some View {
+        ZStack(alignment: .topLeading) {
+            if includeBackdrop { backdrop }
+            if style.backdrop == .photo {
+                LinearGradient(colors: [.black.opacity(0.38), .black.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            }
+            if style.showsPages {
+                switch style.previewStyle {
+                case .pages: pages
+                case .stickyNote: stickyNote
+                case .openPage: openPage
+                }
+            }
+            text
+        }
+        .frame(width: style.size.size.width, height: style.size.size.height, alignment: .topLeading)
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color(vellixHex: textColor).opacity(0.14), lineWidth: 0.75)
+        }
+    }
+
+    @ViewBuilder private var backdrop: some View {
+        switch style.backdrop {
+        case .none: Color(vellixHex: document.appearance.innerPageBackground.colorHex)
+        case .solid: Color(vellixHex: style.startColor)
+        case .gradient:
+            LinearGradient(colors: [Color(vellixHex: style.startColor), Color(vellixHex: style.endColor)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .photo:
+            if let photo {
+                Image(decorative: photo, scale: 1).resizable().scaledToFill()
+                    .frame(width: style.size.size.width, height: style.size.size.height).clipped()
+            } else if let url = style.remotePhoto?.validImageURL {
+                AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { Color(vellixHex: style.startColor) }
+                    .frame(width: style.size.size.width, height: style.size.size.height).clipped()
+            } else { Color(vellixHex: style.startColor) }
+        }
+    }
+
+    @ViewBuilder private var pages: some View {
+        switch style.size {
+        case .compact:
+            ZStack {
+                Circle().fill(Color(vellixHex: textColor).opacity(0.1))
+                miniature(size: CGSize(width: 23, height: 30)).offset(y: 4)
+            }
+            .frame(width: 32, height: 32).clipShape(Circle())
+            .overlay(Circle().stroke(Color(vellixHex: textColor).opacity(0.16), lineWidth: 0.75))
+            .offset(x: 14, y: 10)
+        case .landscape, .portrait:
+            miniature(size: CGSize(width: 132, height: 172)).offset(x: 36, y: 50)
+        case .wide:
+            miniature(size: CGSize(width: 116, height: 151), second: true)
+                .rotationEffect(.degrees(-1.5), anchor: .bottomLeading).offset(x: 184, y: 32)
+            miniature(size: CGSize(width: 116, height: 151)).offset(x: 190, y: 26)
+        case .large:
+            miniature(size: CGSize(width: 84, height: 109), second: true)
+                .rotationEffect(.degrees(-1.5)).offset(x: 208, y: 28)
+            miniature(size: CGSize(width: 84, height: 109))
+                .rotationEffect(.degrees(0.5)).offset(x: 214, y: 25)
+        }
+    }
+
+    private var stickyNote: some View {
+        let size: CGSize
+        let position: CGPoint
+        switch style.size {
+        case .compact:
+            size = CGSize(width: 29, height: 33); position = CGPoint(x: 15, y: 12)
+        case .landscape, .portrait:
+            size = CGSize(width: 96, height: 112); position = CGPoint(x: 42, y: 50)
+        case .wide:
+            size = CGSize(width: 100, height: 112); position = CGPoint(x: 258, y: 26)
+        case .large:
+            size = CGSize(width: 96, height: 110); position = CGPoint(x: 210, y: 22)
+        }
+        return StickyNotePagePreview(snapshot: isStylePreview ? nil : previews?.cardSnapshot(for: document, colorScheme: colorScheme, hidesPageSurfaces: true), size: size)
+            .rotationEffect(.degrees(-4))
+            .offset(x: position.x, y: position.y)
+    }
+
+    private var openPage: some View {
+        let size: CGSize
+        let position: CGPoint
+        switch style.size {
+        case .compact:
+            size = CGSize(width: 40, height: 28); position = CGPoint(x: 14, y: 12)
+        case .landscape, .portrait:
+            size = CGSize(width: 188, height: 131); position = CGPoint(x: 31, y: 47)
+        case .wide:
+            size = CGSize(width: 120, height: 84); position = CGPoint(x: 238, y: 24)
+        case .large:
+            size = CGSize(width: 164, height: 114); position = CGPoint(x: 202, y: 27)
+        }
+        let appearance = document.appearance.resolved(for: colorScheme)
+        return OpenPagePreview(snapshots: isStylePreview ? nil : previews?.openPageSnapshots(for: document, colorScheme: colorScheme),
+            size: size, paperColor: appearance.presentationColorScheme == .dark ? "#242424" : "#FAFAF8")
+            .offset(x: position.x, y: position.y)
+    }
+
+    private var text: some View {
+        let compact = style.size == .compact && style.showsPages
+        let full = style.size == .large && style.showsPages
+        let wide = style.size == .wide && style.showsPages
+        let x: CGFloat = compact ? 14 : 18
+        let y: CGFloat = compact ? 47 : (full ? 28 : (wide ? 26 : 18))
+        let width: CGFloat = full ? 176 : (wide ? 156 : style.size.size.width - x - 14)
+        let showsExcerpt = compact || wide || full || !style.showsPages
+        return VStack(alignment: .leading, spacing: compact ? 4 : (wide ? 6 : 9)) {
+            Text(isStylePreview ? "Card Title" : document.title)
+                .font(textFont.font(size: full ? 20 : (wide ? 18 : 15), weight: .black))
+                .lineLimit(full ? 2 : 1)
+            if showsExcerpt {
+                Text(isStylePreview ? "Preview of the page will be displayed here. Tap to add content." :
+                    PageReferencePresentation.previewText(document, previews: previews))
+                    .font(textFont.font(size: compact ? 11 : 13))
+                    .foregroundStyle(Color(vellixHex: textColor).opacity(0.62))
+                    .lineLimit(compact ? 1 : (full ? 4 : 2))
+            }
+        }
+        .foregroundStyle(Color(vellixHex: textColor))
+        .frame(width: width, alignment: .leading)
+        .offset(x: style.showsPages ? x : 18, y: style.showsPages ? y : 18)
+    }
+
+    private var textColor: String { style.backdrop == .none ? document.appearance.textColorHex : style.textColor }
+
+    private func miniature(size: CGSize, second: Bool = false) -> some View {
+        Group {
+            if isStylePreview {
+                NestedPageThumbnail(json: TipTapContentAnalyzer.emptyDocumentJSON, title: "", appearance: document.appearance,
+                    size: size, isCardSheet: true, isStylePreview: true, includesCover: !second)
+            } else if let image = previews?.cardSnapshot(for: document, colorScheme: colorScheme) {
+                NestedPageThumbnail(json: TipTapContentAnalyzer.emptyDocumentJSON, title: "", appearance: document.appearance,
+                    size: size, isCardSheet: true, snapshot: image)
+            } else {
+                Color(vellixHex: document.appearance.resolved(for: colorScheme).innerPageBackground.colorHex)
+                    .frame(width: size.width, height: size.height).clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+        }
+        .compositingGroup()
+        .shadow(color: .black.opacity(0.30), radius: 0.8, x: 0, y: 1)
+        .shadow(color: .black.opacity(0.32), radius: 5, x: 1, y: 4)
+    }
+}
+
+enum CardImageLoader {
+    private static let cache: NSCache<NSString, CardDecodedImage> = {
+        let cache = NSCache<NSString, CardDecodedImage>()
+        cache.countLimit = 256
+        cache.totalCostLimit = 256_000_000
+        return cache
+    }()
+    static func image(data: Data) -> CGImage? {
+        guard data.count <= 20_000_000, let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 1200, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary)
+    }
+    static func image(path: String?, store: AttachmentStore?) -> CGImage? {
+        guard let path, let store else { return nil }
+        let url = store.fileURL(relativePath: path)
+        // Imported assets have immutable UUID filenames, so a path is a stable cache key.
+        let key = url.path as NSString
+        if let cached = cache.object(forKey: key) { return cached.image }
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe), let image = image(data: data) else { return nil }
+        cache.setObject(CardDecodedImage(image), forKey: key, cost: image.bytesPerRow * image.height)
+        return image
+    }
+}
+
+private final class CardDecodedImage {
+    let image: CGImage
+    init(_ image: CGImage) { self.image = image }
+}

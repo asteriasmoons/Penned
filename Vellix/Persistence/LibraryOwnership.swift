@@ -128,6 +128,12 @@ final class LibraryRepository: @unchecked Sendable {
                        includeSavedStyles: Bool, in db: Database) throws {
         guard let library = try LibraryRecord.fetchOne(db, key: libraryID), library.ownerKey == ownerKey,
               library.id != LibraryRecord.localID else { throw LibraryError.wrongOwner }
+        // Moving a Space changes the ownership of its whole graph without
+        // updating every child row. Do not silently omit those rows from sync.
+        if let bytes=try Data.fetchOne(db,sql:"SELECT payload FROM railwayMigrationState WHERE libraryID=?",arguments:[libraryID]){
+            let state=try JSONDecoder().decode(RailwayMigrationState.self,from:bytes)
+            guard state.phase != .cutover else{throw RailwayError.releaseDisabled}
+        }
         for id in spaceIDs {
             guard let space = try SpaceRecord.fetchOne(db, key: id), space.libraryID == LibraryRecord.localID else {
                 throw LibraryError.wrongOwner

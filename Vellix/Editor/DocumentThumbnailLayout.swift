@@ -50,6 +50,7 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
         var y: CGFloat = 10
         var remainingNodes = 256
         var monospaced: Bool
+        var inheritedTextColor: String? = nil
         let bottom: CGFloat = 120
 
         mutating func add(_ shape: Shape, _ rect: CGRect, _ type: String, color: String? = nil,
@@ -62,6 +63,7 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
         // Line lengths and wrapping follow actual text, not a decorative pattern.
         mutating func text(_ value: String, type: String, x: CGFloat, width: CGFloat,
                            thickness: CGFloat = 2.6, maxLines: Int = 16, alignment: String? = nil, color: String? = nil) {
+            let color = color ?? inheritedTextColor
             let advance: CGFloat = monospaced || type == "codeBlock" ? 1.9 : 1.65
             var length: CGFloat = 0
             var lines = 0
@@ -213,7 +215,7 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                 let attrs = node["attrs"] as? [String: Any] ?? [:]
                 let children = node["content"] as? [[String: Any]] ?? []
                 switch type {
-                case "paragraph", "caption", "heading":
+                case "paragraph", "caption", "heading", "minimalRecordTitle", "minimalFieldLabel", "informationCardTitle", "informationCardDescription", "informationCardLabel":
                     let level = attrs["level"] as? Int ?? 1
                     if type == "heading", let label = HeadingLabelSettings.configuration(attrs), label.enabled {
                         let value = inlineText(node)
@@ -252,6 +254,94 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                     }
                 case "listGrid":
                     listGrid(node, x: x, width: width)
+                case "weekStrip":
+                    let top = y, insertion = marks.count
+                    let previousInk = inheritedTextColor
+                    inheritedTextColor = attrs["contentTextColor"] as? String ?? "#f7f7fa"
+                    let selected = attrs["selectedDateBehavior"] as? String == "today" ? DailyNoteDay(date: .now).key
+                        : (attrs["selectedDate"] as? String ?? DailyNoteDay(date: .now).key)
+                    text((attrs["title"] as? String)?.trimmedNonEmpty ?? "Calendar", type: type, x: x + 4, width: width - 8, thickness: 3, maxLines: 1)
+                    let cell = (width - 8 - 6) / 7
+                    let firstDay = max(0, min(6, attrs["firstDayOfWeek"] as? Int ?? 0))
+                    let selectedDay = DailyNoteDay(key: selected)?.date() ?? Date()
+                    let selectedIndex = (Calendar(identifier: .gregorian).component(.weekday, from: selectedDay) - 1 - firstDay + 7) % 7
+                    for day in 0..<7 {
+                        add(.chip, CGRect(x: x + 4 + CGFloat(day) * (cell + 1), y: y, width: cell, height: 12), type,
+                            color: day == selectedIndex ? (attrs["activeTabColor"] as? String ?? "#9276dc") : (attrs["inactiveTabColor"] as? String ?? "#303137"))
+                    }
+                    y += 16
+                    if attrs["collapsed"] as? Bool != true {
+                        let content = children.first { ($0["attrs"] as? [String: Any])?["date"] as? String == selected }?["content"] as? [[String: Any]] ?? []
+                        blocks(content, x: x + 4, width: width - 8, depth: depth + 1)
+                        y = max(y, top + 58)
+                    }
+                    marks.insert(Mark(shape: .container, rect: CGRect(x: x, y: top - 2, width: width, height: y - top + 4), blockType: type,
+                        colorHex: attrs["backgroundColor"] as? String ?? "#121316"), at: insertion)
+                    inheritedTextColor = previousInk
+                    y += 8
+                case "linkedCalendarEvent":
+                    let top = y
+                    text(attrs["available"] as? Bool == false ? "Event Unavailable" : ((attrs["title"] as? String)?.trimmedNonEmpty ?? "Untitled Event"),
+                        type: type, x: x + 5, width: width - 5, thickness: 2.8, maxLines: 2)
+                    if attrs["available"] as? Bool != false {
+                        text(attrs["calendarTitle"] as? String ?? "", type: type, x: x + 5, width: width - 5, thickness: 1.8, maxLines: 1)
+                        text(attrs["isAllDay"] as? Bool == true ? "All Day" : (attrs["start"] as? String ?? "Date unavailable"),
+                            type: type, x: x + 5, width: width - 5, thickness: 1.8, maxLines: 1)
+                    }
+                    add(.line, CGRect(x: x, y: top, width: 1, height: max(6, y - top)), type, color: "#9276dc")
+                    y += 4
+                case "informationCard":
+                    let top = y, insertion = marks.count
+                    let previousInk = inheritedTextColor
+                    inheritedTextColor = attrs["textColor"] as? String ?? "#E4E4EA"
+                    y += 4
+                    for child in children {
+                        let childType = child["type"] as? String ?? ""
+                        if childType == "informationCardTitle", attrs["hideTitle"] as? Bool != true {
+                            text(inlineText(child), type: "heading", x: x + 4, width: width - 8, thickness: 3.2, color: attrs["titleColor"] as? String)
+                        } else if childType == "informationCardDescription", attrs["hideDescription"] as? Bool != true {
+                            text(inlineText(child), type: type, x: x + 4, width: width - 8, thickness: 2)
+                        } else if childType == "informationCardBody", !(attrs["collapsible"] as? Bool == true && attrs["collapsed"] as? Bool == true) {
+                            if attrs["hideDivider"] as? Bool != true {
+                                add(.line, CGRect(x: x + 4, y: y, width: width - 8, height: 0.5), type, color: attrs["dividerColor"] as? String)
+                                y += 3
+                            }
+                            let body = (child["content"] as? [[String: Any]] ?? []).filter { attrs["showLabels"] as? Bool != false || $0["type"] as? String != "informationCardLabel" }
+                            blocks(body, x: x + 4, width: width - 8, depth: depth + 1)
+                        }
+                    }
+                    y = max(y + 4, top + 12)
+                    marks.insert(Mark(shape: .container, rect: CGRect(x: x, y: top, width: width, height: y - top), blockType: type,
+                        colorHex: attrs["backgroundColor"] as? String ?? "#202024"), at: insertion)
+                    inheritedTextColor = previousInk
+                    y += 4
+                case "table":
+                    for row in children.prefix(12) {
+                        guard y < bottom, remainingNodes > 0 else { break }
+                        let cells = Array((row["content"] as? [[String: Any]] ?? []).prefix(min(32, remainingNodes)))
+                        remainingNodes -= cells.count
+                        let insertion = marks.count
+                        let rowTop = y, cellWidth = width / CGFloat(max(1, cells.count))
+                        var rowBottom = y + 9
+                        for (column, cell) in cells.enumerated() {
+                            let left = x + CGFloat(column) * cellWidth
+                            y = rowTop + 3
+                            text(inlineText(cell), type: "tableCell", x: left + 2, width: max(1, cellWidth - 4), thickness: 1.8, maxLines: 3)
+                            rowBottom = max(rowBottom, y + 2)
+                        }
+                        for (column, cell) in cells.enumerated() {
+                            marks.insert(Mark(shape: .listGridSurface(border: "#777781", radius: 0, borderWidth: 0.4),
+                                rect: CGRect(x: x + CGFloat(column) * cellWidth, y: rowTop, width: cellWidth, height: rowBottom - rowTop), blockType: type,
+                                colorHex: (cell["attrs"] as? [String: Any])?["fillColor"] as? String), at: insertion + column)
+                        }
+                        y = rowBottom
+                    }
+                    y += 4
+                case "collection":
+                    add(.container, CGRect(x: x, y: y, width: width, height: 24), type)
+                    y += 4
+                    text(attrs["title"] as? String ?? "Collection", type: type, x: x + 4, width: width - 8, thickness: 3, maxLines: 1)
+                    y += 20
                 case "richLink":
                     let link = RichLinkPreviewData(node)
                     let cell = link.layout == .card ? min(45, width) : width
@@ -307,9 +397,8 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                     let color = attrs["color"] as? String
                     y += 3
                     if type == "iconCallout" || type == "plainCallout" {
-                        let card = IconCalloutSettings(attrs)
-                        let background = type == "iconCallout" ? card.backgroundColor
-                            : GridCardSettings.opaqueHex(attrs["color"], fallback: "#302d36")
+                        let card = IconCalloutSettings(attrs, plain: type == "plainCallout")
+                        let background = card.backgroundColor
                         let iconSize: CGFloat = 9
                         let xText = x + (type == "iconCallout" ? iconSize + 8 : 5)
                         let textWidth = width - (xText - x) - 4
@@ -328,10 +417,13 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                                 y += 2
                             }
                         }
-                        for child in children.prefix(type == "iconCallout" && card.collapsed ? 0 : 16) {
-                            text(inlineText(child), type: "calloutText", x: xText, width: textWidth,
-                                 thickness: 2.1, maxLines: 10,
-                                 color: type == "iconCallout" ? card.inkColor : GridCardSettings.readableInk(on: background))
+                        if !(type == "iconCallout" && card.collapsed) {
+                            let fullBody = type == "plainCallout" || card.hasTitle
+                            let previousInk = inheritedTextColor
+                            inheritedTextColor = card.inkColor
+                            blocks(children, x: fullBody ? x + 4 : xText,
+                                width: fullBody ? width - 8 : textWidth, depth: depth + 1)
+                            inheritedTextColor = previousInk
                         }
                         y = min(bottom, max(y, top + 14) + 2)
                         marks.insert(Mark(shape: .container, rect: CGRect(x: x, y: top, width: width, height: y - top),
@@ -360,13 +452,14 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                         continue
                     }
                     let fourDots = style == "fourCircles" || style == "fourDots"
-                    if style == "dottedCircles" || fourDots {
-                        let count = fourDots ? 4 : max(1, Int(width / 5))
-                        let diameter: CGFloat = fourDots ? 0.6 : 2
-                        let span = fourDots ? CGFloat(count - 1) * 5 + diameter : CGFloat(count) * 5
+                    if style == "dottedCircles" || style == "tinyDots" || fourDots {
+                        let step: CGFloat = fourDots ? 5.5 : 1.25
+                        let count = fourDots ? 4 : max(1, Int(width / step))
+                        let diameter: CGFloat = fourDots ? 1 : 0.5
+                        let span = CGFloat(count - 1) * step + diameter
                         let left = x + (width - span) / 2
                         for dot in 0..<count {
-                            add(.bullet, CGRect(x: left + CGFloat(dot) * 5, y: y + 2, width: diameter, height: diameter), type, color: color)
+                            add(.bullet, CGRect(x: left + CGFloat(dot) * step, y: y + 2, width: diameter, height: diameter), type, color: color)
                         }
                     } else {
                         add(.line, CGRect(x: x, y: y + 2, width: width, height: style == "thickLine" ? 2.5 : 1), type, color: color)
@@ -388,7 +481,7 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                     if kind == "image" && mode != "card" {
                         let ratio = max(1, file["width"] as? Double ?? 100) / max(1, file["height"] as? Double ?? 30)
                         let height = max(3, min(32, w / ratio))
-                        add(.image, CGRect(x: left, y: y, width: w, height: height), type); y += height + 5
+                        add(.image, CGRect(x: left, y: y, width: w, height: height), type, imagePath: file["relativePath"] as? String); y += height + 5
                     } else {
                         let height: CGFloat = kind == "pdf" && mode != "card" ? 28 : 10
                         add(.container, CGRect(x: left, y: y, width: w, height: height), type); y += height + 5
@@ -436,6 +529,20 @@ nonisolated struct DocumentThumbnailLayout: Equatable {
                     let active = (attrs["activeTab"] as? String).flatMap { ids.contains($0) ? $0 : nil } ?? ids.first
                     let activeContent = (panels.first { ($0["attrs"] as? [String: Any])?["id"] as? String == active }?["content"]
                         as? [[String: Any]]) ?? []
+                    let top = y
+                    var left = x
+                    for (index, panel) in panels.prefix(32).enumerated() {
+                        guard y < bottom, remainingNodes > 0 else { break }
+                        remainingNodes -= 1
+                        let name = ((panel["attrs"] as? [String: Any])?["name"] as? String)?.trimmedNonEmpty ?? "Tab \(index + 1)"
+                        let chipWidth = min(width, max(12, CGFloat(name.count) * 2 + 6))
+                        if left + chipWidth > x + width { y += 9; left = x }
+                        add(.chip, CGRect(x: left, y: y, width: chipWidth, height: 7), type,
+                            color: (panel["attrs"] as? [String: Any])?["id"] as? String == active
+                                ? (attrs["activeTabBg"] as? String ?? "#3A3A3C") : (attrs["inactiveTabBg"] as? String ?? "#1C1C1E"))
+                        left += chipWidth + 2
+                    }
+                    y = max(top + 10, y + 10)
                     blocks(activeContent, x: x, width: width, depth: depth + 1)
                 default:
                     blocks(children, x: x, width: width, depth: depth + 1)

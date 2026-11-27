@@ -1749,6 +1749,13 @@ final class TipTapEditorSession: ObservableObject {
             }
 
             let payload = dictionary["payload"] as? [String: Any] ?? [:]
+            if kind == "bookDescriptionLayout" {
+                let font: DocumentFontStyle? = currentAppearance?.fontStyle == .hachiMaruPop ? .hachiMaruPop : nil
+                if let update = PageReferencePresentation.bookDescriptionUpdate(payload, records: pageRecords,
+                    attachmentStore: attachmentStore, colorScheme: applicationColorScheme,
+                    containingFontStyle: font, previews: documentPreviewCache) { send(update) }
+                return
+            }
             if kind == "openingDiagnostic" {
                 if let phase = payload["phase"] as? String, let generation = payload["generation"] as? Int {
                     switch phase {
@@ -2069,7 +2076,7 @@ final class TipTapEditorSession: ObservableObject {
         case .requestBlockConversion, .requestGridCardSettings, .requestIconCalloutSettings, .requestHeadingLabelSettings, .requestWashiTapeSettings,
              .requestPageCardSettings, .requestBlockquoteColorPicker,
              .requestTemplates, .requestAttachment, .requestAttachmentActions, .requestCollection,
-             .requestTemplateComponent, .requestInlinePropertyEditor, .requestNestedPage, .requestPageCard,
+             .requestTemplateComponent, .requestInlinePropertyEditor, .requestNestedPage, .requestPageCard, .requestPageBook,
              .requestBlockDeletion, .requestPlaceholderConversion, .requestListGridSettings, .requestTabsSettings, .requestWeekStripSettings, .requestMoodBarSettings, .requestCountdownSettings, .requestCalculatorSettings, .requestExistingEventPicker, .openLinkedCalendarEvent,
              .requestMinimalFieldsSettings, .requestInformationCardSettings, .requestCodeBlockEditor,
              .requestTableCreation, .requestTableMenu, .requestTaskMenu:
@@ -3209,11 +3216,13 @@ final class DocumentEditorModel: ObservableObject {
         case .requestBlockConversion(let request):
             if request.target == "link" || request.target == "file" {
                 blockConversionRequest = request
-            } else if ["nestedPage", "pageCard"].contains(request.target) {
+            } else if ["nestedPage", "pageCard", "pageBook"].contains(request.target) {
+                let presentation: NestedPagePresentation = request.target == "pageCard" ? .card
+                    : request.target == "pageBook" ? .book : .page
                 if !request.documentIDs.isEmpty {
                     do {
-                        let pages = try documentRepository.setNestedPageCardPresentation(parentID: documentID,
-                            documentIDs: request.documentIDs, asCard: request.target == "pageCard")
+                        let pages = try documentRepository.setNestedPagePresentation(parentID: documentID,
+                            documentIDs: request.documentIDs, presentation: presentation)
                         refreshRelated()
                         for page in pages { onDocumentSaved?(page) }
                     } catch { errorMessage = error.localizedDescription }
@@ -3224,9 +3233,9 @@ final class DocumentEditorModel: ObservableObject {
                         do {
                             let child = try await PageReferenceLifecycle.createGroupedChild(json: json, parent: parent,
                                 repository: documentRepository) { childID in
-                                if request.target == "pageCard" {
-                                    _ = try self.documentRepository.setNestedPageCardPresentation(parentID: parent.id,
-                                        documentIDs: [childID], asCard: true)
+                                if presentation != .page {
+                                    _ = try self.documentRepository.setNestedPagePresentation(parentID: parent.id,
+                                        documentIDs: [childID], presentation: presentation)
                                 }
                                 guard self.document?.id == parent.id, self.session.renderedDocumentID == parent.id else { return false }
                                 return try await self.session.attachmentCommand("finishBlockConversionPage",
@@ -3247,6 +3256,18 @@ final class DocumentEditorModel: ObservableObject {
             guard !blockID.isEmpty, cardEditorRequest == nil, document != nil else { return }
             pendingCardBlockID = blockID
             cardEditorRequest = PageCardEditorRequest(blockID: blockID, document: DocumentRecord(title: "Untitled"))
+        case .requestPageBook(let blockID):
+            guard !blockID.isEmpty else { return }
+            let child = createChild()
+            if let child {
+                pageReferenceIDs.insert(child.id)
+                do {
+                    let pages = try documentRepository.setNestedPagePresentation(parentID: documentID,
+                        documentIDs: [child.id], presentation: .book)
+                    for page in pages { onDocumentSaved?(page) }
+                } catch { errorMessage = error.localizedDescription }
+            }
+            session.resolvePageReference(blockID: blockID, documentID: child?.id)
         case .requestOpenPage(let documentID):
             if let taskID = DocumentTaskPages.taskID(for: documentID) {
                 do {
@@ -3460,7 +3481,7 @@ final class DocumentEditorModel: ObservableObject {
         clear(\.taskHistoryRequest)
     }
 
-    func savePageCard(request: PageCardEditorRequest, style: PageCardStyle, imageData: Data?) async throws {
+    func savePageCard(request: PageCardEditorRequest, style: PageCardStyle, imageData: Data?, spineImageData: Data? = nil) async throws {
         let operation = beginPersistentOperation()
         defer { endPersistentOperation(operation) }
         guard let parent = document, let attachmentStore else {
@@ -3476,7 +3497,7 @@ final class DocumentEditorModel: ObservableObject {
         }
         let page = try documentRepository.savePageCard(parentID: parent.id,
             documentID: request.blockID == nil ? request.document.id : nil,
-            style: style, imageData: imageData, attachmentStore: attachmentStore)
+            style: style, imageData: imageData, spineImageData: spineImageData, attachmentStore: attachmentStore)
         if let blockID = request.blockID {
             pendingCardBlockID = nil
             pageReferenceIDs.insert(page.id)

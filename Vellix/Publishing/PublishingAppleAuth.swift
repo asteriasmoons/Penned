@@ -6,6 +6,11 @@ import Supabase
 nonisolated struct PublishingAppleNonce: Codable {
     let rawValue: String
     var hashedValue: String { SHA256.hash(data: Data(rawValue.utf8)).map { String(format: "%02x", $0) }.joined() }
+    init(cloudChallenge:RailwayAppleChallenge)throws {
+        let value=cloudChallenge.nonce
+        guard value.utf8.count==64,value.utf8.allSatisfy({(48...57).contains($0)||(97...102).contains($0)}) else{throw RailwayError.invalidResponse}
+        rawValue=value
+    }
     init() throws {
         var bytes = [UInt8](repeating: 0, count: 32)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { throw PublishingFailure.unavailable("Secure randomness is unavailable.") }

@@ -42,6 +42,9 @@ enum PageCardPreviewStyle: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+// How a nested page renders inside its parent: a row (page), a card, or a book.
+enum NestedPagePresentation { case page, card, book }
+
 nonisolated struct CardRemotePhoto: Codable, Equatable, Hashable, Identifiable, Sendable {
     var id: String
     var thumbURL: String
@@ -60,14 +63,24 @@ struct PageCardStyle: Codable, Equatable {
     var size: PageCardSize = .compact
     var showsPages = true
     var previewStyle: PageCardPreviewStyle = .pages
+    var isBook = false
     var backdrop: PageCardBackdrop = .solid
     var startColor = "#3A4348"
     var endColor = "#26333C"
     var imagePath: String?
     var remotePhoto: CardRemotePhoto?
+    // Book spine appearance (face reuses backdrop/startColor/endColor/imagePath/remotePhoto).
+    var spineBackdrop: PageCardBackdrop = .solid
+    var spineStartColor = "#6F54BD"
+    var spineEndColor = "#8366CF"
+    var spineImagePath: String?
+    var spineRemotePhoto: CardRemotePhoto?
+    var bookColors: [String: BookPaint] = [:]
 
     private enum CodingKeys: String, CodingKey {
-        case size, showsPages, previewStyle, backdrop, startColor, endColor, imagePath, remotePhoto
+        case size, showsPages, previewStyle, isBook, backdrop, startColor, endColor, imagePath, remotePhoto
+        case spineBackdrop, spineStartColor, spineEndColor, spineImagePath, spineRemotePhoto
+        case bookColors
     }
 
     var textColor: String {
@@ -105,12 +118,26 @@ extension PageCardStyle {
         showsPages = try values.decodeIfPresent(Bool.self, forKey: .showsPages) ?? true
         previewStyle = (try values.decodeIfPresent(String.self, forKey: .previewStyle))
             .flatMap { PageCardPreviewStyle(rawValue: $0) } ?? .pages
+        isBook = try values.decodeIfPresent(Bool.self, forKey: .isBook) ?? false
         backdrop = try values.decodeIfPresent(PageCardBackdrop.self, forKey: .backdrop) ?? .solid
         startColor = try values.decodeIfPresent(String.self, forKey: .startColor) ?? "#3A4348"
         endColor = try values.decodeIfPresent(String.self, forKey: .endColor) ?? "#26333C"
         imagePath = try values.decodeIfPresent(String.self, forKey: .imagePath)
         remotePhoto = try values.decodeIfPresent(CardRemotePhoto.self, forKey: .remotePhoto)
+        spineBackdrop = try values.decodeIfPresent(PageCardBackdrop.self, forKey: .spineBackdrop) ?? .solid
+        spineStartColor = try values.decodeIfPresent(String.self, forKey: .spineStartColor) ?? "#6F54BD"
+        spineEndColor = try values.decodeIfPresent(String.self, forKey: .spineEndColor) ?? "#8366CF"
+        spineImagePath = try values.decodeIfPresent(String.self, forKey: .spineImagePath)
+        spineRemotePhoto = try values.decodeIfPresent(CardRemotePhoto.self, forKey: .spineRemotePhoto)
+        bookColors = (try? values.decodeIfPresent([String: BookPaint].self, forKey: .bookColors)) ?? [:]
     }
+}
+
+extension PageCardStyle {
+    // Book width is unchanged; the presentation is 10% shorter, independent of `size`.
+    static let bookRenderSize = CGSize(width: 170, height: 234 * 0.9)
+    var renderSize: CGSize { isBook ? Self.bookRenderSize : size.size }
+    var renderFillsDocumentWidth: Bool { isBook ? false : size.fillsDocumentWidth }
 }
 
 private final class CardStyleBox { let style: PageCardStyle; init(_ style: PageCardStyle) { self.style = style } }

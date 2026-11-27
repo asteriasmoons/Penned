@@ -21,6 +21,36 @@ final class LibraryWorkspace: ObservableObject {
     private var request = UUID()
     private var transition: Task<Void, Never>?
     private var synchronizer: LibrarySyncEngine?
+    private let railwayRuntime = RailwayWorkspaceRuntime()
+    @Published private(set) var migrationInProgress=false
+    var canPrepareRailwayMigration:Bool {
+        guard !usesLocalLibrary,let environment,environment.database.isAccessible,
+              !environment.database.isInMemory,identity?.libraryOwnerKey==currentOwner(),
+              currentOwner() != nil,!migrationInProgress else{return false}
+        return syncRoute == .legacy || ((try? RailwayMigrationFence.held(database:environment.database)) == true)
+    }
+
+    weak var railwayAccount: RailwayNativeAccountBinding?
+    var syncRoute: RailwayWorkspaceRoute {
+        RailwayWorkspaceRoute.read(environment?.database,ownerKey:currentOwner())
+    }
+    var syncProviderTitle: String {
+        switch syncRoute {
+        case .railway: "Penned Cloud Sync"
+        case .blocked: "Sync Unavailable"
+        default: "iCloud Sync"
+        }
+    }
+    private func reportRailway(_ status:RailwayWorkspaceStatus) {
+        if syncEnabled != status.enabled {syncEnabled=status.enabled}
+        if pendingChanges != status.pending {pendingChanges=status.pending}
+        if pendingDownloads != status.downloads {pendingDownloads=status.downloads}
+        if recoveryCount != status.recovery {recoveryCount=status.recovery}
+        if syncNeedsRetry != status.needsRetry {syncNeedsRetry=status.needsRetry}
+        if cloudZoneRemoved {cloudZoneRemoved=false}
+        if syncMessage != status.message {syncMessage=status.message}
+    }
+
     private var syncControl: UUID?
     private var syncEnable: Task<Void, Error>?
     private let preferences: UserDefaults
@@ -99,8 +129,9 @@ final class LibraryWorkspace: ObservableObject {
             let useLocal = identity == nil || (local ?? savedLocalChoice ?? false)
             let libraries = LibraryRepository(database: root)
             let libraryID = useLocal ? LibraryRecord.localID : identity.map { LibraryRecord.accountID(ownerKey: $0.libraryOwnerKey) } ?? LibraryRecord.localID
+            let targetRoute = RailwayWorkspaceRoute.read(root.scoped(to:libraryID),ownerKey:identity?.libraryOwnerKey)
             let claimLocalContent: Bool
-            if assigningLocalLibrary && !useLocal {
+            if assigningLocalLibrary && !useLocal && targetRoute == .legacy {
                 claimLocalContent = try await Task.detached(priority: .userInitiated) {
                     try libraries.hasUnownedLocalContent()
                 }.value
@@ -187,6 +218,10 @@ final class LibraryWorkspace: ObservableObject {
         // Reminders and descriptors are independent of CloudKit availability.
         environment.taskNotifications.refreshAfterOpening()
         environment.startDescriptorBackfill()
+        if syncRoute != .legacy {
+            await startSync()
+            return
+        }
         let statusIsCurrent = await refreshSyncStatusAfterOpening(token: token)
         guard request == token else { return }
         if statusIsCurrent {
@@ -199,7 +234,10 @@ final class LibraryWorkspace: ObservableObject {
     }
 
     func adopt(spaceIDs: Set<String>, includeSavedStyles: Bool, identity: AccountIdentity) async throws {
+        guard !migrationInProgress else{throw RailwayError.staleCheckpoint}
+        guard syncRoute == .legacy || syncRoute == .local else { throw RailwayError.releaseDisabled }
         guard self.identity == identity, currentOwner() == identity.libraryOwnerKey, !isSwitching, let root else { throw LibraryError.wrongOwner }
+        guard RailwayWorkspaceRoute.read(root.scoped(to:LibraryRecord.accountID(ownerKey:identity.libraryOwnerKey)),ownerKey:identity.libraryOwnerKey) == .legacy else {throw RailwayError.releaseDisabled}
         let token = request
         isSwitching = true
         defer { if request == token { isSwitching = false } }
@@ -220,6 +258,7 @@ final class LibraryWorkspace: ObservableObject {
     }
 
     private func syncStore() throws -> LibrarySyncStore {
+        guard syncRoute == .legacy else { throw RailwayError.releaseDisabled }
         guard let root, let identity, currentOwner() == identity.libraryOwnerKey,
               let library = try libraries?.library(id: LibraryRecord.accountID(ownerKey: identity.libraryOwnerKey)),
               let cloud = library.cloudAccountID else { throw LibraryError.syncDisabled }
@@ -258,6 +297,17 @@ final class LibraryWorkspace: ObservableObject {
     }
 
     func refreshSyncStatus() {
+        if syncRoute == .railway || syncRoute == .blocked {
+            let token=request
+            if syncRoute == .blocked {reportRailway(.init(message:"Migration verification required. Neither cloud provider will start."));return}
+            Task { [weak self] in
+                guard let self else{return}
+                let status=await self.railwayRuntime.status()
+                guard self.request==token,self.syncRoute == .railway else{return}
+                self.reportRailway(status)
+            }
+            return
+        }
         syncStatusRevision &+= 1
         guard let root, let identity else { applySyncStatus(SyncStatus()); syncMessage = ""; return }
         do { applySyncStatus(try Self.loadSyncStatus(root, libraryID: LibraryRecord.accountID(ownerKey: identity.libraryOwnerKey))) }
@@ -284,7 +334,7 @@ final class LibraryWorkspace: ObservableObject {
     /// "Retry" — sync is supposed to be automatic. Local-only libraries and the
     /// removed-cloud-zone case (which needs an explicit restore) are left alone.
     private func autoActivateSync(identity: AccountIdentity?, token: UUID) async {
-        guard request == token else { return }
+        guard request == token, syncRoute == .legacy else { return }
         PennedSyncTrace.record("workspace.autoActivateSync", "local=\(usesLocalLibrary) enabled=\(syncEnabled) needsRetry=\(syncNeedsRetry)")
         if let identity, !usesLocalLibrary, !syncEnabled {
             // enableSync seeds the library, flips the flag, and starts the engine.
@@ -294,7 +344,39 @@ final class LibraryWorkspace: ObservableObject {
         }
     }
 
-    private func startSync() async {
+    private func startSync(migrationPreparation:Bool=false) async {
+        guard !isSwitching,syncControl==nil,(!migrationInProgress || migrationPreparation) else{return}
+        let route=syncRoute
+        if route != .legacy {
+            if let old=synchronizer{await old.stop();if synchronizer === old{synchronizer=nil}}
+            guard route == .railway,let environment,let store,let owner=identity?.libraryOwnerKey,let railwayAccount,
+                  root?.isInMemory == false else{
+                if route == .blocked {reportRailway(.init(message:"Migration verification required. Neither cloud provider will start."))}
+                else if route == .railway {reportRailway(.init())}
+                return
+            }
+            let token=request
+            do{
+                let editors=Publishers.Merge(environment.$selectedDocumentID.removeDuplicates().dropFirst().map{_ in ()},
+                    environment.$isSwitchingSpace.removeDuplicates().dropFirst().filter{!$0}.map{_ in ()}).eraseToAnyPublisher()
+                try await railwayRuntime.start(database:environment.database,ownerKey:owner,attachments:store,binding:railwayAccount,
+                    editorChanges:editors,isCurrent:{[weak self,weak environment] in
+                        guard let self,let environment else{return false}
+                        return self.request==token && self.environment === environment && environment.database.isAccessible && self.currentOwner()==owner && self.syncRoute == .railway
+                    },importer:{[weak self,weak environment] apply in
+                        guard let self,let environment,self.request==token,self.currentOwner()==owner else{throw LibraryError.staleWorkspace}
+                        return try await environment.importAutomaticLibraryChanges(apply)
+                    },report:{[weak self] status in
+                        guard let self,self.request==token,self.currentOwner()==owner else{return}
+                        self.reportRailway(status)
+                    })
+            }catch is CancellationError{}catch{
+                if request==token {reportRailway(.init(needsRetry:true,message:"Cloud sync is unavailable. Local edits remain saved."))}
+            }
+            return
+        }
+        await railwayRuntime.stop()
+        guard syncRoute == .legacy else{return}
         guard !isSwitching, syncControl == nil, syncEnable == nil, root?.isInMemory == false, synchronizer == nil,
               !usesLocalLibrary, syncEnabled, let environment, let store else { return }
         let owner = identity?.libraryOwnerKey
@@ -335,6 +417,15 @@ final class LibraryWorkspace: ObservableObject {
     }
 
     func enableSync(identity: AccountIdentity) async throws {
+        guard !migrationInProgress else{throw RailwayError.staleCheckpoint}
+        if syncRoute == .railway {
+            guard self.identity==identity,currentOwner()==identity.libraryOwnerKey else{throw LibraryError.wrongOwner}
+            await startSync()
+            try await railwayRuntime.resume()
+            refreshSyncStatus()
+            return
+        }
+        guard syncRoute == .legacy else{throw RailwayError.releaseDisabled}
         guard !isSwitching, syncControl == nil, syncEnable == nil, self.identity == identity,
               currentOwner() == identity.libraryOwnerKey, !usesLocalLibrary,
               let root else { throw LibraryError.wrongOwner }
@@ -358,12 +449,53 @@ final class LibraryWorkspace: ObservableObject {
     }
 
     func pauseSync() async throws {
+        guard !migrationInProgress else{throw RailwayError.staleCheckpoint}
+        if syncRoute == .railway {
+            try await railwayRuntime.pause()
+            refreshSyncStatus()
+            return
+        }
+        guard syncRoute == .legacy else{throw RailwayError.releaseDisabled}
         try await withStoppedSync { try syncStore().disable() }
         refreshSyncStatus()
         syncMessage = "Sync paused. Your library and queued edits remain on this device."
     }
 
+    func cloudSessionChanged(_ libraryID:String?) async {
+        guard let environment,!isSwitching,environment.database.isAccessible,
+              let owner=currentOwner(),environment.database.libraryID==RailwayAccountSession.libraryID(ownerKey:owner) else{return}
+        if syncRoute == .railway {
+            await railwayRuntime.stop()
+            if libraryID==environment.database.libraryID{await startSync()}
+        }else if libraryID==environment.database.libraryID{
+            await prepareAutomaticCloudMigration()
+        }
+    }
+
+    private func prepareAutomaticCloudMigration()async{
+        guard let environment,let owner=currentOwner(),canPrepareRailwayMigration,
+              PennedCloudRollout.shouldMigrate(enabled:PennedCloudRollout.automaticMigrationEnabled,
+                accountReady:railwayAccount?.connectedLibraryID==environment.database.libraryID,
+                legacy:syncRoute == .legacy,
+                fenced:(try? RailwayMigrationFence.held(database:environment.database)) == true,
+                hasEditor:!environment.librarySyncProtection().isEmpty),
+              owner==identity?.libraryOwnerKey else{return}
+        do{try await migrateToRailway(confirmed:true)}catch{/* Retry on subsequent safe lifecycle events. */}
+    }
+
     func synchronize(retry: Bool = false, restoreCloud: Bool = false) async {
+        guard !migrationInProgress else{return}
+        await prepareAutomaticCloudMigration()
+        if syncRoute == .railway {
+            guard !isSwitching,syncControl==nil,!restoreCloud else{return}
+            let token=request
+            await startSync()
+            guard request==token,syncRoute == .railway else{return}
+            do{try await railwayRuntime.synchronize(retry:retry)}catch{syncNeedsRetry=true}
+            refreshSyncStatus()
+            return
+        }
+        guard syncRoute == .legacy else{return}
         guard !isSwitching, retry || syncControl == nil else { return }
         let token = request
         do {
@@ -382,11 +514,107 @@ final class LibraryWorkspace: ObservableObject {
     }
 
     func cloudIdentityChanged() async {
+        guard !migrationInProgress else{return}
+        guard syncRoute == .legacy else{return}
         do { try await withStoppedSync {} } catch { return }
         await startSync()
     }
 
+    // Development-only cutover entrypoint until the full native migration and
+    // physical-device suite has passed. Never triggered by normal app launch.
+    private func migrateToRailway(confirmed:Bool) async throws {
+        guard PennedCloudRollout.automaticMigrationEnabled,confirmed,canPrepareRailwayMigration,!isSwitching,syncControl==nil,
+              let environment,let store,let owner=identity?.libraryOwnerKey,
+              let railwayAccount else{throw RailwayError.migrationConfirmationRequired}
+        let database=environment.database,token=request
+        migrationInProgress=true
+        let current: @MainActor ()throws->Void = { [weak self,weak environment] in
+            guard let self,let environment,self.request==token,self.environment === environment,
+                  database.isAccessible,self.currentOwner()==owner else{throw LibraryError.staleWorkspace}
+        }
+        do {
+            let account=try railwayAccount.client()
+            guard let session=try await railwayAccount.restore(),session.ownerKey==owner else{throw RailwayError.signedOut}
+            _ = try await railwayAccount.verify(account,ownerKey:owner)
+            try current()
+            _ = try await railwayAccount.bind(to:database)
+            try current()
+            let log=try RailwayMigrationLogStore(database:database,libraryID:database.libraryID)
+            let transport=try RailwayTransport(baseURL:URL(string:"https://api.penned.im")!)
+            let storage=try database.railwayCaptureStorage()
+            let stage=storage.staging.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Migration",isDirectory:true).appendingPathComponent(database.libraryID,isDirectory:true)
+            let source=RailwayLegacyMigrationAdapter(reader:RailwayLegacyCapture(database:database,attachments:store),attachments:store,staging:stage,
+                freeze:{ [weak self,weak environment] id in
+                    guard let self,let environment else{throw LibraryError.staleWorkspace}
+                    try await self.prepareRailwayFence(database:database,environment:environment,owner:owner,id:id,current:current)
+                },activate:{receipt in
+                    try await current()
+                    guard receipt.libraryID==database.libraryID else{throw RailwayError.accountMismatch}
+                },unfreeze:{})
+            let destination=RailwayMigrationHTTPDestination(account:account,transport:transport,stagingDirectory:stage.appendingPathComponent("multipart",isDirectory:true))
+            let coordinator=RailwayMigrationCoordinator(log:log,source:source,destination:destination)
+            try await coordinator.confirm(ownerKey:owner,confirmed:true)
+            syncMessage="Preparing your cloud library upgrade…"
+            _ = try await coordinator.migrate()
+            try current()
+            try? FileManager.default.removeItem(at:stage)
+            syncMessage="Library upgrade verified. Starting Penned Cloud Sync."
+            migrationInProgress=false
+            refreshSyncStatus()
+            await startSync()
+        }catch{
+            migrationInProgress=false
+            if request==token,currentOwner()==owner{
+                if (try? RailwayMigrationFence.held(database:database)) == true{
+                    syncMessage="Your library upgrade is protected. Verification will resume automatically."
+                }else{
+                    refreshSyncStatus()
+                    syncMessage="Migration did not complete. Your library is retained."
+                    await startSync()
+                }
+            }
+            throw error
+        }
+    }
+
+    private func prepareRailwayFence(database:AppDatabase,environment:AppEnvironment,owner:String,id:String,
+                                     current: @MainActor ()throws->Void) async throws {
+        try current()
+        guard id==database.libraryID else{throw RailwayError.accountMismatch}
+        if try RailwayMigrationFence.held(database:database){
+            guard environment.librarySyncProtection().isEmpty else{throw RailwayError.staleCheckpoint}
+            await stopSync()
+            try current()
+            try RailwayMigrationFence.acquire(database:database,ownerKey:owner)
+            return
+        }
+        
+        try await environment.prepareForWorkspaceNavigation()
+        try current()
+        guard environment.librarySyncProtection().isEmpty else{throw RailwayError.staleCheckpoint}
+        // If the library ever had a CloudKit binding, its final pass must be
+        // successful; a paused/offline or unflushed library cannot be migrated.
+        let library=try database.read {try LibraryRecord.fetchOne($0,key:id)}
+        if library?.cloudAccountID != nil{
+            guard library?.syncEnabled==true else{throw RailwayError.staleCheckpoint}
+            refreshSyncStatus()
+            await startSync(migrationPreparation:true)
+            guard let synchronizer else{throw RailwayError.staleCheckpoint}
+            try await synchronizer.flushForRailwayMigration()
+        }
+        try current()
+        
+        guard environment.librarySyncProtection().isEmpty else{throw RailwayError.staleCheckpoint}
+        await stopSync()
+        try current()
+        // Serialized with every SQLite writer. Dirty rows/inbox are rechecked
+        // here to catch edits or imports since the CloudKit pass.
+        try RailwayMigrationFence.acquire(database:database,ownerKey:owner)
+        syncMessage="Uploading your protected library to Penned Cloud…"
+    }
+
     private func stopSync() async {
+        await railwayRuntime.stop()
         if let syncEnable {
             syncEnable.cancel()
             _ = try? await syncEnable.value

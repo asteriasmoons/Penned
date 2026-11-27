@@ -3,6 +3,11 @@ import SwiftUI
 struct ImmediateTablePreview: View {
     let node: [String: Any]
     let appearance: DocumentAppearance
+    var maximumRows = 32
+    var depth = 0
+    var collections: [CollectionSnapshot] = []
+    var referencedDocuments: [DocumentRecord] = []
+    var maximumBlocks = 96
 
     private struct Cell: Identifiable {
         let id: String
@@ -13,7 +18,7 @@ struct ImmediateTablePreview: View {
         let value: [String: Any]
     }
 
-    private var rows: [[String: Any]] { Array((node["content"] as? [[String: Any]] ?? []).prefix(32)) }
+    private var rows: [[String: Any]] { Array((node["content"] as? [[String: Any]] ?? []).prefix(maximumRows)) }
     private var cells: [Cell] {
         var result: [Cell] = []
         var occupied: Set<String> = []
@@ -45,24 +50,11 @@ struct ImmediateTablePreview: View {
         return result
     }
 
-    private var heights: [CGFloat] {
-        var result = Array(repeating: CGFloat(44), count: rows.count)
-        for cell in cells {
-            let width = widths[cell.column..<(cell.column + cell.columns)].reduce(0, +)
-            let text = cellText(cell.value)
-            let lines = text.split(separator: "\n", omittingEmptySubsequences: false).reduce(0) {
-                $0 + max(1, Int(ceil(Double($1.count) / max(1, Double(width - 32) / 8))))
-            }
-            result[cell.row] = max(result[cell.row], CGFloat(lines * 22 + 20) / CGFloat(cell.rows))
-        }
-        return result
-    }
-
     var body: some View {
-        let widths = widths, heights = heights
+        let widths = widths
         let tableAttrs = node["attrs"] as? [String: Any] ?? [:]
         let left = max(0, tableAttrs["leftOffset"] as? Double ?? 0)
-        ZStack(alignment: .topLeading) {
+        PreviewGrid(cells: cells, widths: widths, rowCount: rows.count, left: left) {
             ForEach(cells) { cell in
                 let attrs = cell.value["attrs"] as? [String: Any] ?? [:]
                 let isHeader = cell.value["type"] as? String == "tableHeader"
@@ -70,22 +62,62 @@ struct ImmediateTablePreview: View {
                     ?? (isHeader ? appearance.presentationColors.tableHeader : (cell.row % 2 == 1 ? tableAttrs["stripeColor"] as? String : nil))
                 let style = DocumentFontStyle(rawValue: attrs["font"] as? String ?? "") ?? appearance.fontStyle
                 let width = widths[cell.column..<(cell.column + cell.columns)].reduce(0, +)
-                let height = heights[cell.row..<(cell.row + cell.rows)].reduce(0, +)
-                styledCellText(cell.value, fontStyle: style, weight: (attrs["bold"] as? Bool ?? isHeader) ? .bold : .regular,
-                               italic: attrs["italic"] as? Bool == true)
+                let children = cell.value["content"] as? [[String: Any]] ?? []
+                let structured = children.contains { !["paragraph", "caption", "heading", "text", "hardBreak", "inlineTag"].contains($0["type"] as? String ?? "") }
+                Group {
+                    if structured, attrs["calculated"] == nil {
+                        ImmediatePreviewBlocks(nodes: children, appearance: appearance, depth: depth + 1,
+                            collections: collections, referencedDocuments: referencedDocuments, spacing: 6, maximumBlocks: maximumBlocks)
+                    } else {
+                        styledCellText(cell.value, fontStyle: style, weight: (attrs["bold"] as? Bool ?? isHeader) ? .bold : .regular,
+                                       italic: attrs["italic"] as? Bool == true)
+                    }
+                }
                     .font(style.font(size: 14, weight: (attrs["bold"] as? Bool ?? isHeader) ? .bold : .regular,
                                      code: attrs["code"] as? Bool == true, italic: attrs["italic"] as? Bool == true))
                     .strikethrough(attrs["strike"] as? Bool == true)
                     .foregroundStyle(Color(vellixHex: attrs["textColor"] as? String ?? appearance.textColorHex))
                     .multilineTextAlignment(attrs["align"] as? String == "center" ? .center : attrs["align"] as? String == "right" ? .trailing : .leading)
-                    .padding(10).frame(width: width, height: height, alignment: .topLeading)
+                    .padding(10).frame(width: width, alignment: .topLeading).frame(maxHeight: .infinity, alignment: .topLeading)
                     .background(fill.map { Color(vellixHex: $0) } ?? .clear)
                     .overlay(Rectangle().strokeBorder(Color(vellixHex: appearance.textColorHex).opacity(0.15), lineWidth: 0.5))
-                    .offset(x: widths.prefix(cell.column).reduce(0, +) + left, y: heights.prefix(cell.row).reduce(0, +))
             }
         }
-        .frame(width: min(320, widths.reduce(0, +) + left), height: heights.reduce(0, +), alignment: .topLeading)
         .clipped().clipShape(RoundedRectangle(cornerRadius: 7))
+    }
+
+    private struct PreviewGrid: Layout {
+        let cells: [Cell]
+        let widths: [CGFloat]
+        let rowCount: Int
+        let left: CGFloat
+
+        private func frames(_ subviews: Subviews) -> [CGRect] {
+            var heights = Array(repeating: CGFloat(44), count: rowCount)
+            for (cell, subview) in zip(cells, subviews) {
+                let width = widths[cell.column..<(cell.column + cell.columns)].reduce(0, +)
+                let measured = subview.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+                let required = measured.isFinite ? measured : 44
+                let range = cell.row..<(cell.row + cell.rows)
+                let extra = max(0, required - heights[range].reduce(0, +)) / CGFloat(cell.rows)
+                for row in range { heights[row] += extra }
+            }
+            return cells.map { cell in
+                CGRect(x: widths.prefix(cell.column).reduce(0, +) + left, y: heights.prefix(cell.row).reduce(0, +),
+                    width: widths[cell.column..<(cell.column + cell.columns)].reduce(0, +),
+                    height: heights[cell.row..<(cell.row + cell.rows)].reduce(0, +))
+            }
+        }
+        func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+            let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? widths.reduce(0, +) + left
+            return CGSize(width: max(1, width), height: frames(subviews).map(\.maxY).max() ?? 0)
+        }
+        func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+            for (subview, frame) in zip(subviews, frames(subviews)) {
+                subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), anchor: .topLeading,
+                    proposal: ProposedViewSize(frame.size))
+            }
+        }
     }
 
     private func cellText(_ node: [String: Any]) -> String {

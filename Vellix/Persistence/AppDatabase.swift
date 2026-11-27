@@ -77,6 +77,7 @@ final class AppDatabase: @unchecked Sendable {
     let libraryID: String
     private let lease = LibraryLease()
     private let syncTrace: PennedSyncTrace.DatabaseObserver?
+    private let railwayFixtureRoot: URL?
 
     convenience init(_ writer: any DatabaseWriter, isInMemory: Bool = false) throws {
         try self.init(writer, isInMemory: isInMemory, migrator: .vellixMigrator)
@@ -87,10 +88,12 @@ final class AppDatabase: @unchecked Sendable {
         self.writer = writer
         self.isInMemory = isInMemory
         self.libraryID = LibraryRecord.localID
+        self.railwayFixtureRoot = isInMemory ? FileManager.default.temporaryDirectory.appendingPathComponent("PennedRailwayFixture-"+UUID().uuidString,isDirectory:true) : nil
         let syncTrace = PennedSyncTrace.DatabaseObserver(inMemory: isInMemory)
         self.syncTrace = syncTrace
         writer.writeWithoutTransaction { db in
             LibraryAccess.configure(db, libraryID: "*")
+            RailwayWorkspaceIntegration.configureConnection(db)
             syncTrace?.install(in: db)
         }
         let wasEmpty = try writer.read { db in
@@ -114,6 +117,7 @@ final class AppDatabase: @unchecked Sendable {
         writer = database.writer
         isInMemory = database.isInMemory
         syncTrace = database.syncTrace
+        railwayFixtureRoot = database.railwayFixtureRoot
         self.libraryID = libraryID
     }
 
@@ -176,6 +180,7 @@ final class AppDatabase: @unchecked Sendable {
         configuration.prepareDatabase { db in
             try db.execute(sql: "PRAGMA foreign_keys = ON")
             registerCustomSQL(db)
+            RailwayWorkspaceIntegration.configureConnection(db)
         }
 
         do {
@@ -201,6 +206,7 @@ final class AppDatabase: @unchecked Sendable {
         configuration.prepareDatabase { db in
             try db.execute(sql: "PRAGMA foreign_keys = ON")
             registerCustomSQL(db)
+            RailwayWorkspaceIntegration.configureConnection(db)
         }
 
         let queue = try DatabaseQueue(configuration: configuration)
@@ -236,6 +242,7 @@ final class AppDatabase: @unchecked Sendable {
         defer { context.removeObject(forKey: Self.accessThreadKey) }
         try lease.check()
         LibraryAccess.configure(db, libraryID: libraryID)
+        RailwayWorkspaceIntegration.configureConnection(db)
         return try body()
     }
 
@@ -274,8 +281,17 @@ final class AppDatabase: @unchecked Sendable {
         }
     }
 
+    // Used by the eventual native sender as well as automatic transaction capture.
+    nonisolated func railwayCaptureStorage() throws -> (attachments:AttachmentStore,staging:URL) {
+        guard libraryID != "*", libraryID != LibraryRecord.localID else { throw RailwayError.accountMismatch }
+        let support = try railwayFixtureRoot ?? Self.applicationSupportDirectory()
+        return (AttachmentStore(rootURL:support.appendingPathComponent("Attachments",isDirectory:true)),
+                support.appendingPathComponent("RailwaySync",isDirectory:true).appendingPathComponent("Outbox",isDirectory:true).appendingPathComponent(libraryID,isDirectory:true))
+    }
+
     private nonisolated func transaction<T>(access: String, file: StaticString, line: UInt, function: StaticString,
                                              _ updates: (Database) throws -> T) throws -> T {
+        var stagedCaptures: [(RailwayNativeRecordCapture,String)] = []
         do {
             try Self.requireTopLevelAccess(access)
             return try writer.writeWithoutTransaction { db in
@@ -284,7 +300,15 @@ final class AppDatabase: @unchecked Sendable {
                     var result: T?
                     try db.inTransaction {
                         syncTrace?.markOrigin(file: file, line: line, function: function)
+                        // No capture for metadata writes, remote imports, local-only
+                        // libraries, or libraries still using CloudKit.
+                        if access == "write" {
+                            for capture in try RailwayNativeRecordCapture.preparedAll(database:self,in:db) {
+                                stagedCaptures.append((capture,try capture.begin(in:db)))
+                            }
+                        }
                         result = try updates(db)
+                        for (capture,batchID) in stagedCaptures {try capture.finish(in:db,batchID:batchID)}
                         try lease.check()
                         return .commit
                     }
@@ -292,6 +316,7 @@ final class AppDatabase: @unchecked Sendable {
                 }
             }
         } catch {
+            for (capture,batchID) in stagedCaptures {capture.discardStaging(batchID:batchID)}
             Self.reportFailure(error, access: access, file: file, line: line)
             throw error
         }
@@ -706,6 +731,18 @@ extension DatabaseMigrator {
 
         migrator.registerMigration("v34_shared_reminder_references") { db in
             try DocumentTaskIndex.installReferences(in: db)
+        }
+
+        migrator.registerMigration("v35_railway_native_journal") { db in
+            try RailwayWorkspaceIntegration.install(in:db)
+        }
+
+        migrator.registerMigration("v36_railway_migration_fence") { db in
+            try RailwayMigrationFence.install(in:db)
+        }
+
+        migrator.registerMigration("v37_penned_cloud_fence_messages") { db in
+            try RailwayMigrationFence.refreshTriggers(in:db)
         }
 
         return migrator

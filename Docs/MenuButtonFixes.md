@@ -53,3 +53,45 @@ Only previews containing actual toggle nodes, including referenced child documen
 - One earlier appearance-test run failed three existing in-memory cache object-identity assertions. The final expanded run passed unchanged; cache retention behavior was not modified for this task.
 - No iOS application build, simulator launch, or physical-device UI verification was performed for this change. Native menu pressed states and iPhone/iPad preview appearance still need a device check.
 - Lurelia was read only. Its files were not modified.
+
+## Icon Callout Disclosure in Previews - November 26, 2026
+
+The reported Book preview showed a white rectangle at the callout's collapse
+button, while the same callout displayed its actual chevron in the open document.
+This is the same preview-mask failure described above, at a different element:
+`.penned-icon-callout-disclosure > span` uses a solid background tinted with
+`--penned-callout-disclosure` and a CSS alpha mask selecting the real `chevup` or
+`chevdown` asset from its `aria-expanded` state. The snapshot preparation handled
+collection icons and toggle pseudo-elements, but not this disclosure span.
+
+### Correction
+
+- `Vellix/Documents/DocumentPreviewCache.swift`: include the callout disclosure
+  span in the existing snapshot-only masked-icon rasterization loop. It reads the
+  computed mask, tint and rendered dimensions, decodes the asset, and replaces the
+  span with a transparent tinted PNG before WebKit's PDF capture. The button and
+  surrounding layout remain in place. The PNG decode is awaited by the existing
+  preparation path; no timer, additional renderer or interactive WebView is added.
+- `Vellix/Documents/DocumentPreviewContent.swift`: advance only the existing
+  callout-specific revision to `callout-presentation-v8-disclosure-alpha-mask`.
+  It applies when the document or its referenced child documents contain callouts
+  and uses the shared record/summary key path. Previously captured rectangles can
+  therefore regenerate through the existing background queue. PNG persistence,
+  stale-image retention, replacement and pruning logic are unchanged.
+- `Docs/MenuButtonFixes.md`: record this additional instance alongside the
+  original documented correction, rather than creating another unrelated report.
+
+The shared capture feeds library previews (including All Docs) and nested
+Book/card miniatures, so this is not an iPad-only control change. Live editor CSS,
+callout settings, icon colors, expand/collapse interactions, document content,
+navigation and Book appearance are unchanged. The real imported chevron assets
+are retained; no generic symbol or drawn approximation replaces them.
+
+### Verification Boundary
+
+Source inspection confirms the missing selector and the corrected preparation
+path. `git diff --check` passed. No builds, tests, app launches or device rendering
+checks were run for this update. The historical test results above belong to the
+earlier fix, not this extension. Confirm the refreshed preview on the physical
+iPad; an older retained PNG may remain visible until its background replacement
+is ready.

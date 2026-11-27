@@ -25,6 +25,11 @@ struct SignInView: View {
     @State private var emailTask: Task<Void, Never>?
     @State private var codeResent = false
     @State private var publishingNonce: PublishingAppleNonce?
+    @State private var cloudChallenge: RailwayAppleChallenge?
+    @State private var cloudChallengeAt: Date?
+    @State private var usedCloudChallenge: RailwayAppleChallenge?
+    @State private var preparingApple = true
+
 
     var body: some View {
         ScrollView {
@@ -58,6 +63,13 @@ struct SignInView: View {
         .scrollBounceBehavior(.basedOnSize)
         .pennedSheet(title: emailFlow ? "Continue with Email" : "Sign In", close: { cancelEmail(); dismiss() })
         .onDisappear { cancelEmail() }
+        .task {
+            defer { preparingApple=false }
+            if let value=try? await RailwayAccountSession.prepareAppleSignInChallenge(),!Task.isCancelled {
+                cloudChallenge=value;cloudChallengeAt=Date()
+            }
+        }
+
     }
 
     private var appleButton: some View {
@@ -65,13 +77,18 @@ struct SignInView: View {
             errorText = nil
             isSigningIn = true
             request.requestedScopes = [.fullName, .email]
-            publishingNonce = try? PublishingAppleNonce()
-            request.nonce = publishingNonce?.hashedValue
+            usedCloudChallenge=nil
+            if let challenge=cloudChallenge,let date=cloudChallengeAt,Date().timeIntervalSince(date)<240,
+               let nonce=try? PublishingAppleNonce(cloudChallenge:challenge){
+                publishingNonce=nonce;usedCloudChallenge=challenge
+            }else{publishingNonce=try? PublishingAppleNonce()}
+            cloudChallenge=nil;cloudChallengeAt=nil
+            request.nonce=publishingNonce?.hashedValue
         } onCompletion: { result in
             handleAppleSignIn(result)
         }
         .frame(maxWidth: .infinity).frame(height: 50)
-        .disabled(isSigningIn)
+        .disabled(isSigningIn || preparingApple)
     }
 
     @ViewBuilder private var emailFields: some View {
@@ -168,7 +185,7 @@ struct SignInView: View {
                     credential: credential,
                     existingUsers: authUsers,
                     modelContext: modelContext,
-                    nonce: publishingNonce
+                    nonce: publishingNonce, cloudChallenge: usedCloudChallenge
                 )
 
                 isSigningIn = false

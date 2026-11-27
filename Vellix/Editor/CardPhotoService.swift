@@ -6,7 +6,7 @@ struct CardPhotoSearchResult: Decodable {
 }
 
 struct CardPhotoService {
-    var baseURL = URL(string: "https://appapi.voxiverse.ink/api/vellix/photos")!
+    var baseURL = URL(string: "https://appsapi.asterium.im/api/vellix/photos")!
     var session = URLSession.shared
 
     func search(query: String = "", page: Int = 1, shuffle: Bool = false) async throws -> CardPhotoSearchResult {

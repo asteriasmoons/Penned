@@ -85,6 +85,7 @@ enum MobileBlockDragAndDrop {
     if (pending || active) return 'drag-or-transfer-busy';
     if (!editor.options.editable) return 'editor-read-only';
     if (editor.view.composing) return 'text-composition';
+    if (window.PennedBookPages?.isSettingsSurface(target)) return 'dedicated-book-settings';
     if (target.closest('.penned-tabs-bar')) return 'dedicated-tab-control';
     if (target.closest('input, textarea, select')) return 'text-or-form-control';
     if (target.closest('audio, video, iframe')) return 'media-control';

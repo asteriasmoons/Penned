@@ -204,7 +204,7 @@ final class DocumentPreviewCache: ObservableObject {
 
     func cardPresentationKey(for document: DocumentRecord, colorScheme: ColorScheme) -> String {
         let key = presentationCacheKey(for: document, colorScheme: colorScheme)
-        let previewStyle = document.cardStyle?.previewStyle ?? .pages
+        let previewStyle = Self.cardPreviewStyle(for: document)
         let snapshotKey = key + Self.snapshotSuffix(for: previewStyle)
         let hasSnapshot = hasCardSnapshot(key: snapshotKey, style: previewStyle)
         return snapshotKey + (hasSnapshot ? ":snapshot" : ":native")
@@ -216,6 +216,14 @@ final class DocumentPreviewCache: ObservableObject {
         case .stickyNote: return stickySnapshotSuffix
         case .openPage: return openPageSnapshotSuffix
         }
+    }
+
+    private static func cardPreviewStyle(for document: DocumentRecord) -> PageCardPreviewStyle {
+        document.cardStyle?.isBook == true ? .pages : (document.cardStyle?.previewStyle ?? .pages)
+    }
+
+    private static func showsCardPreview(for document: DocumentRecord) -> Bool {
+        document.cardStyle.map { $0.isBook || $0.showsPages } ?? false
     }
 
     private func hasCardSnapshot(key: String, style: PageCardPreviewStyle) -> Bool {
@@ -240,13 +248,21 @@ final class DocumentPreviewCache: ObservableObject {
         return spread
     }
 
-    func cardSnapshot(for requested: DocumentRecord, colorScheme: ColorScheme, hidesPageSurfaces: Bool = false) -> CGImage? {
+    func cardSnapshot(for requested: DocumentRecord, colorScheme: ColorScheme, hidesPageSurfaces: Bool = false,
+                      allowsNativeFallback: Bool = true) -> CGImage? {
         let content = content(for: requested)
         let document = content.document
         let base = content.cacheKey(for: colorScheme)
         let key = (base + (hidesPageSurfaces ? Self.stickySnapshotSuffix : Self.pagesSnapshotSuffix)) as NSString
         if let cached = memory.object(forKey: key) { return cached.image }
         if let cached = cardImages.object(forKey: key) { return cached.image }
+        if !allowsNativeFallback {
+            if deferredRecords[document.id] != document {
+                deferredRecords[document.id] = document
+                if activeEditors.isEmpty { scheduleContentRefresh() }
+            }
+            return nil
+        }
         guard renderingCards.count < 3, renderingCards.insert(document.id).inserted else { return nil }
         defer { renderingCards.remove(document.id) }
         guard let image = cardFallbackRenderer?(document, colorScheme, hidesPageSurfaces) else { return nil }
@@ -509,9 +525,9 @@ final class DocumentPreviewCache: ObservableObject {
         let document = content.document
         let key = content.cacheKey(for: colorScheme)
         traceCodeDen(document, "image requested; cacheKey=\(key.prefix(24)) resolvedCollections=\(content.hasResolvedCollections)")
-        let previewStyle = document.cardStyle?.previewStyle ?? .pages
+        let previewStyle = Self.cardPreviewStyle(for: document)
         let miniatureKey = key + Self.snapshotSuffix(for: previewStyle)
-        let needsCardCapture = document.cardStyle?.showsPages == true && !failedOpenPages.contains(miniatureKey)
+        let needsCardCapture = Self.showsCardPreview(for: document) && !failedOpenPages.contains(miniatureKey)
             && !hasCardSnapshot(key: miniatureKey, style: previewStyle)
         if !needsCardCapture, let cached = memory.object(forKey: key as NSString) { return cached.image }
         if let task = pending[key] { return await task.value }
@@ -528,7 +544,7 @@ final class DocumentPreviewCache: ObservableObject {
             }
         }
         // Resolve card miniatures before entering the single WebView queue; never wait on that queue from inside a render.
-        for child in content.children where child.cardStyle?.showsPages == true && !ancestors.contains(child.id) && child.id != document.id {
+        for child in content.children where Self.showsCardPreview(for: child) && !ancestors.contains(child.id) && child.id != document.id {
             _ = await image(for: child, colorScheme: colorScheme, ancestors: ancestors.union([document.id]), ignoringActiveEditors: ignoringActiveEditors)
             guard !Task.isCancelled, renderGeneration == generation else { return nil }
         }
@@ -749,10 +765,10 @@ final class DocumentPreviewCache: ObservableObject {
                 icon.replaceWith(image);
                 await image.decode();
             }
-            // Collection controls (chevdown, dotswavy and entry actions) use CSS
-            // alpha masks that WebKit's PDF export can paint as solid rectangles.
+            // Collection controls and callout disclosure chevrons use CSS alpha
+            // masks that WebKit's PDF export can paint as solid rectangles.
             // Rasterize only the snapshot copy; the live editor stays untouched.
-            for (const icon of document.querySelectorAll('.penned-collection-icon')) {
+            for (const icon of document.querySelectorAll('.penned-collection-icon, .penned-icon-callout-disclosure > span')) {
                 const style = getComputedStyle(icon);
                 const mask = style.webkitMaskImage || style.maskImage;
                 if (!mask || mask === 'none') continue;
@@ -846,19 +862,21 @@ final class DocumentPreviewCache: ObservableObject {
             rect: CGRect(x: 0, y: 0, width: 320, height: bodyHeight), rotate: 0, preserveAspectRatio: true))
         context.drawPDFPage(page)
         guard let body = context.makeImage() else { throw PreviewError.renderUnavailable }
-        func captureHeader(showsTitle: Bool) throws -> (image: CGImage, height: CGFloat) {
+        func captureHeader(showsTitle: Bool, includesHeader: Bool = true) throws -> (image: CGImage, height: CGFloat) {
             let headerRenderer = ImageRenderer(content: VStack(alignment: .leading, spacing: 10) {
-                if showsTitle || document.appearance.displaysCover {
-                    LibrarySnapshotHeader(document: document, cover: CardImageLoader.image(path: document.cover, store: attachments),
-                        appearance: appearance, showsTitle: showsTitle)
-                }
-                if let (collection, entry) = content.entryContext {
-                    CollectionFieldsSnapshotPreview(snapshot: collection, entry: entry, appearance: appearance)
+                if includesHeader {
+                    if showsTitle || document.appearance.displaysCover {
+                        LibrarySnapshotHeader(document: document, cover: CardImageLoader.image(path: document.cover, store: attachments),
+                            appearance: appearance, showsTitle: showsTitle)
+                    }
+                    if let (collection, entry) = content.entryContext {
+                        CollectionFieldsSnapshotPreview(snapshot: collection, entry: entry, appearance: appearance)
+                    }
                 }
             }.frame(width: 320).frame(minHeight: 1).environment(\.colorScheme, documentScheme))
             headerRenderer.scale = 2
             guard let image = headerRenderer.cgImage else { throw PreviewError.renderUnavailable }
-            let hasHeader = showsTitle || document.appearance.displaysCover || content.entryContext != nil
+            let hasHeader = includesHeader && (showsTitle || document.appearance.displaysCover || content.entryContext != nil)
             return (image, hasHeader ? CGFloat(image.height) / 2 : 0)
         }
         let header = try captureHeader(showsTitle: true)
@@ -878,9 +896,9 @@ final class DocumentPreviewCache: ObservableObject {
             return image
         }
         let image = try capture(snapshotPage, height: height)
-        if document.cardStyle?.showsPages == true {
-            let cardHeader = try captureHeader(showsTitle: false)
-            let previewStyle = document.cardStyle?.previewStyle ?? .pages
+        if Self.showsCardPreview(for: document) {
+            let cardHeader = try captureHeader(showsTitle: false, includesHeader: document.cardStyle?.isBook != true)
+            let previewStyle = Self.cardPreviewStyle(for: document)
             if previewStyle == .openPage {
                 let key = content.cacheKey(for: colorScheme) + Self.openPageSnapshotSuffix
                 failedOpenPages.insert(key)

@@ -926,6 +926,13 @@ final class TipTapEditorSession: ObservableObject {
             }
 
             let payload = dictionary["payload"] as? [String: Any] ?? [:]
+            if kind == "bookDescriptionLayout" {
+                let font: DocumentFontStyle? = currentAppearance?.fontStyle == .hachiMaruPop ? .hachiMaruPop : nil
+                if let update = PageReferencePresentation.bookDescriptionUpdate(payload, records: pageRecords,
+                    attachmentStore: attachmentStore, colorScheme: applicationColorScheme,
+                    containingFontStyle: font, previews: documentPreviewCache) { send(update) }
+                return
+            }
             if kind == "diag" {
                 let message = payload["message"] as? String ?? ""
                 logger.info("VELLIX-DIAG \(message, privacy: .public)")
@@ -1070,8 +1077,11 @@ final class TipTapEditorSession: ObservableObject {
         case .requestCodeBlockEditor:
             onEvent?(event)
 
-        case .requestListGridSettings, .requestTabsSettings, .requestMinimalFieldsSettings, .requestInformationCardSettings,
-             .requestPageCardSettings:
+        case .requestPageCardSettings:
+            guard isReady, !isLoadingDocument, editingEnabled, loadedDocumentID != nil else { return }
+            onEvent?(event)
+
+        case .requestListGridSettings, .requestTabsSettings, .requestMinimalFieldsSettings, .requestInformationCardSettings:
             break // These block settings sheets are currently iOS-only.
 
         case .tableDocumentSnapshot, .taskDocumentSnapshot:
@@ -1980,6 +1990,11 @@ final class DocumentEditorModel: ObservableObject {
             guard let child = children.first(where: { $0.id == documentID }),
                   child.parentDocumentID == document?.id else { return }
             nestedPageActionTarget = child
+        case .requestPageCardSettings(let documentID):
+            guard cardEditorRequest == nil, session.editingEnabled, session.renderedDocumentID == self.documentID,
+                  let child = children.first(where: { $0.id == documentID }),
+                  child.parentDocumentID == document?.id, !child.isTrashed else { return }
+            editPageCard(child)
         case .requestBlockDeletion(let token, _, _):
             blockDeletionRequest = BlockDeletionRequest(documentID: documentID, token: token)
         case .selectedBlocksForSubpage(let token, let json):
@@ -2050,7 +2065,7 @@ final class DocumentEditorModel: ObservableObject {
         pendingCardBlockID = nil
     }
 
-    func savePageCard(request: PageCardEditorRequest, style: PageCardStyle, imageData: Data?) async throws {
+    func savePageCard(request: PageCardEditorRequest, style: PageCardStyle, imageData: Data?, spineImageData: Data? = nil) async throws {
         let operation = beginPersistentOperation()
         defer { endPersistentOperation(operation) }
         guard let parent = document, let attachmentStore else {
@@ -2066,7 +2081,7 @@ final class DocumentEditorModel: ObservableObject {
         }
         let page = try documentRepository.savePageCard(parentID: parent.id,
             documentID: request.blockID == nil ? request.document.id : nil,
-            style: style, imageData: imageData, attachmentStore: attachmentStore)
+            style: style, imageData: imageData, spineImageData: spineImageData, attachmentStore: attachmentStore)
         if let blockID = request.blockID {
             pendingCardBlockID = nil
             pageReferenceIDs.insert(page.id)

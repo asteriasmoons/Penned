@@ -11,7 +11,7 @@ struct CalendarDocumentPreview: View {
         Button(action: open) {
             HStack(alignment: .center, spacing: 12) {
                 NestedPageThumbnail(json: document.tipTapJSON, title: document.title, appearance: document.appearance,
-                    size: CGSize(width: 37, height: 48), cover: document.cover, attachmentStore: environment.attachmentStore)
+                    size: CGSize(width: 37, height: 48), cover: document.cover, attachmentStore: environment.attachmentStore, document: document, previews: environment.documentPreviews)
                     .equatable()
                     .shadow(color: .black.opacity(0.4), radius: 4, x: 0, y: 3)
                 VStack(alignment: .leading, spacing: 4) {

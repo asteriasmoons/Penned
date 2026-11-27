@@ -380,7 +380,7 @@ struct TemplateCard: View {
                 NestedPageThumbnail(json: document?.tipTapJSON ?? template.tipTapJSON,
                     title: template.title, appearance: document?.appearance ?? .plain,
                     size: CGSize(width: 43, height: 56),
-                    cover: document?.cover, attachmentStore: environment.attachmentStore)
+                    cover: document?.cover, attachmentStore: environment.attachmentStore, document: document, previews: environment.documentPreviews)
                     .equatable()
                     .shadow(color: .black.opacity(0.48), radius: 6, x: 0, y: 4)
                     .shadow(color: .black.opacity(0.30), radius: 1, x: 0, y: 1)

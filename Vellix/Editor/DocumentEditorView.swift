@@ -825,8 +825,8 @@ struct DocumentEditorView: View {
             .presentationDragIndicator(.visible)
         }
         .sheet(item: editorPresentation($model.cardEditorRequest), onDismiss: { model.cancelCardInsertion() }) { request in
-            PageCardEditorSheet(request: request, store: environment.attachmentStore, previews: environment.documentPreviews) { style, imageData in
-                try await model.savePageCard(request: request, style: style, imageData: imageData)
+            PageCardEditorSheet(request: request, store: environment.attachmentStore, previews: environment.documentPreviews) { style, imageData, spineImageData in
+                try await model.savePageCard(request: request, style: style, imageData: imageData, spineImageData: spineImageData)
                 environment.refresh()
             }
             .presentationDetents([.large])
@@ -3336,6 +3336,7 @@ private struct EditorInsertMenu: View {
             Menu("Nested Content") {
                 Button("Page") { insertBlockAction("nestedPage") }
                 Button("Card") { insertBlockAction("pageCard") }
+                Button("Book") { insertBlockAction("pageBook") }
             }
             Button("Code Block") { insertBlockAction("codeBlock") }
             Menu("Widgets") {

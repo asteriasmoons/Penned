@@ -7,6 +7,7 @@ struct ImmediateDocumentPreview: View {
     let document: DocumentRecord
     var showsPageSurfaces = true
     var showsDocumentTitle = true
+    var showsDocumentHeader = true
     private var appearance: DocumentAppearance { document.appearance.resolved(for: colorScheme) }
     private var savedContent: DocumentPreviewContent { environment.documentPreviews.content(for: document) }
     private var blockSpacing: CGFloat {
@@ -41,7 +42,7 @@ struct ImmediateDocumentPreview: View {
             VStack(spacing: 14) {
                 ForEach(Array(sheets.enumerated()), id: \.offset) { index, nodes in
                     VStack(alignment: .leading, spacing: 18) {
-                        if index == 0 {
+                        if index == 0 && showsDocumentHeader {
                             if showsDocumentTitle || appearance.displaysCover {
                                 LibrarySnapshotHeader(document: document,
                                     cover: CardImageLoader.image(path: document.cover, store: environment.attachmentStore),
@@ -197,16 +198,18 @@ private struct OpenPageBodyLayout: Layout {
     }
 }
 
-private struct ImmediatePreviewBlocks: View {
+struct ImmediatePreviewBlocks: View {
     let nodes: [[String: Any]]
     let appearance: DocumentAppearance
     let depth: Int
     let collections: [CollectionSnapshot]
     let referencedDocuments: [DocumentRecord]
     var spacing: CGFloat
+    var maximumBlocks = 96
+    var paragraphSize: CGFloat = 14
 
     var body: some View {
-        let groups = PageCardPreviewGroup.groups(Array(nodes.prefix(96)), documents: referencedDocuments,
+        let groups = PageCardPreviewGroup.groups(Array(nodes.prefix(maximumBlocks)), documents: referencedDocuments,
                                                 includeRichLinkCards: true, includePlainCallouts: true, includeWidgets: true)
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
@@ -218,16 +221,16 @@ private struct ImmediatePreviewBlocks: View {
                         PageCardFlowLayout(smallCards: group.nodes.map { _ in true }) {
                             ForEach(Array(group.nodes.enumerated()), id: \.offset) { _, item in
                                 ImmediatePreviewBlock(node: item, appearance: appearance, depth: depth,
-                                    collections: collections, referencedDocuments: referencedDocuments)
+                                    collections: collections, referencedDocuments: referencedDocuments, maximumBlocks: maximumBlocks, paragraphSize: paragraphSize)
                             }
                         }
                     } else {
                         ImmediatePreviewBlock(node: node, appearance: appearance, depth: depth,
-                            collections: collections, referencedDocuments: referencedDocuments)
+                            collections: collections, referencedDocuments: referencedDocuments, maximumBlocks: maximumBlocks, paragraphSize: paragraphSize)
                     }
                 }.padding(.top, index == 0 ? 0 : (consecutiveProperties ? 4 : spacing))
             }
-        }
+        }.foregroundStyle(Color(vellixHex: appearance.textColorHex))
     }
 }
 
@@ -281,6 +284,8 @@ private struct ImmediatePreviewBlock: View {
     let depth: Int
     let collections: [CollectionSnapshot]
     let referencedDocuments: [DocumentRecord]
+    var maximumBlocks = 96
+    var paragraphSize: CGFloat = 14
 
     private var type: String { node["type"] as? String ?? "paragraph" }
     private var attrs: [String: Any] { node["attrs"] as? [String: Any] ?? [:] }
@@ -303,9 +308,17 @@ private struct ImmediatePreviewBlock: View {
         case "calculator":
             CalculatorWidgetPreview(settings: CalculatorSettings(attrs), state: CalculatorState(attrs["state"] as? [String: Any] ?? [:]))
         case "attachment":
-            if let file = attrs["file"] as? [String: Any], let path = file["relativePath"] as? String,
-               let resolved = try? environment.attachments.editorAttachment(relativePath: path) {
-                AttachmentBlockPreview(file: resolved, attrs: attrs, store: environment.attachmentStore)
+            if let file = attrs["file"] as? [String: Any] {
+                if let path = file["relativePath"] as? String,
+                   let resolved = try? environment.attachments.editorAttachment(relativePath: path) {
+                    AttachmentBlockPreview(file: resolved, attrs: attrs, store: environment.attachmentStore)
+                } else {
+                    HStack(spacing: 8) {
+                        Text((file["kind"] as? String ?? "file").uppercased()).font(.caption.bold())
+                        Text(file["name"] as? String ?? file["originalFileName"] as? String ?? "Attachment").lineLimit(2)
+                    }.font(appearance.fontStyle.font(size: 13)).padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.18)) }
+                }
             }
         case "templateComponent":
             if let definition = TemplateComponentDefinition.decode(attrs["definition"]) {
@@ -316,24 +329,33 @@ private struct ImmediatePreviewBlock: View {
                 CollectionSnapshotPreview(snapshot: snapshot, appearance: appearance, attachments: environment.attachmentStore)
                     .padding(.vertical, 16)
             }
-        case "table": ImmediateTablePreview(node: node, appearance: appearance)
+        case "table": ImmediateTablePreview(node: node, appearance: appearance, maximumRows: maximumBlocks == .max ? .max : 32,
+            depth: depth, collections: collections, referencedDocuments: referencedDocuments, maximumBlocks: maximumBlocks)
         case "listGrid": ListGridPreview(node: node, appearance: appearance)
         case "richLink": ImmediateRichLinkPreview(link: RichLinkPreviewData(node), appearance: appearance)
         case "tabs":
             ImmediateTabsPreview(node: node, appearance: appearance, depth: depth,
-                collections: collections, referencedDocuments: referencedDocuments)
+                collections: collections, referencedDocuments: referencedDocuments, maximumBlocks: maximumBlocks)
         case "minimalFields":
             ImmediateMinimalFieldsPreview(node: node, appearance: appearance, depth: depth,
-                collections: collections, referencedDocuments: referencedDocuments)
+                collections: collections, referencedDocuments: referencedDocuments, maximumBlocks: maximumBlocks)
+        case "weekStrip":
+            CalendarBlockPreview(node: node, appearance: appearance, depth: depth,
+                collections: collections, referencedDocuments: referencedDocuments, maximumBlocks: maximumBlocks)
+        case "linkedCalendarEvent": LinkedCalendarEventPreview(attrs: attrs, appearance: appearance)
+        case "informationCard":
+            InformationCardBlockPreview(node: node, appearance: appearance, depth: depth,
+                collections: collections, referencedDocuments: referencedDocuments, maximumBlocks: maximumBlocks)
+        case "codeBlock": CodeDocumentBlockPreview(node: node, appearance: appearance, maximumLines: maximumBlocks)
         case "heading" where HeadingLabelSettings.configuration(attrs)?.enabled == true:
             if let label = HeadingLabelSettings.configuration(attrs) {
                 HeadingLabelTile(settings: label, attrs: attrs, nodes: nodes, appearance: appearance)
             }
-        case "paragraph", "caption", "heading", "codeBlock":
+        case "paragraph", "caption", "heading", "informationCardTitle", "informationCardDescription", "informationCardLabel", "minimalRecordTitle", "minimalFieldLabel":
             let guided = nodes.isEmpty && attrs["placeholderEnabled"] as? Bool == true
             let inline = guided ? (attrs["placeholderGuidance"] as? [[String: Any]] ?? []) : nodes
             let level = attrs["level"] as? Int ?? 1
-            let size: CGFloat = type == "heading" ? [24, 21, 18, 16, 16, 16][max(0, min(5, level - 1))] : (type == "caption" ? 12 : 14)
+            let size: CGFloat = type == "heading" ? [24, 21, 18, 16, 16, 16][max(0, min(5, level - 1))] : (type == "caption" ? 12 : paragraphSize)
             let alignment: TextAlignment = attrs["textAlign"] as? String == "center" ? .center : (attrs["textAlign"] as? String == "right" ? .trailing : .leading)
             let inlineAppearance = blockTextAppearance
             InlineTextPreview.text(inline, appearance: inlineAppearance, size: size, weight: type == "heading" ? .bold : .regular)
@@ -345,7 +367,7 @@ private struct ImmediatePreviewBlock: View {
             CalloutRowPreviewLayout(nodes: nodes) {
                 ForEach(Array(nodes.enumerated()), id: \.offset) { _, child in
                     ImmediatePreviewBlock(node: child, appearance: appearance, depth: depth + 1,
-                        collections: collections, referencedDocuments: referencedDocuments)
+                                    collections: collections, referencedDocuments: referencedDocuments, maximumBlocks: maximumBlocks)
                 }
             }
         case "gridCard", "callout":
@@ -355,23 +377,41 @@ private struct ImmediatePreviewBlock: View {
             if isPlain, let source = attrs["clipSource"] as? [String: Any],
                let href = source["url"] as? String, InlinePropertyDefinition.safeURL(href) != nil {
                 ClipSourceDocumentPreview(source: source, nodes: nodes, appearance: appearance,
-                    depth: depth, collections: collections, referencedDocuments: referencedDocuments)
+                    depth: depth, collections: collections, referencedDocuments: referencedDocuments, maximumBlocks: maximumBlocks)
             } else {
                 let settings = IconCalloutSettings(attrs, plain: isPlain)
-                HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: settings.hasTitle ? 4 : 0) {
                     if !isPlain {
-                        IconCalloutGlyph(settings: settings,
-                            image: WashiTapePreview.documentImage(path: settings.imagePath, attachments: environment.attachments, store: environment.attachmentStore))
+                        HStack(alignment: .top, spacing: 8) {
+                            IconCalloutGlyph(settings: settings,
+                                image: WashiTapePreview.documentImage(path: settings.imagePath, attachments: environment.attachments, store: environment.attachmentStore))
+                            if settings.hasTitle {
+                                Text(settings.title).font(appearance.fontStyle.font(size: 17, weight: .heavy))
+                                    .foregroundStyle(Color(vellixHex: settings.titleInk)).frame(maxWidth: .infinity, alignment: .leading)
+                            } else if !settings.collapsed {
+                                calloutBody(ink: settings.inkColor).padding(.vertical, 2)
+                            } else { Spacer(minLength: 0) }
+                            if settings.collapsible {
+                                LibraryIcon(name: settings.collapsed ? "chevdown" : "chevup", size: 20)
+                                    .foregroundStyle(Color(vellixHex: settings.disclosureInk)).frame(width: 32, height: 32)
+                            }
+                        }
                     }
-                    calloutBody(ink: settings.inkColor).padding(.vertical, 2)
+                    if isPlain || (settings.hasTitle && !settings.collapsed) {
+                        calloutBody(ink: settings.inkColor).padding(.vertical, 2)
+                    }
                 }
                 .padding(.vertical, 10).padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, minHeight: isPlain ? settings.minimumHeight.map { CGFloat($0) } : nil, alignment: .topLeading)
                 .background(Color(vellixHex: settings.backgroundColor), in: RoundedRectangle(cornerRadius: 12))
             }
         case "blockquote":
-            children(nodes).padding(.leading, 14).padding(.vertical, 8)
-                .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 3) }
+            children(nodes).padding(.leading, 32).padding(.trailing, 18).padding(.vertical, 14)
+                .frame(maxWidth: .infinity, minHeight: 58, alignment: .topLeading)
+                .background(.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 22))
+                .overlay { RoundedRectangle(cornerRadius: 22).strokeBorder(.primary.opacity(0.14)) }
+                .overlay(alignment: .leading) { Rectangle().fill(Color(vellixHex: attrs["color"] as? String ?? "#ffffff")).frame(width: 12) }
+                .clipShape(RoundedRectangle(cornerRadius: 22))
         case "toggleItem":
             HStack(alignment: .top, spacing: 8) {
                 LibraryIcon(name: attrs["open"] as? Bool == false ? "chevright" : "chevdown", size: 14).padding(.top, 4)
@@ -379,7 +419,7 @@ private struct ImmediatePreviewBlock: View {
             }
         case "bulletList", "orderedList", "taskList":
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(nodes.prefix(96).enumerated()), id: \.offset) { index, item in
+                ForEach(Array(nodes.prefix(maximumBlocks).enumerated()), id: \.offset) { index, item in
                     HStack(alignment: .top, spacing: 8) {
                         if type == "orderedList" {
                             let first = (item["content"] as? [[String: Any]])?.first
@@ -392,12 +432,21 @@ private struct ImmediatePreviewBlock: View {
                         else if type == "taskList" {
                             let itemAttrs = item["attrs"] as? [String: Any] ?? [:]
                             Group {
-                                if itemAttrs["checked"] as? Bool == true { LibraryIcon(name: "checkwavy", size: 14) }
+                                if itemAttrs["crossed"] as? Bool == true { LibraryIcon(name: "xmarkwavy", size: 14) }
+                                else if itemAttrs["checked"] as? Bool == true { LibraryIcon(name: "checkwavy", size: 14) }
                                 else { Circle().strokeBorder(.primary.opacity(0.55)).frame(width: 14, height: 14) }
                             }.padding(.top, 3)
                         } else { Circle().frame(width: 4, height: 4).padding(.top, 8) }
-                        ImmediatePreviewBlock(node: item, appearance: appearance, depth: depth + 1,
-                            collections: collections, referencedDocuments: referencedDocuments)
+                        VStack(alignment: .leading, spacing: 4) {
+                            ImmediatePreviewBlock(node: item, appearance: appearance, depth: depth + 1,
+                                collections: collections, referencedDocuments: referencedDocuments, maximumBlocks: maximumBlocks)
+                            if type == "taskList", let task = DocumentTaskMetadata.decode((item["attrs"] as? [String: Any])?["trackedTask"]) {
+                                if let reminder = task.reminderSummary {
+                                    HStack(spacing: 4) { LibraryIcon(name: "clockwavy", size: 11); Text(reminder) }.font(.caption).opacity(0.65)
+                                }
+                                if let recurrence = task.recurrence { Text(recurrence.label).font(.caption).opacity(0.65) }
+                            }
+                        }
                     }
                 }
             }
@@ -441,11 +490,8 @@ private struct ImmediatePreviewBlock: View {
             if let property = InlinePropertyDefinition.decode(attrs["property"]) {
                 InlinePropertyPreview(property: property, appearance: appearance)
             }
-        case "informationCard":
-            children(nodes.filter {
-                !((attrs["hideTitle"] as? Bool == true && $0["type"] as? String == "informationCardTitle") ||
-                  (attrs["hideDescription"] as? Bool == true && $0["type"] as? String == "informationCardDescription"))
-            })
+        case "pageBreak":
+            Rectangle().fill(Color(vellixHex: appearance.textColorHex).opacity(0.2)).frame(height: 1).padding(.vertical, 12)
         default: children(nodes)
         }
     }
@@ -464,7 +510,7 @@ private struct ImmediatePreviewBlock: View {
         var colors = appearance
         colors.textColorHex = ink
         return ImmediatePreviewBlocks(nodes: nodes, appearance: colors, depth: depth + 1,
-            collections: collections, referencedDocuments: referencedDocuments, spacing: 6)
+            collections: collections, referencedDocuments: referencedDocuments, spacing: 6, maximumBlocks: maximumBlocks)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -483,7 +529,7 @@ private struct ImmediatePreviewBlock: View {
                 }
             }.frame(maxWidth: .infinity, alignment: horizontal)
             ImmediatePreviewBlocks(nodes: nodes, appearance: colors, depth: depth + 1,
-                collections: collections, referencedDocuments: referencedDocuments, spacing: 6)
+                collections: collections, referencedDocuments: referencedDocuments, spacing: 6, maximumBlocks: maximumBlocks)
         }
         .padding(14).frame(maxWidth: .infinity, minHeight: CGFloat(card.height), alignment: .topLeading)
         .background(Color(vellixHex: card.backgroundColor), in: RoundedRectangle(cornerRadius: 12))
@@ -491,7 +537,7 @@ private struct ImmediatePreviewBlock: View {
 
     private func children(_ values: [[String: Any]]) -> some View {
         ImmediatePreviewBlocks(nodes: values, appearance: appearance, depth: depth + 1,
-            collections: collections, referencedDocuments: referencedDocuments, spacing: 10)
+            collections: collections, referencedDocuments: referencedDocuments, spacing: 10, maximumBlocks: maximumBlocks)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -558,6 +604,7 @@ private struct ClipSourceDocumentPreview: View {
     let depth: Int
     let collections: [CollectionSnapshot]
     let referencedDocuments: [DocumentRecord]
+    var maximumBlocks = 96
 
     private var metadataAppearance: DocumentAppearance {
         var value = appearance
@@ -585,7 +632,7 @@ private struct ClipSourceDocumentPreview: View {
             .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
             .background(Color(vellixHex: "#202020"), in: RoundedRectangle(cornerRadius: 6))
             VStack(alignment: .leading, spacing: 14) {
-                ForEach(Array(nodes.prefix(96).enumerated()), id: \.offset) { _, node in
+                ForEach(Array(nodes.prefix(maximumBlocks).enumerated()), id: \.offset) { _, node in
                     metadata(node)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
@@ -612,7 +659,7 @@ private struct ClipSourceDocumentPreview: View {
             }
         } else {
             ImmediatePreviewBlock(node: node, appearance: metadataAppearance, depth: depth + 1,
-                collections: collections, referencedDocuments: referencedDocuments)
+                collections: collections, referencedDocuments: referencedDocuments, maximumBlocks: maximumBlocks)
         }
     }
 }
@@ -710,6 +757,7 @@ private struct ImmediateTabsPreview: View {
     let depth: Int
     let collections: [CollectionSnapshot]
     let referencedDocuments: [DocumentRecord]
+    var maximumBlocks = 96
 
     private var attrs: [String: Any] { node["attrs"] as? [String: Any] ?? [:] }
     private var panels: [[String: Any]] {
@@ -745,12 +793,8 @@ private struct ImmediateTabsPreview: View {
         let inner = VStack(alignment: .leading, spacing: 12) {
             if bool(attrs["showHeader"], false) { header }
             tabBar
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(activeContent.prefix(40).enumerated()), id: \.offset) { _, child in
-                    ImmediatePreviewBlock(node: child, appearance: appearance, depth: depth + 1,
-                        collections: collections, referencedDocuments: referencedDocuments)
-                }
-            }
+            ImmediatePreviewBlocks(nodes: activeContent, appearance: appearance, depth: depth + 1,
+                collections: collections, referencedDocuments: referencedDocuments, spacing: 6, maximumBlocks: maximumBlocks)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -832,6 +876,7 @@ private struct ImmediateMinimalFieldsPreview: View {
     let depth: Int
     let collections: [CollectionSnapshot]
     let referencedDocuments: [DocumentRecord]
+    var maximumBlocks = 96
 
     private var attrs: [String: Any] { node["attrs"] as? [String: Any] ?? [:] }
     private var records: [[String: Any]] {
@@ -853,9 +898,9 @@ private struct ImmediateMinimalFieldsPreview: View {
     var body: some View {
         let dividerVisible = bool(attrs["dividerVisible"], true)
         let dividerColor = Color(vellixHex: hex(attrs["dividerColor"], "#2A2A2E"))
-        let recordGap = CGFloat(number(attrs["recordSpacing"], 0, 48, 18))
+        let recordGap = CGFloat(number(attrs["recordSpacing"], 18, 0, 48))
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(records.enumerated()), id: \.offset) { index, record in
+            ForEach(Array(records.prefix(maximumBlocks).enumerated()), id: \.offset) { index, record in
                 if index > 0 {
                     if dividerVisible {
                         Rectangle().fill(dividerColor).frame(height: 1)
@@ -867,24 +912,26 @@ private struct ImmediateMinimalFieldsPreview: View {
                 recordView(record)
             }
         }
-        .padding(.vertical, CGFloat(number(attrs["outerSpacing"], 0, 40, 8)))
+        .padding(.vertical, CGFloat(number(attrs["outerSpacing"], 8, 0, 40)))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func recordView(_ record: [String: Any]) -> some View {
         let accent = Color(vellixHex: hex(attrs["accentColor"], "#7C5CFF"))
-        let accentW = CGFloat(number(attrs["accentWidth"], 1, 8, 3))
-        let titleSize = CGFloat(number(attrs["titleSize"], 14, 32, 20))
+        let accentW = CGFloat(number(attrs["accentWidth"], 3, 1, 8))
+        let titleSize = CGFloat(number(attrs["titleSize"], 20, 14, 32))
         let children = record["content"] as? [[String: Any]] ?? []
         let titleContent = (children.first { $0["type"] as? String == "minimalRecordTitle" }?["content"] as? [[String: Any]]) ?? []
         let fields = children.filter { $0["type"] as? String == "minimalField" }
         return HStack(alignment: .top, spacing: 12) {
             RoundedRectangle(cornerRadius: accentW / 2).fill(accent).frame(width: accentW)
             VStack(alignment: .leading, spacing: 0) {
-                InlineTextPreview.text(titleContent, appearance: appearance, size: titleSize, weight: .bold)
-                    .font(appearance.fontStyle.font(size: titleSize, weight: .bold))
-                    .foregroundStyle(Color(vellixHex: hex(attrs["titleColor"], "#FFFFFF")))
-                ForEach(Array(fields.enumerated()), id: \.offset) { _, field in
+                if bool(attrs["showRecordTitles"], true) {
+                    InlineTextPreview.text(titleContent, appearance: appearance, size: titleSize, weight: .bold)
+                        .font(appearance.fontStyle.font(size: titleSize, weight: .bold))
+                        .foregroundStyle(Color(vellixHex: hex(attrs["titleColor"], "#FFFFFF")))
+                }
+                ForEach(Array(fields.prefix(maximumBlocks).enumerated()), id: \.offset) { _, field in
                     fieldView(field)
                 }
             }
@@ -897,22 +944,21 @@ private struct ImmediateMinimalFieldsPreview: View {
         let kids = field["content"] as? [[String: Any]] ?? []
         let labelContent = (kids.first { $0["type"] as? String == "minimalFieldLabel" }?["content"] as? [[String: Any]]) ?? []
         let valueContent = (kids.first { $0["type"] as? String == "minimalFieldValue" }?["content"] as? [[String: Any]]) ?? []
-        let labelSize = CGFloat(number(attrs["labelSize"], 9, 18, 12))
+        let labelSize = CGFloat(number(attrs["labelSize"], 12, 9, 18))
         let uppercase = bool(attrs["labelUppercase"], true)
+        var valueAppearance = appearance
+        valueAppearance.textColorHex = hex(attrs["valueColor"], "#E4E4EA")
         return VStack(alignment: .leading, spacing: 2) {
             InlineTextPreview.text(labelContent, appearance: appearance, size: labelSize, weight: .bold)
                 .font(appearance.fontStyle.font(size: labelSize, weight: .bold))
                 .foregroundStyle(Color(vellixHex: hex(attrs["labelColor"], "#B98CFF")))
                 .textCase(uppercase ? .uppercase : nil)
                 .tracking(0.5)
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(valueContent.prefix(20).enumerated()), id: \.offset) { _, child in
-                    ImmediatePreviewBlock(node: child, appearance: appearance, depth: depth + 1,
-                        collections: collections, referencedDocuments: referencedDocuments)
-                }
-            }
+            ImmediatePreviewBlocks(nodes: valueContent, appearance: valueAppearance, depth: depth + 1,
+                collections: collections, referencedDocuments: referencedDocuments, spacing: 4, maximumBlocks: maximumBlocks,
+                paragraphSize: CGFloat(number(attrs["valueSize"], 15, 11, 22)))
         }
-        .padding(.top, CGFloat(number(attrs["fieldSpacing"], 0, 32, 12)))
+        .padding(.top, CGFloat(number(attrs["fieldSpacing"], 12, 0, 32)))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

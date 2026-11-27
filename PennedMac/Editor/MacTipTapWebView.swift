@@ -398,6 +398,7 @@ fileprivate extension TipTapWebView {
         let contentController = WKUserContentController()
         contentController.add(coordinator, name: "tiptap")
         contentController.addUserScript(WKUserScript(source: TextBlockConversion.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        contentController.addUserScript(WKUserScript(source: BookPageInteractions.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
 
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = contentController
